@@ -3369,6 +3369,18 @@ function tyoResults() {
     ${list.length ? `<div class="tyo-list fitbox">${prof.map(({ p, r }) => tyoRow(p, r)).join('')}</div>`
       : `<div class="empty panel"><h3>${tyoFilterOn() ? 'Filtreye uyan sipariş yok' : 'Bu sekmede sipariş yok'}</h3><p>${tyoFilterOn() ? 'Filtreleri değiştirip tekrar deneyin.' : active ? 'Yeni siparişler birkaç dakikada bir Trendyol\'dan çekilir.' : 'Başka bir tarih aralığı seçebilirsiniz.'}</p></div>`}`;
 }
+// Adet rozeti: 1 gri → 2-4 kırmızıya doğru → 5-9 turkuazdan lilaya → 10+ elmas gibi parlar
+function qtyColor(q) {
+  const mix = (a, b, t) => '#' + [0, 2, 4].map((i) => Math.round(parseInt(a.substr(i + 1, 2), 16) * (1 - t) + parseInt(b.substr(i + 1, 2), 16) * t).toString(16).padStart(2, '0')).join('');
+  if (q <= 1) return '#5A5F66';
+  if (q < 5) return mix('#8A6A62', '#E0443A', (q - 2) / 2);
+  if (q < 10) return mix('#1FC8C0', '#B98BFF', (q - 5) / 4);
+  return null;
+}
+function qtyBadge(q, cls = 'oc-qb') {
+  const c = qtyColor(q);
+  return `<i class="${cls}${q >= 10 ? ' gem' : q > 1 ? ' m' : ''}"${c ? ` style="--qc:${c}"` : ''} title="${q} adet"><small>×</small>${q}</i>`;
+}
 // Siparişte rafta yetmeyen kalemler: aynı üründen siparişte kaç adet lazım, rafta kaç var
 // Raf stoğu Yeni siparişlere en eskiden başlayarak sırayla dağıtılır (paketleme sırası): 10 siparişe 8 adet
 // varsa ilk 8'i karşılanır, son 2'si "sıra gelince yok" olur. Sonuç sipariş listesi değişene kadar saklanır.
@@ -3419,7 +3431,7 @@ function tyoRow(p, r) {
     <details class="tyo" ${S.tyo.open.has(p.package_id) ? 'open' : ''} data-tyo-open="${esc(p.package_id)}">
       <summary>
         <span class="tyo-no"><b>${esc(p.order_number)}</b><small class="faint">${date}</small></span>
-        <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" title="${esc(l.name || '')} ×${l.quantity}${sh.by[l.product_id]?.miss ? ` · rafta ${sh.by[l.product_id].have}, baskıda ${sh.by[l.product_id].print}, ${sh.by[l.product_id].miss} eksik` : ''}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? `<i>${l.quantity}</i>` : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
+        <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" title="${esc(l.name || '')} ×${l.quantity}${sh.by[l.product_id]?.miss ? ` · rafta ${sh.by[l.product_id].have}, baskıda ${sh.by[l.product_id].print}, ${sh.by[l.product_id].miss} eksik` : ''}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? qtyBadge(l.quantity, 'tt-qb') : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
         <span class="tyo-who"><b>${esc(p.customer || '—')}</b><small class="muted">${esc(p.city || '')}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
         <span class="tyo-amt">${r ? fmtTL(r.price) : p.pkg_total != null ? fmtTL(p.pkg_total) : '–'}</span>
         <span class="tyo-pr">${r ? `<span class="mg ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)}</span><small class="faint">${fmtPct(r.margin)}${r.missing.length ? ' · <span class="warn-text">eksik</span>' : ''}</small>` : '<span class="faint">–</span>'}</span>
@@ -3447,8 +3459,7 @@ function tyoBody(p) {
     const pmiss = pr?.parts?.length && out ? Math.max(0, (pr.parts_total || 0) - (pr.parts_ready || 0)) : 0;
     const parts = pmiss ? `<span class="oc-parts" title="Sonraki set için elde ${pr.parts_ready}/${pr.parts_total} parça">${pmiss}/${pr.parts_total} parça eksik</span>` : '';
     return `<div class="oc-item${cancel ? ' cancel' : ''}${out ? (part ? ' out part' : ' out') : ''}">
-      <span class="oc-img${l.thumbnail ? '' : ' none'}" style="${thumbStyle(l.thumbnail)}" data-zoom="${esc(l.thumbnail || '')}" data-title="${esc(l.name || '')}"></span>
-      <span class="oc-q${l.quantity > 1 ? ' multi' : ''}">×${l.quantity}</span>
+      <span class="oc-img${l.thumbnail ? '' : ' none'}" style="${thumbStyle(l.thumbnail)}" data-zoom="${esc(l.thumbnail || '')}" data-title="${esc(l.name || '')}">${qtyBadge(l.quantity)}</span>
       <div class="oc-tx"><b>${esc(l.name || 'Bilinmeyen ürün')}${l.ty_url && /^https?:\/\//.test(l.ty_url) ? ` <a class="oc-go" href="${esc(l.ty_url)}" target="_blank" rel="noopener" title="Trendyol'daki ürün sayfası">Trendyol ↗</a>` : ''}</b>${l.ty_name && pr && l.ty_name !== l.name ? `<small class="faint">${esc(l.ty_name)}</small>` : ''}
         <div class="oc-meta">${l.barcode ? `<span class="mono">${esc(l.barcode)}</span>` : ''}${shelf}${parts}${state}${l.unit_price != null ? `<span class="faint">${fmtTL(l.unit_price)}</span>` : ''}</div>
         ${!l.product_id && l.barcode && !cancel ? `<div class="pick-match"><select class="input" data-tyo-match="${esc(l.barcode)}"><option value="">Hangi ürününüz?</option>${S.products.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select><button class="btn btn-sm btn-ok" data-act="tyo-match" data-code="${esc(l.barcode)}">Eşleştir</button></div>` : ''}</div></div>`;

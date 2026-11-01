@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.6.6
+- Sipariş ürünlerinde adet görselin köşesinde rozet; renk adede göre (gri → kırmızı → turkuaz → lila → 10+ elmas).
+
 ## 1.6.5
 - Siparişte baskıdaki adetler de hesaba katılır ("Rafta yok · 20 baskıda", yetmezse eksik sayısı).
 - Sipariş satırında adet görselin yanında; Trendyol ürün sayfasına bağlantı.

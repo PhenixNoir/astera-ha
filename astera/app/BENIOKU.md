@@ -484,3 +484,5 @@ Dışarıdan erişim isterseniz Tailscale gibi bir VPN en güvenli yoldur.
 **Bildirim paneli bölümleri** — Sağdaki bildirimler renkli bölüm kartlarında: Buybox (turuncu; buybox geri gelse bile siz tıklayana kadar kalır), Yazıcılar (mavi), Siparişler (yeşil), Müşteri — iade ve sorular (mor), Diğer (gri). Boş bölüm görünmez; geçmiş en altta.
 
 **Baskıdaki ürünler siparişte** — Stok dağıtımında raf bittikten sonra baskıdaki adetler de sırayla siparişlere ayrılır. Baskıdakiyle karşılanan siparişte mavi "Rafta yok · 20 baskıda" yazar ve sipariş yanıp sönmez; baskıdaki de yetmiyorsa "rafta yok · 20 baskıda · 5 eksik" kırmızı/sarı uyarı olur. Ürün satırında adet görselin hemen yanında durur, ürün adının yanındaki "Trendyol ↗" Trendyol'daki ürün sayfasını açar.
+
+**Adet rozeti** — Sipariş ürünlerinde adet, görselin sağ alt köşesinde yuvarlak rozettedir. Renk adede göre değişir: 1 gri, 2–4 griden kırmızıya, 5–9 turkuazdan lilaya, 10 ve üstü elmas gibi parlayan rozet. Kapalı listedeki küçük görsellerde de aynı renkler kullanılır.
