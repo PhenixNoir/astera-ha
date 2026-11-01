@@ -532,18 +532,27 @@ async function ignoreJob(jid, nid) {
     return true;
   } catch (e) { fail(e); return false; }
 }
+// Bildirim bölümleri: Buybox (tıklanana kadar kalır) → Yazıcılar → Siparişler → Müşteri → Diğer
+const NF_SECS = [['bb', 'Buybox', 'crown', 'tıklayınca kalkar'], ['pr', 'Yazıcılar', 'layers'], ['od', 'Siparişler', 'cart'], ['cu', 'Müşteri', 'chat'], ['ot', 'Diğer', 'bell']];
+function nfSec(n) {
+  const k = String(n.key || '');
+  if (k.startsWith('bb:')) return 'bb';
+  if (n.kind === 'printer' || n.kind === 'print_done') return 'pr';
+  if (n.kind === 'claim' || n.kind === 'question') return 'cu';
+  if (n.kind === 'trendyol' || n.kind === 'order') return 'od';
+  return 'ot';
+}
 function renderNotifs() {
   const el = $('#notif-panel'); if (!el) return;
   const d0 = S.notif || { items: [], active: 0 }, f = S.nfFilter || 'all', hk = U('nf.hide') || [];
   const items = d0.items.filter((n) => !hk.includes(n.kind));
   const d = { items, active: items.filter((n) => !n.resolved_at).length };
-  const list = d.items.filter((n) => f === 'all' || n.kind === f || (f === 'printer' && n.kind === 'print_done'));
+  const list = d.items; void f;
   const act = list.filter((n) => !n.resolved_at), old = list.filter((n) => n.resolved_at);
   el.innerHTML = `<div class="nf-head"><h2>Bildirimler${d.active ? ` <span class="nf-count">${d.active}</span>` : ''}</h2>
       ${d.active ? '<button class="btn btn-ghost btn-sm" data-act="nf-all">Hepsini kapat</button>' : ''}
       <button class="icon-btn nf-close" data-act="nf-close" aria-label="Kapat">${icon('x')}</button></div>
-    <div class="chips nf-filter">${[['all', 'Tümü'], ['printer', 'Yazıcı'], ['trendyol', 'Trendyol'], ['stock', 'Stok']].filter(([v]) => v === 'all' || !hk.includes(v)).map(([v, l]) => `<button class="chip${f === v ? ' on' : ''}" data-act="nf-filter" data-v="${v}">${l}</button>`).join('')}</div>
-    <div class="nf-list">${act.length ? act.map(notifItem).join('') : '<p class="nf-empty">Bekleyen bildirim yok.</p>'}
+    <div class="nf-list">${act.length ? NF_SECS.map(([k, label, ic, extra]) => { const g = act.filter((n) => nfSec(n) === k); return g.length ? `<section class="nf-sec s-${k}"><div class="nf-sh">${icon(ic)}<span>${label}</span><b>${g.length}</b>${extra ? `<small>${extra}</small>` : ''}</div><div class="nf-sb">${g.map(notifItem).join('')}</div></section>` : ''; }).join('') : '<p class="nf-empty">Bekleyen bildirim yok.</p>'}
       ${old.length ? `<div class="nf-sep">Geçmiş (7 gün)</div>${old.slice(0, 60).map(notifItem).join('')}` : ''}</div>`;
   const c = $('#nb-count'); if (c) { c.hidden = !d.active; c.textContent = d.active > 99 ? '99+' : d.active; }
   $('#notif-bell')?.classList.toggle('has', !!d.active);

@@ -2487,3 +2487,26 @@ details.anim-open > :not(summary) { animation: sec-in .2s cubic-bezier(.2,.8,.2,
 .ty-w-row { display: flex; gap: 8px; flex-wrap: wrap; }
 @media (max-width: 760px) { .te-sub { display: none; } .te-im { width: 84px; height: 112px; } .te-im-a { opacity: 1; } }
 .oc-q-note { font-size: 11.5px; color: var(--ink-3); }
+
+/* ---------- bildirim paneli: renkli bölüm kartları */
+.nf-list { gap: 12px; }
+.nf-sec { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: var(--sheet); animation: row-in .25s cubic-bezier(.2,.8,.2,1) both; }
+.nf-sh { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-weight: 800; font-size: 13px; letter-spacing: .3px; color: var(--sh-ink); background: var(--sh-bg); }
+.nf-sh svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; flex: none; }
+.nf-sh span { flex: 1; }
+.nf-sh b { background: rgba(0,0,0,.22); border-radius: 99px; padding: 1px 8px; font-size: 12px; }
+.nf-sh small { font-size: 11px; font-weight: 600; opacity: .8; }
+.nf-sb { display: grid; }
+.nf-sec .nf { border: 0; border-radius: 0; border-top: 1px solid color-mix(in srgb, var(--ink) 7%, transparent); background: transparent; }
+.nf-sec .nf-w:first-child .nf { border-top: 0; }
+.nf-sec .nf:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.nf-sec .nf.live { animation: none; }
+.s-bb { --sh-bg: linear-gradient(90deg, #F27A1A, #E9B23B); --sh-ink: #1f1200; border-color: color-mix(in srgb, #F27A1A 45%, var(--line)); background: linear-gradient(180deg, color-mix(in srgb, #F27A1A 10%, var(--sheet)), var(--sheet) 80%); box-shadow: 0 10px 26px -16px #F27A1A; }
+.s-pr { --sh-bg: linear-gradient(90deg, #3C7DD9, #4FC1C8); --sh-ink: #06121f; background: linear-gradient(180deg, color-mix(in srgb, #3C7DD9 8%, var(--sheet)), var(--sheet) 80%); }
+.s-od { --sh-bg: linear-gradient(90deg, #3FAE79, #9AD86B); --sh-ink: #0b1d12; background: linear-gradient(180deg, color-mix(in srgb, #3FAE79 8%, var(--sheet)), var(--sheet) 80%); }
+.s-cu { --sh-bg: linear-gradient(90deg, #8E5BD9, #E266A8); --sh-ink: #fff; background: linear-gradient(180deg, color-mix(in srgb, #8E5BD9 9%, var(--sheet)), var(--sheet) 80%); }
+.s-ot { --sh-bg: linear-gradient(90deg, #5F646B, #8A9097); --sh-ink: #fff; }
+.s-pr .nf.live.k-printer, .s-pr .nf.live.k-print_done { animation: nf-blink-b 2.2s ease-in-out infinite; }
+@keyframes nf-blink-b { 50% { background-color: color-mix(in srgb, #3C7DD9 16%, transparent); box-shadow: inset 3px 0 0 #3C7DD9; } }
+.s-bb .nf.live { box-shadow: inset 3px 0 0 #F27A1A; }
+.nf-sec .nf-ign { margin: 0 10px 8px auto; }

@@ -76,8 +76,9 @@ def _upsert(key, kind, level, title, body, action):
         _push_ids.append(cur.lastrowid)
 
 
-def _sync_group(prefix, wanted):
-    """wanted: {key: (kind, level, title, body, action)}. Bu önekle başlayıp artık istenmeyenler çözülür/temizlenir."""
+def _sync_group(prefix, wanted, sticky=False):
+    """wanted: {key: (kind, level, title, body, action)}. Bu önekle başlayıp artık istenmeyenler çözülür/temizlenir.
+    sticky: şart ortadan kalksa da aktif bildirim kullanıcı tıklayana kadar kalır (ör. buybox)."""
     for key, v in wanted.items():
         _upsert(key, *v)
     t = _now()
@@ -87,6 +88,8 @@ def _sync_group(prefix, wanted):
         if r["key"] in wanted:
             continue
         if r["resolved_at"] is None:
+            if sticky:
+                continue
             _db().execute("UPDATE notifications SET resolved_at=?, resolved_by='auto', cleared=1 WHERE id=?", (t, r["id"]))
         else:
             _db().execute("UPDATE notifications SET cleared=1 WHERE id=?", (r["id"],))
@@ -283,7 +286,7 @@ def _buybox():
                                        f"Rakip {_money(r['buybox_price'])} · bizim fiyat {_money(r['our_price'])} "
                                        f"(fark {_money(r['our_price'] - r['buybox_price'])})",
                                        {"t": "go", "href": "#/buybox"})
-    _sync_group("bb:", wanted)
+    _sync_group("bb:", wanted, sticky=True)
 
 
 def _idle():

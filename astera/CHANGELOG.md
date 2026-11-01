@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.6.3
+- Bildirim paneli renkli bölümlere ayrıldı: Buybox (tıklanana kadar kalır), Yazıcılar, Siparişler, Müşteri, Diğer.
+
 ## 1.6.2
 - Sipariş kârında komisyon siparişin kendi oranından (indirimli komisyon dahil); ödeme hesaplandıysa cari hesaptaki gerçek tutar.
 

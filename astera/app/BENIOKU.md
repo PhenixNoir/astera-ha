@@ -480,3 +480,5 @@ Dışarıdan erişim isterseniz Tailscale gibi bir VPN en güvenli yoldur.
 **Sıraya göre stok** — Yeni siparişlerde raf stoğu en eski siparişten başlayarak sırayla dağıtılır (paketleme sırası). Örneğin 10 siparişte birer adet aynı ürün varsa ve rafta 8 tane duruyorsa ilk 8 sipariş normal görünür, son 2 tanesi "Sıra gelince yetmiyor" uyarısı verir ve listede kırmızı yanıp söner; ürün satırında "rafta 8 · önceki siparişler 8 adet alıyor" yazar.
 
 **Sipariş komisyonu** — Siparişteki kâr hesabında komisyon artık siparişin kendi komisyon oranından gelir (Trendyol'un sipariş verisinde satır başına verdiği oran; komisyon indirimli / kampanyalı satışlar dahil). Siparişin ödemesi cari hesap ekstresine düştüyse (Finans) oradaki gerçek komisyon tutarı kullanılır. Kâr ayrıntısında kaynağı yazar ("siparişteki oran" / "cari hesaptan"). Eski siparişlerin oranları ilk eşitlemede bir kez Trendyol'dan doldurulur.
+
+**Bildirim paneli bölümleri** — Sağdaki bildirimler renkli bölüm kartlarında: Buybox (turuncu; buybox geri gelse bile siz tıklayana kadar kalır), Yazıcılar (mavi), Siparişler (yeşil), Müşteri — iade ve sorular (mor), Diğer (gri). Boş bölüm görünmez; geçmiş en altta.
