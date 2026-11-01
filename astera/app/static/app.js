@@ -3419,12 +3419,13 @@ const LABEL_CSS = `@page { size: 100mm 80mm; margin: 0; }
 * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 html, body { margin: 0; padding: 0; background: #fff; }
 body { font-family: "Segoe UI", Arial, Helvetica, sans-serif; color: #000; }
-.L { width: 100mm; height: 80mm; padding: 3mm; display: flex; flex-direction: column; position: relative; overflow: hidden; page-break-after: always; break-after: page; }
+.L { width: 100mm; height: 80mm; padding: 4mm 4.2mm 3.6mm; display: flex; flex-direction: column; position: relative; overflow: hidden; page-break-after: always; break-after: page; }
+.L::after { content: ""; position: absolute; inset: 1.6mm; border: .6mm solid #000; border-radius: 2.6mm; pointer-events: none; }
 .L:last-child { page-break-after: auto; break-after: auto; }
 .bc { display: block; width: 100%; height: 100%; fill: #000; }
 .top .bc { height: 16mm; width: 86%; margin: 0 auto; }
 .tn { text-align: center; font-weight: 800; font-size: 10.5pt; letter-spacing: 2px; margin-top: .5mm; line-height: 1.1; }
-.car { position: absolute; right: 3mm; top: 21.6mm; font-size: 5.5pt; font-weight: 800; letter-spacing: .5px; }
+.car { font-weight: 800; letter-spacing: .3px; }
 .mid { flex: 1; display: flex; gap: 3mm; align-items: flex-start; margin-top: 1.6mm; border-top: .4mm solid #000; padding-top: 1.8mm; min-height: 0; }
 .who { flex: 1; min-width: 0; height: 100%; overflow: hidden; }
 .nm { font-size: 13pt; font-weight: 900; line-height: 1.08; display: block; }
@@ -3434,17 +3435,16 @@ body { font-family: "Segoe UI", Arial, Helvetica, sans-serif; color: #000; }
 .logo { width: 30mm; height: 19mm; flex: none; object-fit: contain; }
 .bot { display: flex; align-items: flex-end; gap: 3mm; border-top: .4mm solid #000; padding-top: 1.5mm; }
 .loc { flex: 1; min-width: 0; display: grid; gap: .8mm; }
-.loc b { font-size: 14pt; font-weight: 900; line-height: 1; white-space: nowrap; overflow: hidden; }
+.loc b { font-size: 14pt; font-weight: 900; line-height: 1.2; white-space: nowrap; overflow: hidden; padding-top: .3mm; }
 .loc small { font-size: 7.5pt; font-weight: 700; }
 .ob { width: 46mm; flex: none; padding: 0 2mm; } .ob .bc { height: 9mm; } .ob small { display: block; text-align: center; font-size: 6.5pt; font-weight: 700; letter-spacing: 1px; margin-top: .3mm; }`;
 function labelPageHTML(d) {
   const city = [d.district, d.city].filter(Boolean).join(' / ').toLocaleUpperCase('tr');
   return `<div class="L"><div class="top">${barcodeSVG(d.tracking)}<div class="tn">${esc(d.tracking)}</div></div>
-    <div class="car">${esc((d.provider || '').replace(/ Marketplace$/i, '').toLocaleUpperCase('tr'))}</div>
     <div class="mid"><div class="who"><b class="nm">${esc((d.name || '').toLocaleUpperCase('tr'))}</b>${d.company ? `<div class="co">${esc(d.company)}</div>` : ''}
       <div class="ad">${esc(d.address || '')}</div>${d.neighborhood && !trLower(d.address || '').includes(trLower(d.neighborhood)) ? `<div class="nb">${esc(d.neighborhood)}</div>` : ''}</div>
       <img class="logo" src="${location.origin}/static/etiket-logo.png" alt=""></div>
-    <div class="bot"><div class="loc"><b>${esc(city)}</b><small>Sipariş ${esc(d.order_number)}${d.boxes > 1 ? ` · ${d.boxes} koli` : ''}</small></div>
+    <div class="bot"><div class="loc"><b>${esc(city)}</b><small>Sipariş ${esc(d.order_number)}${d.boxes > 1 ? ` · ${d.boxes} koli` : ''}${d.provider ? `<br><span class="car">${esc(d.provider.replace(/ Marketplace$/i, '').toLocaleUpperCase('tr'))}</span>` : ''}</small></div>
       <div class="ob">${barcodeSVG(d.tracking)}<small>${esc(d.tracking)}</small></div></div></div>`;
 }
 // Uzun ad/adres: sığana kadar yazı küçülür (ad en az 9pt, adres en az 6.5pt)
