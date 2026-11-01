@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.5.0
+- Trendyol fiyatı değiştirme ve sipariş kargo firması değiştirme; her seferinde "eski → yeni" onayı.
+- Satış ayarlarında varsayılan kapalı "Trendyol'a değişiklik gönder" ana anahtarı.
+
 ## 1.4.0
 - Siparişte adet yetmiyorsa uyarı (3 lazım, rafta 1); çok parçalı üründe eksik parça sayısı.
 - Kapalı listede eksik siparişler yanıp söner (bazı kalemler sarı, hepsi kırmızı); son teslim ve "BUGÜN" vurgusu.

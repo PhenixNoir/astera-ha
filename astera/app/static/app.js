@@ -3427,6 +3427,7 @@ function tyoBody(p) {
       ${p.cargo_provider || p.cargo_no ? `<div class="oc-cargo${tex ? '' : ' other'}">${icon('pack')}<div><b>${esc((p.cargo_provider || 'Kargo').replace(/ Marketplace$/i, ''))}</b>${p.cargo_no ? `<span class="mono">${esc(p.cargo_no)}</span>` : ''}
         ${p.cargo_real != null ? `<small>kargo faturası ${fmtTL(p.cargo_real)}${p.cargo_desi ? ` · ${p.cargo_desi} desi` : ''}</small>` : ''}</div>
         ${p.cargo_link && /^https?:\/\//.test(p.cargo_link) ? `<a class="oc-trk" href="${esc(p.cargo_link)}" target="_blank" rel="noopener" title="Kargo takibi">↗</a>` : ''}</div>` : ''}
+      ${['new', 'picking'].includes(p.tab) ? `<button type="button" class="linkish oc-chg" data-act="ty-cargo" data-id="${esc(p.package_id)}" data-cur="${esc(p.cargo_provider || '')}" data-no="${esc(p.order_number)}">Kargo firmasını değiştir</button>` : ''}
       ${acts.trim() ? `<div class="oc-acts">${acts}</div>` : ''}
     </aside>
     ${r ? `<details class="oc-pf"${pfOpen ? ' open' : ''}><summary><span class="oc-pill ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)} <small>${fmtPct(r.margin)}</small></span><span>Kâr ayrıntısı</span>${r.missing.length ? '<span class="warn-text" style="font-size:12.5px">eksik bilgi var</span>' : ''}</summary>
@@ -4328,6 +4329,8 @@ PAGES.satis = {
             <label class="switch"><input type="checkbox" id="ty-restock" ${st.ty_restock_cancel ? 'checked' : ''}> İptal edilen siparişleri stoğa geri ekle</label>
             <label class="switch"><input type="checkbox" id="ty-en" ${st.ty_enabled ? 'checked' : ''}> Otomatik takip açık</label>
           </div>
+          <div class="ty-write${st.ty_write ? ' on' : ''}"><label class="switch"><input type="checkbox" id="ty-write" ${st.ty_write ? 'checked' : ''}> <b>Trendyol'a değişiklik gönder</b></label>
+            <small>Açıkken Astera'dan Trendyol'daki ürün fiyatı ve siparişin kargo firması değiştirilebilir; her değişiklikten önce "eski → yeni" onayı istenir. Kapalıyken Trendyol'a hiçbir değişiklik gönderilmez. Ürün düzenleme ekranı yalnızca Astera'yı değiştirir, Trendyol'a hiçbir şey göndermez.</small></div>
           <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-primary" data-act="ty-save">Kaydet</button><button class="btn" data-act="ty-test">Bağlantıyı dene</button><button class="btn" data-act="ty-diag">Tanılama</button></div>
         </div>
       </details>
@@ -4941,6 +4944,8 @@ const ACTIONS = {
   'jc-save': () => jcSave(),
   'bb-f': (el) => { S.bbf = el.dataset.v; render(); },
   'bb-open': (el) => openBuybox(el.dataset.bc),
+  'ty-price': (el) => openTyPrice(el.dataset.bc, el.dataset.name, el.dataset.pid, el.dataset.bb ? +el.dataset.bb : null),
+  'ty-cargo': (el) => openTyCargo(el.dataset.id, el.dataset.cur, el.dataset.no),
   'bb-edit': (el) => { closeModal(); openProductEditor(+el.dataset.id); },
   'bb-check': async (el) => {
     el.disabled = true; el.innerHTML = `${icon('refresh')} Kontrol ediliyor…`;
@@ -5080,7 +5085,8 @@ const ACTIONS = {
     try { const r = await api('POST', `/api/products/${id}/stock`, { delta: -q, reason: 'sale', ref: $('#ms-ref').value.trim() || null }); toast(`${productById(id).name}: stok ${r.stock}`); $('#ms-ref').value = ''; $('#ms-q').value = 1; await loadProducts(); $('#ms-p').innerHTML = `<option value="">Ürün seçin…</option>` + S.products.map((p) => `<option value="${p.id}">${esc(p.name)} (stok ${p.stock})</option>`).join(''); } catch (e) { fail(e); }
   },
   'ty-save': async () => {
-    const body = { ty_seller_id: $('#ty-sid').value, ty_api_key: $('#ty-key').value, ty_interval_min: +$('#ty-int').value || 5, ty_restock_cancel: $('#ty-restock').checked, ty_enabled: $('#ty-en').checked };
+    const body = { ty_seller_id: $('#ty-sid').value, ty_api_key: $('#ty-key').value, ty_interval_min: +$('#ty-int').value || 5, ty_restock_cancel: $('#ty-restock').checked, ty_enabled: $('#ty-en').checked, ty_write: $('#ty-write').checked };
+    if (body.ty_write && !S.settings?.ty_write && !confirm("Trendyol'a değişiklik gönderme açılacak. Fiyat ve kargo firması değişiklikleri (her seferinde onayınızla) Trendyol'a gönderilebilecek. Devam edilsin mi?")) return;
     if ($('#ty-since').value) body.ty_since = new Date($('#ty-since').value).getTime();
     if ($('#ty-sec').value) body.ty_api_secret = $('#ty-sec').value;
     try { S.settings = await api('PUT', '/api/settings', body); toast('Trendyol ayarları kaydedildi'); render(); } catch (e) { fail(e); }
@@ -5310,7 +5316,8 @@ PAGES.urun = {
           <dt>Komisyon</dt><dd>${ty.commission != null ? '%' + String(ty.commission).replace('.', ',') : '–'}</dd>
           <dt>90 günde sipariş</dt><dd>${d.ty_orders.qty} adet · ${d.ty_orders.lines} satır${d.ty_orders.avg_price ? ` · ort. ${fmtTL(d.ty_orders.avg_price)}` : ''}</dd>
           <dt>Buybox</dt><dd>${!bb ? '<span class="muted">kontrol edilmedi</span>' : !bb.multi && bb.buybox_order === 1 ? 'tek satıcı' : bb.buybox_order === 1 ? '<span class="ok-text">bizde</span>' : `<span class="bad-text">${bb.buybox_order}. sıradayız · buybox ${fmtTL(bb.buybox_price)}</span>`}${bb?.multi ? ` <a href="#/buybox" class="muted">ayrıntı</a>` : ''}</dd>
-          <dt>Barkod</dt><dd>${esc(ty.barcode)}</dd></dl>` : '<p class="muted" style="margin:0">Trendyol ürünüyle eşleşmiyor (barkod alanını kontrol edin).</p>'}</div></section>
+          <dt>Barkod</dt><dd>${esc(ty.barcode)}</dd></dl>
+          <button class="btn btn-sm ty-w-btn" data-act="ty-price" data-bc="${esc(ty.barcode)}" data-name="${esc(p.name)}" data-pid="${p.id}"${bb && bb.buybox_order > 1 ? ` data-bb="${bb.buybox_price}"` : ''}>${icon('edit')} Trendyol fiyatını değiştir</button>` : '<p class="muted" style="margin:0">Trendyol ürünüyle eşleşmiyor (barkod alanını kontrol edin).</p>'}</div></section>
       </div>
       <div class="two-col">
         <section class="panel" data-uisec="sec.urun.jobs"><div class="panel-h"><h2>Baskı geçmişi</h2><span class="muted" style="font-size:13px">${st.avg_job_min ? `ortalama ${fmtDur(st.avg_job_min)}` : ''}</span></div><div class="panel-b">
@@ -5399,7 +5406,88 @@ function openBuybox(bc) {
         ${x.history.map((h) => `<tr><td>${fmtWhen(h.at)}</td><td class="num">${h.order ?? '–'}</td><td class="num">${fmtTL(h.buybox)}</td><td class="num">${h.second ? fmtTL(h.second) : '–'}</td><td class="num">${fmtTL(h.ours)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">Henüz değişim kaydı yok.</p>'}</div>
     </div>
     <div class="modal-f">${x.url ? `<a class="btn btn-ghost" href="${esc(x.url)}" target="_blank" rel="noopener">Trendyol'da aç</a>` : ''}${x.product_id ? `<a class="btn" href="#/urun?id=${x.product_id}" onclick="closeModal(true)">Ürün sayfası</a><button class="btn" data-act="bb-edit" data-id="${x.product_id}">Ürünü düzenle</button>` : ''}
+      <button class="btn ty-w-btn" data-act="ty-price" data-bc="${esc(x.barcode)}" data-name="${esc(x.name)}"${x.product_id ? ` data-pid="${x.product_id}"` : ''}${x.status === 'cheaper' && x.buybox ? ` data-bb="${x.buybox}"` : ''}>${icon('edit')} Trendyol fiyatını değiştir</button>
       <div class="right"><button class="btn btn-primary" data-act="close">Tamam</button></div></div>`, 'wide');
+}
+
+// ================================================================== Trendyol'a yazma: fiyat ve kargo firması (her seferinde eski → yeni onayı)
+function writeOffNote() {
+  return `<div class="notice ty-off">${icon('alert')}<div>Trendyol'a değişiklik gönderme <b>kapalı</b>. Açmak için Satış → Trendyol ayarları → "Trendyol'a değişiklik gönder".</div></div>`;
+}
+function diffConfirm(title, rows) {
+  return new Promise((res) => {
+    const pop = document.createElement('div'); pop.className = 'modal-back sub';
+    pop.innerHTML = `<div class="modal narrow" role="dialog" aria-modal="true"><div class="modal-h ty-diff-h"><h2>${title}</h2></div>
+      <div class="modal-b"><p style="margin:0">Trendyol'da şunlar değişecek:</p>
+        <div class="ty-diff">${rows.map(([k, a, b]) => `<div><span>${esc(k)}</span><s>${esc(a)}</s><b>${esc(b)}</b></div>`).join('')}</div>
+        <small class="muted">Bu değişiklik doğrudan Trendyol'a gönderilir.</small></div>
+      <div class="modal-f"><button class="btn" data-d="0">Vazgeç</button><div class="right"><button class="btn btn-primary" data-d="1">Trendyol'a gönder</button></div></div></div>`;
+    document.body.appendChild(pop);
+    pop.addEventListener('click', (e) => { const b = e.target.closest('[data-d]'); if (!b && e.target !== pop) return; pop.remove(); res(b?.dataset.d === '1'); });
+  });
+}
+async function openTyPrice(bc, name, pid, bbPrice) {
+  let d; try { d = await api('GET', `/api/trendyol/price/${encodeURIComponent(bc)}`); if (pid && !S.profit) await loadProfit().catch(() => null); } catch (e) { return fail(e); }
+  const inf = d.info;
+  if (!inf) return toast('Bu barkod Trendyol ürün listesinde yok; Satış sayfasından ürünleri eşitleyin', { bad: true });
+  const p = pid ? productById(+pid) : null;
+  const prof = (v) => { if (!p || !v) return ''; const r = S.profit ? productProfit(p, { price: v }).r : null; return r ? `kâr ${fmtTL(r.profit)} · <span class="mg ${marginCls(r.margin)}">${fmtPct(r.margin)}</span>` : ''; };
+  const sub = $('#modal-root').children.length;
+  const html = `<div class="modal-h ty-w-h"><h2>Trendyol fiyatı</h2><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
+    <div class="modal-b">
+      ${d.write ? '' : writeOffNote()}
+      <p style="margin:0"><b>${esc(name || inf.title || bc)}</b><br><small class="muted">${esc(bc)} · Trendyol'daki ürünü değiştirir (Astera'daki ürüne dokunmaz)</small></p>
+      <div class="ty-cur"><div><span>Şu anki satış fiyatı</span><b>${fmtTL(inf.sale_price)}</b></div><div><span>Liste fiyatı (üstü çizili)</span><b>${fmtTL(inf.list_price)}</b></div></div>
+      <div class="row"><label class="field"><span>Yeni satış fiyatı</span><div class="input-group"><input class="input" id="tp-sale" inputmode="decimal" value="${inf.sale_price ?? ''}"><span class="suffix">₺</span></div><small id="tp-prof">${prof(inf.sale_price)}</small></label>
+        <label class="field"><span>Liste fiyatı <span class="faint">(boş = değişmez)</span></span><div class="input-group"><input class="input" id="tp-list" inputmode="decimal" placeholder="${inf.list_price ?? ''}"><span class="suffix">₺</span></div></label></div>
+      ${bbPrice ? `<div class="chips"><button type="button" class="chip" data-tp="${bbPrice}">Buybox fiyatı ${fmtTL(bbPrice)}</button><button type="button" class="chip" data-tp="${Math.max(0, bbPrice - 1)}">Buybox − 1 ₺</button></div>` : ''}
+      <div id="tp-res"></div>
+    </div>
+    <div class="modal-f"><div class="right"><button class="btn" data-act="close">Kapat</button><button class="btn btn-primary" id="tp-go"${d.write ? '' : ' disabled'}>Gönder…</button></div></div>`;
+  openModal(html, 'narrow');
+  const num = (v) => { const n = parseFloat(String(v).replace(/\./g, (m, i, s2) => (s2.indexOf(',') > -1 ? '' : m)).replace(',', '.')); return isFinite(n) ? n : null; };
+  $('#tp-sale').addEventListener('input', () => { $('#tp-prof').innerHTML = prof(num($('#tp-sale').value)); });
+  $$('[data-tp]').forEach((b) => b.addEventListener('click', () => { $('#tp-sale').value = String(b.dataset.tp).replace('.', ','); $('#tp-sale').dispatchEvent(new Event('input')); }));
+  $('#tp-go').onclick = async () => {
+    const sale = num($('#tp-sale').value), lst = $('#tp-list').value.trim() ? num($('#tp-list').value) : null;
+    if (!sale || sale <= 0) return toast('Geçerli bir satış fiyatı yazın', { bad: true });
+    if (lst != null && lst < sale) return toast('Liste fiyatı satış fiyatından düşük olamaz', { bad: true });
+    if (Math.abs(sale - (inf.sale_price || 0)) < 0.005 && lst == null) return toast('Fiyat aynı', { bad: true });
+    const rows = [['Satış fiyatı', fmtTL(inf.sale_price), fmtTL(sale)]];
+    const newList = lst ?? Math.max(sale, inf.list_price || 0);
+    if (Math.abs(newList - (inf.list_price || 0)) >= 0.005) rows.push(['Liste fiyatı', fmtTL(inf.list_price), fmtTL(newList)]);
+    if (!await diffConfirm('Fiyat değişikliği', rows)) return;
+    const go = $('#tp-go'); go.disabled = true; go.textContent = 'Gönderiliyor…';
+    $('#tp-res').innerHTML = '<p class="muted">Trendyol\'a gönderildi, sonuç bekleniyor…</p>';
+    try {
+      const r = await api('POST', '/api/trendyol/price', { barcode: bc, sale_price: sale, list_price: lst });
+      $('#tp-res').innerHTML = r.status === 'SUCCESS' ? `<div class="notice ok">${icon('check')}<div>Trendyol fiyatı <b>${fmtTL(sale)}</b> oldu.</div></div>`
+        : r.status === 'FAILED' ? `<div class="notice bad">${icon('alert')}<div>Trendyol reddetti: ${esc((r.reasons || []).join('; ') || 'sebep belirtilmedi')}</div></div>`
+        : `<div class="notice">${icon('refresh')}<div>Trendyol işlemi sıraya aldı; birkaç dakika içinde yansır.</div></div>`;
+      go.textContent = 'Gönderildi';
+      if (r.status === 'SUCCESS' && S.bb) { const it = S.bb.items.find((x) => x.barcode === bc); if (it) it.ours = sale; }
+    } catch (e) { fail(e); go.disabled = false; go.textContent = 'Gönder…'; $('#tp-res').innerHTML = ''; }
+  };
+  void sub;
+}
+async function openTyCargo(pkgId, cur, orderNo) {
+  let d; try { d = await api('GET', '/api/trendyol/cargo-codes'); } catch (e) { return fail(e); }
+  openModal(`<div class="modal-h ty-w-h"><h2>Kargo firmasını değiştir</h2><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
+    <div class="modal-b">${d.write ? '' : writeOffNote()}
+      <p style="margin:0">Sipariş <b>${esc(orderNo)}</b> · şu an <b>${esc((cur || 'bilinmiyor').replace(/ Marketplace$/i, ''))}</b></p>
+      <div class="cg-list">${d.codes.map((c) => `<label class="cg"><input type="radio" name="cg" value="${c.code}" data-name="${esc(c.name)}"${(cur || '').toLowerCase().startsWith(c.name.toLowerCase().split(' ')[0]) ? ' disabled' : ''}><span>${esc(c.name)}</span></label>`).join('')}</div>
+      <small class="muted">Trendyol bir paketin kargo firmasını 5 dakikada yalnızca bir kez değiştirmeye izin verir. Trendyol Express kotanız doluysa TEX'e geçiş reddedilir. Değişince takip numarası da değişir; etiketi yeniden basın.</small></div>
+    <div class="modal-f"><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" id="cg-go"${d.write ? '' : ' disabled'}>Gönder…</button></div></div>`, 'narrow');
+  $('#cg-go').onclick = async () => {
+    const r = $('input[name=cg]:checked'); if (!r) return toast('Kargo firması seçin', { bad: true });
+    if (!await diffConfirm('Kargo firması değişikliği', [['Kargo firması', (cur || 'bilinmiyor').replace(/ Marketplace$/i, ''), r.dataset.name]])) return;
+    $('#cg-go').disabled = true;
+    try {
+      const res = await api('POST', '/api/trendyol/cargo', { package_id: pkgId, code: r.value });
+      closeModal(); toast(`Kargo firması ${res.new} oldu${res.cargo?.cargo_no ? ` · yeni takip no ${res.cargo.cargo_no}` : ''}`);
+      await loadTyOrders(); tyoRes();
+    } catch (e) { fail(e); $('#cg-go').disabled = false; }
+  };
 }
 
 // ================================================================== hızlı arama (Ctrl+K) ve kısayollar

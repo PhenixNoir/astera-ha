@@ -61,6 +61,7 @@ def public_settings():
             "ship_skip_sunday": _get("ship_skip_sunday", "0") == "1",
             "plan_days": int(_get("plan_days", "14") or 14),
             "weekly_at": _get("weekly_at") or "1 09:00",
+            "ty_write": _get("ty_write", "0") == "1",
         }
 
 
@@ -117,7 +118,7 @@ def save_settings(b):
             _set("ty_api_secret", b["ty_api_secret"].strip())
         if "ty_interval_min" in b:
             _set("ty_interval_min", max(2, int(b["ty_interval_min"] or 5)))
-        for k in ("ty_restock_cancel", "ty_stage"):
+        for k in ("ty_restock_cancel", "ty_stage", "ty_write"):
             if k in b:
                 _set(k, "1" if b[k] else "0")
         if "ty_enabled" in b:
@@ -980,6 +981,97 @@ def label_data(package_ids):
             "boxes": int(pkg.get("boxQuantity") or 1), "deci": pkg.get("cargoDeci") or pkg.get("deci"),
         })
     return {"labels": labels, "errors": errors}
+
+
+# ---------------------------------------------------------------- Trendyol'a yazma (fiyat, kargo firması)
+# Hepsi Ayarlar'daki "Trendyol'a değişiklik gönder" anahtarına bağlı; kapalıyken hiçbir şey gönderilmez.
+
+CARGO_CODES = [("TEXMP", "Trendyol Express"), ("ARASMP", "Aras Kargo"), ("YKMP", "Yurtiçi Kargo"), ("SURATMP", "Sürat Kargo"),
+               ("PTTMP", "PTT Kargo"), ("HOROZMP", "Horoz Lojistik"), ("DHLECOMMP", "DHL eCommerce"), ("CEVAMP", "CEVA Lojistik"),
+               ("KOLAYGELSINMP", "Kolay Gelsin")]
+
+
+def write_enabled():
+    with _lock:
+        return _get("ty_write", "0") == "1"
+
+
+def _need_write():
+    if not write_enabled():
+        raise TrendyolError("Trendyol'a değişiklik gönderme kapalı. Açmak için: Satış → Trendyol ayarları → \"Trendyol'a değişiklik gönder\".")
+
+
+def price_info(barcode):
+    with _lock:
+        r = _db().execute("SELECT barcode, title, sale_price, list_price, updated_at FROM ty_products WHERE barcode=?", (barcode,)).fetchone()
+    return dict(r) if r else None
+
+
+def update_price(barcode, sale, lst=None):
+    """Yalnızca fiyat gönderilir (stok gönderilmez). Sonuç toplu işlem kimliğiyle sorgulanır."""
+    _need_write()
+    sale = round(float(sale), 2)
+    if sale <= 0:
+        raise TrendyolError("Satış fiyatı 0'dan büyük olmalı")
+    cur = price_info(barcode)
+    if not cur:
+        raise TrendyolError("Bu barkod Trendyol ürün listesinde yok; önce Satış sayfasından ürünleri eşitleyin")
+    lst = round(float(lst), 2) if lst not in (None, "") else max(sale, float(cur["list_price"] or 0))
+    if lst < sale:
+        raise TrendyolError("Liste fiyatı satış fiyatından düşük olamaz")
+    data = _request("/integration/inventory/sellers/{sid}/products/price-and-inventory", None, method="POST",
+                    body={"items": [{"barcode": barcode, "salePrice": sale, "listPrice": lst}]})
+    bid = data.get("batchRequestId")
+    res = {"batch": bid, "status": "PENDING", "old": {"sale": cur["sale_price"], "list": cur["list_price"]}, "new": {"sale": sale, "list": lst}}
+    for _ in range(6):   # sonuç genelde birkaç saniyede gelir
+        time.sleep(2)
+        try:
+            st = batch_status(bid)
+        except TrendyolError:
+            continue
+        if st["status"] in ("SUCCESS", "FAILED"):
+            res.update(st)
+            break
+    if res["status"] == "SUCCESS":
+        with _lock:
+            _db().execute("UPDATE ty_products SET sale_price=?, list_price=? WHERE barcode=?", (sale, lst, barcode))
+            _db().commit()
+    return res
+
+
+def batch_status(bid):
+    d = _request(f"/integration/product/sellers/{{sid}}/products/batch-requests/{bid}", None)
+    items = d.get("items") or []
+    if not items:
+        return {"status": "PENDING", "reasons": []}
+    it = items[0]
+    st = (it.get("status") or "").upper()
+    reasons = [str(x) for x in (it.get("failureReasons") or [])]
+    return {"status": "SUCCESS" if st == "SUCCESS" else "FAILED" if st in ("FAILED", "FAILURE", "ERROR") else "PENDING", "reasons": reasons}
+
+
+def change_cargo(package_id, code):
+    _need_write()
+    codes = dict(CARGO_CODES)
+    if code not in codes:
+        raise TrendyolError("Geçersiz kargo firması")
+    with _lock:
+        r = _db().execute("SELECT MAX(ty_status) st, MAX(cargo_provider) p FROM ty_lines WHERE package_id=?", (str(package_id),)).fetchone()
+    if not r or not r["st"]:
+        raise TrendyolError("Paket bulunamadı")
+    if r["st"] not in ("Created", "Picking", "Invoiced"):
+        raise TrendyolError("Kargoya verilmiş siparişin kargo firması değiştirilemez")
+    _request(f"/integration/order/sellers/{{sid}}/shipment-packages/{package_id}/cargo-providers", None, method="PUT",
+             body={"cargoProvider": code})
+    with _lock:   # takip no / firma tazelensin diye boşalt; package_cargo Trendyol'dan yeniden okur
+        _db().execute("UPDATE ty_lines SET cargo_no=NULL, cargo_provider=NULL, cargo_link=NULL WHERE package_id=?", (str(package_id),))
+        _db().commit()
+    time.sleep(1.5)
+    try:
+        info = package_cargo(package_id)
+    except TrendyolError:
+        info = None
+    return {"ok": True, "old": r["p"], "new": codes[code], "cargo": info}
 
 
 def _zpl_parts(x):

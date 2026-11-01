@@ -2425,3 +2425,31 @@ details.anim-open > :not(summary) { animation: sec-in .2s cubic-bezier(.2,.8,.2,
 /* bildirim panelinde yazıcı bildirimleri hafifçe yanıp söner */
 .nf.live.k-printer, .nf.live.k-print_done { animation: nf-blink 2.2s ease-in-out infinite; }
 @keyframes nf-blink { 50% { background-color: color-mix(in srgb, var(--pei) 14%, var(--sheet)); box-shadow: inset 3px 0 0 var(--pei); } }
+
+/* ---------- Trendyol'a yazma */
+.ty-write { display: grid; gap: 4px; padding: 10px 12px; border-radius: 10px; border: 1.5px dashed var(--line); }
+.ty-write.on { border: 1.5px solid #F27A1A; background: color-mix(in srgb, #F27A1A 8%, transparent); }
+.ty-write small { color: var(--ink-2); font-size: 12.5px; }
+.ty-w-btn { border-color: color-mix(in srgb, #F27A1A 60%, var(--line)); }
+.ty-w-btn svg { color: #F27A1A; }
+.ty-w-h { box-shadow: inset 0 3px 0 #F27A1A; }
+.ty-diff-h { background: #F27A1A; color: #fff; border-radius: var(--r-l) var(--r-l) 0 0; }
+.ty-diff-h h2 { color: #fff; }
+.ty-diff { display: grid; gap: 6px; }
+.ty-diff div { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: baseline; padding: 8px 12px; border-radius: 10px; background: var(--sheet-2); }
+.ty-diff span { color: var(--ink-2); font-size: 13px; }
+.ty-diff s { color: var(--ink-3); }
+.ty-diff b { font-size: 16px; color: #F27A1A; }
+.ty-diff b::before { content: "→ "; color: var(--ink-3); font-weight: 400; }
+.ty-cur { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ty-cur div { display: grid; padding: 10px 12px; border-radius: 10px; background: var(--sheet-2); }
+.ty-cur span { font-size: 12px; color: var(--ink-2); } .ty-cur b { font-size: 18px; }
+.notice.ty-off { border-color: #F27A1A; }
+.notice.ok { border-color: var(--ok); } .notice.bad { border-color: var(--bad); }
+.oc-chg { font-size: 12.5px; justify-self: start; color: var(--ink-2); }
+.cg-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.cg { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.cg:has(input:checked) { border-color: var(--pei); background: var(--pei-wash); }
+.cg:has(input:disabled) { opacity: .45; cursor: default; }
+.cg input { accent-color: var(--pei); }
+.notice.ok { background: var(--ok-wash); color: var(--ink); } .notice.bad { background: var(--bad-wash); color: var(--ink); }

@@ -470,3 +470,7 @@ Dışarıdan erişim isterseniz Tailscale gibi bir VPN en güvenli yoldur.
 **Baskı çizelgesi** — Yazıcının tanıyamadığı bir baskıyı geç onaylasanız da çizelgede baskı, bildirimin geldiği andan başlar.
 
 **Sıralama tercihleri** — Ürünler, Filamentler, Hazırla ve Siparişler'de seçilen sıralama bu bilgisayarda hatırlanır. Bildirim panelinde yazıcı bildirimleri hafifçe yanıp söner.
+
+**Trendyol'a değişiklik gönderme (fiyat, kargo firması)** — Satış → Trendyol ayarları'ndaki "Trendyol'a değişiklik gönder" anahtarı varsayılan olarak kapalıdır; kapalıyken Astera Trendyol'a hiçbir değişiklik göndermez. Ürün düzenleme ekranı yalnızca Astera'yı değiştirir. Açıkken:
+- Ürün sayfasındaki Trendyol kutusundan ya da Buybox ayrıntısından "Trendyol fiyatını değiştir": yeni fiyat yazılır (o fiyattaki kâr anında görünür; buybox fiyatı / buybox − 1 ₺ kısayolları), göndermeden önce turuncu "eski → yeni" onay penceresi çıkar. Yalnızca fiyat gönderilir, stok gönderilmez.
+- Sipariş kartında "Kargo firmasını değiştir" (Yeni / Hazırlanıyor siparişlerde): firma seçilir, yine "eski → yeni" onayı istenir. Trendyol bir paketi 5 dakikada bir kez değiştirmeye izin verir; değişince etiketi yeniden basın.

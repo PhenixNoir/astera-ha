@@ -3312,6 +3312,41 @@ def api_ty_label_mark(req):
     return {"ok": True}
 
 
+@route("GET", "/api/trendyol/price/{barcode}")
+def api_ty_price_get(req, barcode):
+    return {"info": trendyol.price_info(barcode), "write": trendyol.write_enabled()}
+
+
+@route("POST", "/api/trendyol/price", lock=False)
+def api_ty_price(req):
+    b = req.json()
+    if not b.get("barcode"):
+        raise ApiError("Barkod gerekli")
+    try:
+        sale = float(str(b.get("sale_price")).replace(",", "."))
+    except (TypeError, ValueError):
+        raise ApiError("Satış fiyatını yazın")
+    lst = b.get("list_price")
+    lst = float(str(lst).replace(",", ".")) if lst not in (None, "") else None
+    return trendyol.update_price(str(b["barcode"]), sale, lst)
+
+
+@route("GET", "/api/trendyol/batch/{bid}", lock=False)
+def api_ty_batch(req, bid):
+    return trendyol.batch_status(bid)
+
+
+@route("GET", "/api/trendyol/cargo-codes", lock=False)
+def api_ty_cargo_codes(req):
+    return {"codes": [{"code": c, "name": n} for c, n in trendyol.CARGO_CODES], "write": trendyol.write_enabled()}
+
+
+@route("POST", "/api/trendyol/cargo", lock=False)
+def api_ty_cargo(req):
+    b = req.json()
+    return trendyol.change_cargo(str(b.get("package_id") or ""), str(b.get("code") or ""))
+
+
 def app_version():
     try:
         with open(os.path.join(BASE_DIR, "VERSION"), encoding="utf-8") as f:
