@@ -461,6 +461,9 @@ def link_event(event_id, job_id, file_name, product_id, component_id=None, remem
     if ev:
         _db().execute("UPDATE print_jobs SET bambu_task=?, note=CASE WHEN COALESCE(note,'')='' THEN ? ELSE note END WHERE id=?",
                       (ev["task"], f"Bambu: {ev['file']} · onaylandı", job_id))
+        # Onay geç verildiyse çizelgede baskı, bildirimin geldiği andan başlasın (onaylandığı andan değil)
+        if ev.get("at"):
+            _db().execute("UPDATE print_jobs SET started_at=MIN(started_at, ?) WHERE id=?", (int(ev["at"]), job_id))
         if ev.get("grams"):
             _db().execute("UPDATE print_jobs SET file_grams=? WHERE id=? AND file_grams IS NULL", (ev["grams"], job_id))
             fill_product_grams(job_id)

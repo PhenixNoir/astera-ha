@@ -1,5 +1,11 @@
 # Sürüm notları
 
+## 1.4.0
+- Siparişte adet yetmiyorsa uyarı (3 lazım, rafta 1); çok parçalı üründe eksik parça sayısı.
+- Kapalı listede eksik siparişler yanıp söner (bazı kalemler sarı, hepsi kırmızı); son teslim ve "BUGÜN" vurgusu.
+- Geç onaylanan baskı çizelgede bildirimin geldiği andan başlar.
+- Sıralama seçimleri bilgisayarda hatırlanır; yazıcı bildirimleri panelde yanıp söner.
+
 ## 1.3.0
 - Yeni sipariş kartı: büyük ürün satırları, belirgin adet, "Rafta yok" vurgusu, büyük Hazırlanıyor/Barkod düğmeleri, açılır kâr ayrıntısı.
 

@@ -462,3 +462,11 @@ Dışarıdan erişim isterseniz Tailscale gibi bir VPN en güvenli yoldur.
 **Trendyol Express dışı kargo uyarısı** — Etiket basarken siparişin kargosu Trendyol Express değilse kırmızı bir uyarı penceresi çıkar ve onay ister; etikette de kargo adı siyah kutu içinde yazar.
 
 **Sipariş kartı** — Siparişler'de bir siparişi açınca ürünler büyük görsel, ad ve kocaman adetle listelenir (2 ve üstü adet koyu kutuda); rafta olmayan ürün kırmızı şeritle ve "Rafta yok" etiketiyle işaretlenir (kapalı satırdaki küçük görselde de kırmızı çerçeve). Sağda kargo bilgisi (Trendyol Express dışıysa kırmızı çerçeveli) ve büyük "Hazırlanıyor'a çek" / "Barkodu bas" düğmeleri durur. Kâr ayrıntısı alttaki yeşil kâr hapından açılıp kapanır; son tercih hatırlanır.
+
+**Eksik ürün vurgusu** — Siparişte bir üründen rafta olandan fazlası lazımsa (ör. 3 lazım, rafta 1) ürün satırında "Rafta 1 / 3 lazım · 2 eksik" yazar (sarı); hiç yoksa "Rafta yok" (kırmızı). Çok parçalı üründe eksik parça sayısı da görünür ("2/6 parça eksik"). Kapalı listede: bazı kalemleri eksik sipariş yavaşça sarı, tüm kalemleri eksik sipariş daha hızlı kırmızı yanıp söner; solda akan renkli şerit olur.
+
+**Bugün teslim** — Kapalı listede son teslim süresi hep görünür. Saat 09:00'dan sonra son teslime 24 saatten az kalan siparişlerde "BUGÜN" etiketi çıkar ve sipariş numarası turuncu olur.
+
+**Baskı çizelgesi** — Yazıcının tanıyamadığı bir baskıyı geç onaylasanız da çizelgede baskı, bildirimin geldiği andan başlar.
+
+**Sıralama tercihleri** — Ürünler, Filamentler, Hazırla ve Siparişler'de seçilen sıralama bu bilgisayarda hatırlanır. Bildirim panelinde yazıcı bildirimleri hafifçe yanıp söner.

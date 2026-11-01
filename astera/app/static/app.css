@@ -1811,13 +1811,13 @@ body:has(.psel-bar) .fab { display: none; }
   [data-ui~="no-nfpanel"] body.nf-open .notif-scrim { display: block; }
 }
 /* Trendyol sipariş satırı sütunları */
-@media (min-width: 1101px) { .tyo > summary { grid-template-columns: 128px var(--c-th, 118px) minmax(0, 1fr) var(--c-amt, 104px) var(--c-pr, 118px) var(--c-dl, 150px); } }
+@media (min-width: 1101px) { .tyo > summary { grid-template-columns: 128px var(--c-th, 118px) minmax(0, 1fr) var(--c-amt, 104px) var(--c-pr, 118px) var(--c-dl, 230px); } }
 [data-ui~="tyo-no-thumbs"] .tyo > summary { --c-th: 0px; } [data-ui~="tyo-no-thumbs"] .tyo-thumbs { visibility: hidden; overflow: hidden; }
 [data-ui~="tyo-no-who"] .tyo-who { visibility: hidden; }
 [data-ui~="tyo-no-amt"] .tyo > summary { --c-amt: 0px; } [data-ui~="tyo-no-amt"] .tyo-amt { visibility: hidden; overflow: hidden; }
 [data-ui~="tyo-no-pr"] .tyo > summary { --c-pr: 0px; } [data-ui~="tyo-no-pr"] .tyo-pr { visibility: hidden; overflow: hidden; }
 [data-ui~="tyo-no-dl"] .tyo > summary { --c-dl: 0px; } [data-ui~="tyo-no-dl"] .tyo-dl { visibility: hidden; overflow: hidden; }
-@media (min-width: 861px) and (max-width: 1100px) { .tyo > summary { grid-template-columns: 118px var(--c-th, 90px) minmax(0, 1fr) var(--c-amt, 96px) var(--c-pr, 110px) var(--c-dl, 130px); } }
+@media (min-width: 861px) and (max-width: 1100px) { .tyo > summary { grid-template-columns: 118px var(--c-th, 90px) minmax(0, 1fr) var(--c-amt, 96px) var(--c-pr, 110px) var(--c-dl, 190px); } }
 @media (max-width: 860px) { [data-ui~="tyo-no-thumbs"] .tyo-thumbs, [data-ui~="tyo-no-who"] .tyo-who, [data-ui~="tyo-no-amt"] .tyo-amt, [data-ui~="tyo-no-pr"] .tyo-pr, [data-ui~="tyo-no-dl"] .tyo-dl { display: none; } }
 
 /* ---------- Ayarlar → Görünüm ve düzen */
@@ -2398,3 +2398,30 @@ details.anim-open > :not(summary) { animation: sec-in .2s cubic-bezier(.2,.8,.2,
   .oc-q { font-size: 21px; min-width: 52px; padding: 8px; }
 }
 .oc-pill.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
+
+/* ---------- sipariş listesi: eksik / bugün teslim vurguları */
+.tyo-row .tyo { position: relative; }
+.tyo-row.short-some .tyo, .tyo-row.short-all .tyo { overflow: hidden; }
+.tyo-row.short-some .tyo::before, .tyo-row.short-all .tyo::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; z-index: 1;
+  background: linear-gradient(180deg, var(--sc1), var(--sc2), var(--sc1)); background-size: 100% 200%; animation: sh-flow var(--sd) linear infinite; }
+.tyo-row.short-some .tyo { --sc1: #E9A23B; --sc2: #FFE08A; --sd: 2.4s; animation: sh-glow-y 2.8s ease-in-out infinite; }
+.tyo-row.short-all .tyo { --sc1: var(--bad); --sc2: #FF9C8F; --sd: 1.2s; animation: sh-glow-r 1.5s ease-in-out infinite; }
+@keyframes sh-flow { to { background-position: 0 -200%; } }
+@keyframes sh-glow-y { 50% { box-shadow: 0 0 0 1px color-mix(in srgb, #E9A23B 55%, transparent), 0 0 18px -6px #E9A23B; background-color: color-mix(in srgb, #E9A23B 6%, var(--sheet)); } }
+@keyframes sh-glow-r { 50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--bad) 70%, transparent), 0 0 20px -6px var(--bad); background-color: color-mix(in srgb, var(--bad) 8%, var(--sheet)); } }
+.tyo-row.short-some .tyo[open], .tyo-row.short-all .tyo[open] { animation: none; }
+.sh-tag { font-weight: 800; font-size: 11.5px; padding: 0 6px; border-radius: 99px; }
+.sh-tag.some { color: #8a5a00; background: #FFE7A8; }
+.sh-tag.all { color: #fff; background: var(--bad); }
+.tyo-dl { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.tyo-term { display: inline-flex; align-items: center; gap: 5px; }
+.tyo-term.today { padding: 2px 3px 2px 8px; border-radius: 99px; background: color-mix(in srgb, var(--warn) 18%, transparent); box-shadow: inset 0 0 0 1.5px var(--warn); }
+.tyo-term.today b { color: var(--warn); font-size: 11.5px; letter-spacing: .6px; font-weight: 900; }
+.tyo-row.due-today .tyo-no b { color: var(--warn); }
+.oc-out.part { background: #E9A23B; color: #2a1a00; animation-duration: 2.6s; }
+.oc-item.out.part { background: linear-gradient(90deg, color-mix(in srgb, #E9A23B 14%, transparent), transparent 70%); box-shadow: inset 4px 0 0 #E9A23B; }
+.oc-parts { font-size: 12px; font-weight: 800; color: var(--warn); border: 1.5px solid currentColor; border-radius: 99px; padding: 0 8px; }
+@media (prefers-reduced-motion: reduce) { .tyo-row .tyo, .tyo-row .tyo::before, .oc-out { animation: none !important; } }
+/* bildirim panelinde yazıcı bildirimleri hafifçe yanıp söner */
+.nf.live.k-printer, .nf.live.k-print_done { animation: nf-blink 2.2s ease-in-out infinite; }
+@keyframes nf-blink { 50% { background-color: color-mix(in srgb, var(--pei) 14%, var(--sheet)); box-shadow: inset 3px 0 0 var(--pei); } }
