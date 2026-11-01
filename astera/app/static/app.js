@@ -3363,7 +3363,7 @@ function tyoRow(p, r) {
     <details class="tyo" ${S.tyo.open.has(p.package_id) ? 'open' : ''} data-tyo-open="${esc(p.package_id)}">
       <summary>
         <span class="tyo-no"><b>${esc(p.order_number)}</b><small class="faint">${date}</small></span>
-        <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l) => `<span class="tt" title="${esc(l.name || '')} ×${l.quantity}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? `<i>${l.quantity}</i>` : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
+        <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l) => `<span class="tt${p.tab === 'new' && l.product_id && (productById(l.product_id)?.stock ?? 1) <= 0 ? ' out' : ''}" title="${esc(l.name || '')} ×${l.quantity}${p.tab === 'new' && l.product_id && (productById(l.product_id)?.stock ?? 1) <= 0 ? ' · rafta yok' : ''}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? `<i>${l.quantity}</i>` : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
         <span class="tyo-who"><b>${esc(p.customer || '—')}</b><small class="muted">${esc(p.city || '')}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}</small></span>
         <span class="tyo-amt">${r ? fmtTL(r.price) : p.pkg_total != null ? fmtTL(p.pkg_total) : '–'}</span>
         <span class="tyo-pr">${r ? `<span class="mg ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)}</span><small class="faint">${fmtPct(r.margin)}${r.missing.length ? ' · <span class="warn-text">eksik</span>' : ''}</small>` : '<span class="faint">–</span>'}</span>
@@ -3377,20 +3377,34 @@ function tyoBody(p) {
   const r = p.tab === 'cancelled' ? null : orderProfit(p);
   const lines = p.lines.map((l) => {
     const pr = l.product_id ? productById(l.product_id) : null;
-    const state = TY_CANCEL.has(l.status) ? '<span class="tag tag-bad">İptal</span>' : l.state === 'deducted' ? '<span class="tag tag-ok">Stoktan düştü</span>' : l.state === 'restocked' ? '<span class="tag">Stoğa geri eklendi</span>' : !l.product_id ? '<span class="tag tag-warn">Eşleşmedi</span>' : '';
-    return `<div class="tyo-line">${miniThumb(l.thumbnail)}<div class="grow"><b>${esc(l.name || 'Bilinmeyen ürün')}</b>${l.ty_name && pr && l.ty_name !== l.name ? `<small class="faint">${esc(l.ty_name)}</small>` : ''}
-        <small class="muted">${l.barcode ? esc(l.barcode) : ''}${pr ? ` · rafta ${pr.stock}` : ''}</small>
-        ${!l.product_id && l.barcode && !TY_CANCEL.has(l.status) ? `<div class="pick-match"><select class="input" data-tyo-match="${esc(l.barcode)}"><option value="">Hangi ürününüz?</option>${S.products.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select><button class="btn btn-sm btn-ok" data-act="tyo-match" data-code="${esc(l.barcode)}">Eşleştir</button></div>` : ''}</div>
-      ${state}<span class="tyo-q">×${l.quantity}</span><span class="tyo-up">${l.unit_price != null ? fmtTL(l.unit_price) : '–'}</span></div>`;
+    const cancel = TY_CANCEL.has(l.status);
+    const state = cancel ? '<span class="tag tag-bad">İptal</span>' : l.state === 'deducted' ? '<span class="tag tag-ok">Stoktan düştü</span>' : l.state === 'restocked' ? '<span class="tag">Stoğa geri eklendi</span>' : !l.product_id ? '<span class="tag tag-warn">Eşleşmedi</span>' : '';
+    const st = pr ? pr.stock : null, out = pr && !cancel && st <= 0 && p.tab === 'new';
+    const shelf = pr ? (st <= 0 ? `<span class="oc-out">${icon('alert')} Rafta yok${st < 0 ? ` (${st})` : ''}</span>` : `<span class="oc-shelf">rafta <b>${st}</b></span>`) : '';
+    return `<div class="oc-item${cancel ? ' cancel' : ''}${out ? ' out' : ''}">
+      <span class="oc-img${l.thumbnail ? '' : ' none'}" style="${thumbStyle(l.thumbnail)}" data-zoom="${esc(l.thumbnail || '')}" data-title="${esc(l.name || '')}"></span>
+      <div class="oc-tx"><b>${esc(l.name || 'Bilinmeyen ürün')}</b>${l.ty_name && pr && l.ty_name !== l.name ? `<small class="faint">${esc(l.ty_name)}</small>` : ''}
+        <div class="oc-meta">${l.barcode ? `<span class="mono">${esc(l.barcode)}</span>` : ''}${shelf}${state}${l.unit_price != null ? `<span class="faint">${fmtTL(l.unit_price)}</span>` : ''}</div>
+        ${!l.product_id && l.barcode && !cancel ? `<div class="pick-match"><select class="input" data-tyo-match="${esc(l.barcode)}"><option value="">Hangi ürününüz?</option>${S.products.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select><button class="btn btn-sm btn-ok" data-act="tyo-match" data-code="${esc(l.barcode)}">Eşleştir</button></div>` : ''}</div>
+      <span class="oc-q${l.quantity > 1 ? ' multi' : ''}">×${l.quantity}</span></div>`;
   }).join('');
   const dl = effDeadline(p.deadline);
-  return `<div class="tyo-grid"><div><div class="tyo-lines">${lines}</div>
-      <p class="muted tyo-meta">${p.pkg_total != null ? `Müşterinin ödediği ${fmtTL(p.pkg_total)}` : ''}${dl ? ` · son teslim ${fmtDl(dl)}` : ''} · paket ${esc(p.package_id || '')}</p>
-      ${p.cargo_provider || p.cargo_no ? `<div class="tyo-cargo">${icon('pack')}<span><b>${esc(p.cargo_provider || 'Kargo')}</b>${p.cargo_no ? ` · takip no <span class="mono">${esc(p.cargo_no)}</span>` : ''}${p.cargo_real != null ? ` · kargo faturası ${fmtTL(p.cargo_real)}${p.cargo_desi ? ` (${p.cargo_desi} desi)` : ''}` : ''}</span>
-        ${p.cargo_link && /^https?:\/\//.test(p.cargo_link) ? `<a class="btn btn-sm btn-ghost" href="${esc(p.cargo_link)}" target="_blank" rel="noopener">Takip et ↗</a>` : ''}
-        ${p.can_label ? `<button class="btn btn-sm${p.label_at ? '' : ' btn-primary'}" data-act="ty-label" data-id="${esc(p.package_id)}">${icon('print')} ${p.label_at ? 'Barkodu tekrar bas' : 'Barkodu bas'}</button>${p.label_at ? `<small class="faint">${fmtWhen(p.label_at)} basıldı</small>` : ''}` : ''}</div>` : ''}
-      ${p.tab === 'new' ? `<div class="kc-actions">${p.can_pick ? `<button class="btn btn-primary btn-sm" data-act="tyo-pick" data-id="${esc(p.package_id)}">${icon('pack')} Hazırlanıyor'a çek</button>` : '<span class="muted" style="font-size:13px">Bu sipariş buradan çekilemiyor; bir kez Yenile\'ye basın.</span>'}</div>` : ''}</div>
-    <div>${r ? `${breakdownHTML(r, r.grams ? { grams: r.grams, perG: r.material / (1 + S.profit.cfg.fire_pct / 100) / r.grams } : null)}${r.missing.length ? `<p class="pf-warn">Eksik bilgi: ${r.missing.join(', ')}. Kâr bu kalemler olmadan hesaplandı.</p>` : ''}` : '<p class="muted">Bu sipariş için kâr hesaplanmıyor.</p>'}</div></div>`;
+  const tex = isTEX(p.cargo_provider);
+  const pfOpen = (() => { try { return localStorage.getItem('tyoPf') === '1'; } catch { return false; } })();
+  const acts = `${p.tab === 'new' ? (p.can_pick ? `<button class="oc-btn pri" data-act="tyo-pick" data-id="${esc(p.package_id)}">${icon('pack')} Hazırlanıyor'a çek</button>` : '<span class="muted" style="font-size:13px">Bu sipariş buradan çekilemiyor; bir kez Yenile\'ye basın.</span>') : ''}
+    ${p.can_label ? `<button class="oc-btn${p.tab !== 'new' && !p.label_at ? ' pri' : ''}" data-act="ty-label" data-id="${esc(p.package_id)}">${icon(p.label_at ? 'check' : 'print')} ${p.label_at ? 'Barkodu tekrar bas' : 'Barkodu bas'}</button>${p.label_at ? `<small class="faint oc-lbl">${fmtWhen(p.label_at)} basıldı</small>` : ''}` : ''}`;
+  return `<div class="oc">
+    <div class="oc-items">${lines}
+      <p class="muted oc-foot">${p.pkg_total != null ? `Müşterinin ödediği <b>${fmtTL(p.pkg_total)}</b>` : ''}${dl ? ` · son teslim ${fmtDl(dl)}` : ''} · paket ${esc(p.package_id || '')}</p></div>
+    <aside class="oc-side">
+      ${p.cargo_provider || p.cargo_no ? `<div class="oc-cargo${tex ? '' : ' other'}">${icon('pack')}<div><b>${esc((p.cargo_provider || 'Kargo').replace(/ Marketplace$/i, ''))}</b>${p.cargo_no ? `<span class="mono">${esc(p.cargo_no)}</span>` : ''}
+        ${p.cargo_real != null ? `<small>kargo faturası ${fmtTL(p.cargo_real)}${p.cargo_desi ? ` · ${p.cargo_desi} desi` : ''}</small>` : ''}</div>
+        ${p.cargo_link && /^https?:\/\//.test(p.cargo_link) ? `<a class="oc-trk" href="${esc(p.cargo_link)}" target="_blank" rel="noopener" title="Kargo takibi">↗</a>` : ''}</div>` : ''}
+      ${acts.trim() ? `<div class="oc-acts">${acts}</div>` : ''}
+    </aside>
+    ${r ? `<details class="oc-pf"${pfOpen ? ' open' : ''}><summary><span class="oc-pill ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)} <small>${fmtPct(r.margin)}</small></span><span>Kâr ayrıntısı</span>${r.missing.length ? '<span class="warn-text" style="font-size:12.5px">eksik bilgi var</span>' : ''}</summary>
+      <div class="oc-pf-b">${breakdownHTML(r, r.grams ? { grams: r.grams, perG: r.material / (1 + S.profit.cfg.fire_pct / 100) / r.grams } : null)}${r.missing.length ? `<p class="pf-warn">Eksik bilgi: ${r.missing.join(', ')}. Kâr bu kalemler olmadan hesaplandı.</p>` : ''}</div></details>` : ''}
+  </div>`;
 }
 function tyoRes() { const el = $('#tyo-res'); if (!el) return; el.innerHTML = tyoResults(); tyoBindRes(); tick(); }
 function tyoBind() {
@@ -3415,7 +3429,8 @@ function tyoBindRes() {
   $('#tyo-all')?.addEventListener('change', (e) => { tyoFiltered().filter((p) => p.can_pick).forEach((p) => (e.target.checked ? S.tyo.sel.add(p.package_id) : S.tyo.sel.delete(p.package_id))); tyoRes(); });
   $$('[data-tyo-sel]').forEach((cb) => cb.addEventListener('change', () => { cb.checked ? S.tyo.sel.add(cb.dataset.tyoSel) : S.tyo.sel.delete(cb.dataset.tyoSel); tyoRes(); }));
   $$('details.tyo').forEach((d) => {
-    const fill = () => { const p = S.tyOrders.packages.find((x) => x.package_id === d.dataset.tyoOpen); if (p) d.querySelector('.tyo-body').innerHTML = tyoBody(p); };
+    const fill = () => { const p = S.tyOrders.packages.find((x) => x.package_id === d.dataset.tyoOpen); if (!p) return; d.querySelector('.tyo-body').innerHTML = tyoBody(p);
+      d.querySelector('.oc-pf')?.addEventListener('toggle', (e) => { try { localStorage.setItem('tyoPf', e.target.open ? '1' : '0'); } catch { /* */ } }); };
     if (d.open) fill();
     d.addEventListener('toggle', () => { d.open ? (S.tyo.open.add(d.dataset.tyoOpen), fill()) : S.tyo.open.delete(d.dataset.tyoOpen); });
   });

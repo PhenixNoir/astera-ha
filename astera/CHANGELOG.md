@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.3.0
+- Yeni sipariş kartı: büyük ürün satırları, belirgin adet, "Rafta yok" vurgusu, büyük Hazırlanıyor/Barkod düğmeleri, açılır kâr ayrıntısı.
+
 ## 1.2.0
 - İadeler sayfası: onaylama, gerekçeli reddetme (dosya ekli), stoğa geri ekleme; iade için sesli uyarı.
 - Müşteri soruları sayfası: cevaplama; soru için ayrı bildirim sesi.

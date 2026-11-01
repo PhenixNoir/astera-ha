@@ -2333,3 +2333,68 @@ details.anim-open > :not(summary) { animation: sec-in .2s cubic-bezier(.2,.8,.2,
 @keyframes tw-shake { 10%, 90% { transform: translateX(-1px); } 20%, 80% { transform: translateX(3px); } 30%, 50%, 70% { transform: translateX(-5px); } 40%, 60% { transform: translateX(5px); } }
 .cl-item .grow { flex: 1; }
 .cl-card footer .spacer { flex: 1; }
+
+/* ---------- sipariş kartı (A · Paket kartı) */
+.tyo { border-radius: 14px; transition: box-shadow .2s, border-color .2s; }
+.tyo[open] { box-shadow: 0 14px 34px -20px rgba(0,0,0,.55); border-color: color-mix(in srgb, var(--ink) 18%, var(--line)); }
+.tyo-thumbs .tt.out .mini-thumb { outline: 2px solid var(--bad); outline-offset: 1px; }
+.tyo-thumbs .tt.out::after { content: "!"; position: absolute; left: -5px; top: -5px; width: 15px; height: 15px; border-radius: 50%; background: var(--bad); color: #fff; font: 800 11px/15px var(--body, sans-serif); text-align: center; }
+.tyo-body { padding: 0; }
+.oc { display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
+.oc-items { padding: 6px 18px 12px; min-width: 0; }
+.oc-item { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px dashed var(--line); animation: row-in .28s cubic-bezier(.2,.8,.2,1) both; }
+.oc-item:nth-child(2) { animation-delay: .04s; } .oc-item:nth-child(3) { animation-delay: .08s; } .oc-item:nth-child(4) { animation-delay: .12s; }
+.oc-item:last-of-type { border-bottom: 0; }
+.oc-item.cancel { opacity: .55; }
+.oc-item.out { background: linear-gradient(90deg, color-mix(in srgb, var(--bad) 13%, transparent), transparent 70%); margin: 0 -18px; padding-left: 18px; padding-right: 18px; box-shadow: inset 4px 0 0 var(--bad); }
+.oc-img { width: 76px; height: 76px; border-radius: 12px; flex: none; background: var(--sheet-2) center/cover; background-image: var(--img); cursor: zoom-in; transition: transform .2s; }
+.oc-img:hover { transform: scale(1.04); }
+.oc-img.none { cursor: default; background-image: var(--layer); }
+.oc-tx { flex: 1; display: grid; gap: 3px; min-width: 0; }
+.oc-tx > b { font-size: 16.5px; line-height: 1.2; }
+.oc-tx > small { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 12.5px; color: var(--ink-2); }
+.oc-shelf b { color: var(--ink); }
+.oc-out { display: inline-flex; align-items: center; gap: 5px; background: var(--bad); color: #fff; font-weight: 800; font-size: 12.5px; padding: 3px 10px 3px 8px; border-radius: 99px; letter-spacing: .2px; animation: oc-pulse 1.8s ease-in-out infinite; }
+.oc-out svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.4; }
+@keyframes oc-pulse { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--bad) 22%, transparent); } }
+.oc-q { font: 800 26px/1 var(--display); min-width: 66px; text-align: center; padding: 10px 12px; border-radius: 12px; background: var(--sheet-2); flex: none; }
+.oc-q.multi { background: var(--ink); color: var(--sheet); }
+.oc-foot { font-size: 12.5px; margin: 8px 0 0; }
+.oc-side { padding: 16px 18px 16px 0; display: grid; gap: 10px; align-content: start; }
+.oc-cargo { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--sheet-2); border: 1px solid var(--line-2); }
+.oc-cargo > svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; }
+.oc-cargo div { display: grid; min-width: 0; flex: 1; }
+.oc-cargo .mono { font-size: 12.5px; color: var(--ink-2); }
+.oc-cargo small { font-size: 12px; color: var(--ink-3); }
+.oc-cargo.other { border: 2px solid var(--bad); background: color-mix(in srgb, var(--bad) 10%, var(--sheet-2)); }
+.oc-cargo.other b { color: var(--bad); }
+.oc-trk { text-decoration: none; color: var(--ink-2); font-weight: 800; padding: 4px 8px; border-radius: 8px; }
+.oc-trk:hover { background: var(--sheet); color: var(--ink); }
+.oc-acts { display: grid; gap: 8px; }
+.oc-btn { display: inline-flex; align-items: center; justify-content: center; gap: 9px; height: 48px; padding: 0 18px; border-radius: 12px; border: 1px solid var(--line); background: var(--sheet-2); color: var(--ink); font: inherit; font-size: 15.5px; font-weight: 800; cursor: pointer; transition: transform .12s, box-shadow .2s, background .2s; }
+.oc-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; }
+.oc-btn:hover { transform: translateY(-1px); box-shadow: 0 8px 18px -10px rgba(0,0,0,.5); }
+.oc-btn:active { transform: translateY(1px) scale(.99); }
+.oc-btn.pri { background: var(--pei); border-color: var(--pei); color: var(--sheet); box-shadow: 0 8px 20px -10px var(--pei); }
+.oc-btn:disabled { opacity: .55; cursor: default; transform: none; }
+.oc-lbl { text-align: center; font-size: 12px; }
+.oc-pf { grid-column: 1 / -1; border-top: 1px solid var(--line-2); }
+.oc-pf > summary { list-style: none; display: flex; align-items: center; gap: 12px; padding: 10px 18px; cursor: pointer; color: var(--ink-2); font-weight: 600; font-size: 13.5px; }
+.oc-pf > summary::-webkit-details-marker { display: none; }
+.oc-pf > summary::after { content: ""; width: 7px; height: 7px; border-right: 2px solid var(--ink-3); border-bottom: 2px solid var(--ink-3); transform: rotate(45deg); transition: transform .2s; margin-left: 2px; }
+.oc-pf[open] > summary::after { transform: rotate(-135deg); }
+.oc-pf > summary:hover { background: var(--sheet-2); }
+.oc-pill { display: inline-flex; align-items: baseline; gap: 6px; font-weight: 800; color: var(--ok); background: var(--ok-wash); border-radius: 99px; padding: 4px 12px; font-variant-numeric: tabular-nums; }
+.oc-pill small { font-weight: 600; opacity: .75; }
+.oc-pill.neg, .oc-pill.bad { color: var(--bad); background: var(--bad-wash); }
+.oc-pf-b { padding: 0 18px 16px; }
+@media (max-width: 900px) {
+  .oc { grid-template-columns: 1fr; }
+  .oc-side { padding: 0 14px 14px; }
+  .oc-items { padding: 4px 14px 8px; }
+  .oc-item.out { margin: 0 -14px; padding-left: 14px; padding-right: 14px; }
+  .oc-img { width: 60px; height: 60px; }
+  .oc-q { font-size: 21px; min-width: 52px; padding: 8px; }
+}
+.oc-pill.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
