@@ -45,6 +45,7 @@ import notify
 import yedek
 import etiket
 import finans
+import musteri
 import push
 
 # Windows kayıt defterindeki bozuk MIME eşlemelerine karşı
@@ -387,6 +388,7 @@ def init_db():
     with DB_LOCK:
         db().executescript(SCHEMA)
         finans.migrate(db())
+        musteri.migrate(db())
         migrate()
         db().commit()
 
@@ -2846,6 +2848,7 @@ def api_backup_restore(req):
     except ValueError as e:
         raise ApiError(str(e))
     finans.migrate(db())
+    musteri.migrate(db())
     migrate()
     for k, v in keep.items():
         if v is not None:
@@ -3215,6 +3218,49 @@ def api_finance_sync(req):
         return finans.status()
 
 
+# ---------------------------------------------------------------- iadeler ve müşteri soruları
+@route("GET", "/api/claims")
+def api_claims(req):
+    return musteri.claims(req.query.get("tab") or "action")
+
+
+@route("GET", "/api/claims/reasons", lock=False)
+def api_claim_reasons(req):
+    return musteri.claim_reasons()
+
+
+@route("POST", "/api/claims/{cid}/approve", lock=False)
+def api_claim_approve(req, cid):
+    b = req.json()
+    return musteri.approve(cid, b.get("item_ids") or [], bool(b.get("restock")))
+
+
+@route("POST", "/api/claims/{cid}/reject", lock=False)
+def api_claim_reject(req, cid):
+    b = req.json()
+    files = b.get("files") or []
+    if not isinstance(files, list) or len(files) > 5:
+        raise ApiError("En fazla 5 dosya")
+    if not b.get("reason_id"):
+        raise ApiError("Ret gerekçesini seçin")
+    return musteri.reject(cid, b.get("item_ids") or [], b["reason_id"], b.get("description"), files)
+
+
+@route("GET", "/api/questions")
+def api_questions(req):
+    return musteri.questions(req.query.get("tab") or "wait")
+
+
+@route("POST", "/api/questions/{qid}/answer", lock=False)
+def api_question_answer(req, qid):
+    return musteri.answer(qid, req.json().get("text"))
+
+
+@route("POST", "/api/musteri/sync", lock=False)
+def api_musteri_sync(req):
+    return musteri.sync_all()
+
+
 @route("POST", "/api/trendyol/picking", lock=False)
 def api_ty_picking(req):
     ids = req.json().get("package_ids") or []
@@ -3256,6 +3302,14 @@ def api_ty_label_data(req):
         for x in res["labels"]:
             trendyol.mark_label(x["package_id"])
     return res
+
+
+@route("POST", "/api/trendyol/label-mark", lock=False)
+def api_ty_label_mark(req):
+    ids = req.json().get("package_ids") or []
+    for x in ids[:100]:
+        trendyol.mark_label(x)
+    return {"ok": True}
 
 
 def app_version():
@@ -3556,8 +3610,10 @@ def main():
     etiket.init(db, DB_LOCK, get_setting, set_setting, DATA_DIR)
     with DB_LOCK:
         finans.init(db, DB_LOCK, get_setting, set_setting)
+        musteri.init(db, DB_LOCK, get_setting, set_setting, change_stock, trendyol._code_map)
         db().commit()
     finans.start()
+    musteri.start()
     yedek.start()
     _quiet_console()
     srv = QuietServer((args.host, args.port), Handler)

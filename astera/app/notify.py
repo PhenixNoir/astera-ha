@@ -14,7 +14,7 @@ _db = _lock = _get = _set = None
 bambu = None
 _last_tick = 0
 on_new = None          # sunucu verir: telefona push yollar
-PUSH_PREFIXES = ("pe:", "perr:", "job:", "tylate:", "bb:", "idle:", "week:")
+PUSH_PREFIXES = ("pe:", "perr:", "job:", "tylate:", "bb:", "idle:", "week:", "claim:", "qna:")
 plan_fn = None          # sunucu verir: üretim planı (boşa çıkan yazıcıya öneri için)
 weekly_fn = None        # sunucu verir: weekly_summary(start, end)
 _busy_prev = None       # önceki kontrolde meşgul olan yazıcılar
@@ -211,6 +211,36 @@ def _trendyol():
     _sync_group("tyum:", um)
 
 
+def _claims():
+    """İadeler: elinize ulaşıp onay bekleyen (WaitingInAction) ve yeni açılmış, yoldaki (Created) talepler."""
+    if not _db().execute("SELECT 1 FROM sqlite_master WHERE name='ty_claims'").fetchone():
+        return
+    wanted = {}
+    for r in _db().execute("SELECT claim_id, order_number, customer, status, items FROM ty_claims WHERE status IN ('WaitingInAction','Created')"):
+        try:
+            items = json.loads(r["items"] or "[]")
+        except ValueError:
+            items = []
+        names = "; ".join(f"{i.get('product') or 'Ürün'}" + (f" — {i['reason']}" if i.get("reason") else "") for i in items)[:160]
+        if r["status"] == "WaitingInAction":
+            wanted[f"claim:{r['claim_id']}:w"] = ("claim", "bad", f"İade onayınızı bekliyor · {r['order_number']}",
+                                                  f"{r['customer'] or ''}: {names}".strip(": "), {"t": "go", "href": "#/iadeler"})
+        else:
+            wanted[f"claim:{r['claim_id']}:c"] = ("claim", "warn", f"Yeni iade talebi · {r['order_number']}",
+                                                  f"{r['customer'] or ''}: {names}".strip(": "), {"t": "go", "href": "#/iadeler?tab=transit"})
+    _sync_group("claim:", wanted)
+
+
+def _questions():
+    if not _db().execute("SELECT 1 FROM sqlite_master WHERE name='ty_questions'").fetchone():
+        return
+    wanted = {}
+    for r in _db().execute("SELECT id, product_name, text FROM ty_questions WHERE status='WAITING_FOR_ANSWER'"):
+        wanted[f"qna:{r['id']}"] = ("question", "warn", f"Müşteri sorusu · {(r['product_name'] or '')[:50]}",
+                                    (r["text"] or "")[:160], {"t": "go", "href": "#/sorular"})
+    _sync_group("qna:", wanted)
+
+
 def _stock():
     sf = {}
     for r in _db().execute("""SELECT l.id, l.shortfall, p.name || COALESCE(' — ' || NULLIF(p.variant_label,''), '') name FROM stock_log l
@@ -382,7 +412,7 @@ def tick(force=False):
     _last_tick = time.time()
     with _lock:
         try:
-            for f in (_printers, _jobs, _trendyol, _buybox, _stock, _idle, _weekly):
+            for f in (_printers, _jobs, _trendyol, _buybox, _stock, _idle, _weekly, _claims, _questions):
                 try:
                     f()
                 except Exception as e:  # noqa — bir kontrolün hatası diğerlerini durdurmasın

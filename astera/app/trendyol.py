@@ -175,7 +175,7 @@ def _creds():
 
 # ---------------------------------------------------------------- HTTP
 
-def _request(path, params, method="GET", body=None, extra_headers=None, raw=False):
+def _request(path, params, method="GET", body=None, extra_headers=None, raw=False, raw_body=None, content_type=None):
     with _lock:
         sid, key, sec, base = _creds()
     url = f"{base}{path.format(sid=sid)}" + (f"?{urllib.parse.urlencode(params)}" if params else "")
@@ -190,6 +190,9 @@ def _request(path, params, method="GET", body=None, extra_headers=None, raw=Fals
     if body is not None:
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
+    elif raw_body is not None:
+        data = raw_body
+        headers["Content-Type"] = content_type or "application/octet-stream"
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:

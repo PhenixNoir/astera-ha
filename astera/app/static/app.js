@@ -109,6 +109,8 @@ const NAV = [
   { r: 'plan', label: 'Plan', icon: 'plan', title: 'Üretim planı' },
   { r: 'hazirla', label: 'Hazırla', icon: 'pack', title: 'Hazırlanacaklar' },
   { r: 'siparisler', label: 'Siparişler', icon: 'clip', title: 'Siparişler' },
+  { r: 'iadeler', label: 'İadeler', icon: 'return', title: 'İadeler' },
+  { r: 'sorular', label: 'Sorular', icon: 'chat', title: 'Müşteri soruları' },
   { r: 'satis', label: 'Satış', icon: 'cart', title: 'Satış ve Trendyol' },
   { r: 'buybox', label: 'Buybox', icon: 'crown', title: 'Buybox' },
   { r: 'filament', label: 'Filamentler', icon: 'spool', title: 'Filamentler' },
@@ -178,6 +180,7 @@ function renderNav() {
   const badge = (n) => {
     if (n.r === 'satis' && S.dash?.ty_unmatched) return `<span class="count">${S.dash.ty_unmatched}</span>`;
     if (n.r === 'baskilar') { const d = dueJobs().length; return d ? `<span class="count">${d}</span>` : ''; }
+    if (n.r === 'iadeler' || n.r === 'sorular') { const pre = n.r === 'iadeler' ? 'claim:' : 'qna:', d = (S.notif?.items || []).filter((x) => !x.resolved_at && String(x.key).startsWith(pre)).length; return d ? `<span class="count${n.r === 'iadeler' ? ' bad' : ''}">${d}</span>` : ''; }
     if (n.r === 'buybox') { const d = (S.notif?.items || []).filter((x) => !x.resolved_at && String(x.key).startsWith('bb:')).length; return d ? `<span class="count bad">${d}</span>` : ''; }
     return '';
   };
@@ -491,7 +494,7 @@ function bedHTML() {
 
 const REASONS = { print: 'Baskı', trendyol: 'Trendyol', manual: 'Elle', sale: 'Satış', scan: 'Barkod', adjust: 'Sayım', order: 'Sipariş' };
 // ---------- bildirim merkezi: geniş ekranda sağ panel, dar ekranda zil + çekmece
-const NOTIF_KIND = { printer: ['layers', 'Yazıcı'], print_done: ['check', 'Baskı'], trendyol: ['cart', 'Trendyol'], stock: ['alert', 'Stok'], report: ['chart', 'Rapor'] };
+const NOTIF_KIND = { printer: ['layers', 'Yazıcı'], print_done: ['check', 'Baskı'], trendyol: ['cart', 'Trendyol'], stock: ['alert', 'Stok'], report: ['chart', 'Rapor'], claim: ['return', 'İade'], question: ['chat', 'Soru'] };
 async function loadNotifs() {
   try {
     const d = await api('GET', '/api/notifications');
@@ -500,7 +503,8 @@ async function loadNotifs() {
     S.notif = d; renderNotifs(); renderNav();
     if (fresh.length) {
       const bell = $('#notif-bell'); bell?.classList.remove('ring'); void bell?.offsetWidth; bell?.classList.add('ring');
-      if (U('nf.sound') && fresh.some((n) => (n.kind === 'printer' || n.kind === 'print_done') && !(U('nf.hide') || []).includes(n.kind))) beepShort();
+      const hid = U('nf.hide') || [], has = (k) => fresh.some((n) => n.kind === k && !hid.includes(k));
+      if (U('nf.sound')) { if (has('claim')) soundClaim(); else if (has('question')) soundQuestion(); else if (has('printer') || has('print_done')) beepShort(); }
       if (!window.matchMedia('(min-width: 1600px)').matches) toast(fresh.length > 1 ? `${fresh.length} yeni bildirim` : fresh[0].title, { action: 'Göster', onAction: () => notifOpen(true) });
     }
   } catch { /* sunucu geçici olarak erişilemez */ }
@@ -2103,6 +2107,25 @@ function beep() {
     });
   } catch { /* ses yok */ }
 }
+// İade: dikkat çeken, iki kez çalan üçlü uyarı (kare dalga, yükselen); soru: yumuşak çift "ding"
+function tone(t0, f, dur, type = 'sine', vol = 0.22) {
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = type; o.frequency.setValueAtTime(f, t0);
+  g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g).connect(audioCtx.destination); o.start(t0); o.stop(t0 + dur + 0.05);
+}
+function soundClaim() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); const t = audioCtx.currentTime + 0.02;
+    [0, 1.1].forEach((r) => [[0, 660], [0.16, 880], [0.32, 1175]].forEach(([d, f]) => tone(t + r + d, f, 0.22, 'square', 0.09)));
+  } catch { /* ses yok */ }
+}
+function soundQuestion() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); const t = audioCtx.currentTime + 0.02;
+    tone(t, 1568, 0.9, 'sine', 0.18); tone(t + 0.18, 2093, 1.1, 'sine', 0.14);
+  } catch { /* ses yok */ }
+}
 document.addEventListener('pointerdown', () => { try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch { /* */ } }, { once: true });
 
 function askNotifyOnce() {
@@ -3426,6 +3449,7 @@ body { font-family: "Segoe UI", Arial, Helvetica, sans-serif; color: #000; }
 .top .bc { height: 16mm; width: 86%; margin: 0 auto; }
 .tn { text-align: center; font-weight: 800; font-size: 10.5pt; letter-spacing: 2px; margin-top: .5mm; line-height: 1.1; }
 .car { font-weight: 800; letter-spacing: .3px; }
+.car.other { display: inline-block; background: #000; color: #fff; padding: .2mm 1.2mm; border-radius: .8mm; font-size: 8.5pt; margin-top: .4mm; }
 .mid { flex: 1; display: flex; gap: 3mm; align-items: flex-start; margin-top: 1.6mm; border-top: .4mm solid #000; padding-top: 1.8mm; min-height: 0; }
 .who { flex: 1; min-width: 0; height: 100%; overflow: hidden; }
 .nm { font-size: 13pt; font-weight: 900; line-height: 1.08; display: block; }
@@ -3444,7 +3468,7 @@ function labelPageHTML(d) {
     <div class="mid"><div class="who"><b class="nm">${esc((d.name || '').toLocaleUpperCase('tr'))}</b>${d.company ? `<div class="co">${esc(d.company)}</div>` : ''}
       <div class="ad">${esc(d.address || '')}</div>${d.neighborhood && !trLower(d.address || '').includes(trLower(d.neighborhood)) ? `<div class="nb">${esc(d.neighborhood)}</div>` : ''}</div>
       <img class="logo" src="${location.origin}/static/etiket-logo.png" alt=""></div>
-    <div class="bot"><div class="loc"><b>${esc(city)}</b><small>Sipariş ${esc(d.order_number)}${d.boxes > 1 ? ` · ${d.boxes} koli` : ''}${d.provider ? `<br><span class="car">${esc(d.provider.replace(/ Marketplace$/i, '').toLocaleUpperCase('tr'))}</span>` : ''}</small></div>
+    <div class="bot"><div class="loc"><b>${esc(city)}</b><small>Sipariş ${esc(d.order_number)}${d.boxes > 1 ? ` · ${d.boxes} koli` : ''}${d.provider ? `<br><span class="car${isTEX(d.provider) ? '' : ' other'}">${esc(d.provider.replace(/ Marketplace$/i, '').toLocaleUpperCase('tr'))}</span>` : ''}</small></div>
       <div class="ob">${barcodeSVG(d.tracking)}<small>${esc(d.tracking)}</small></div></div></div>`;
 }
 // Uzun ad/adres: sığana kadar yazı küçülür (ad en az 9pt, adres en az 6.5pt)
@@ -3478,10 +3502,30 @@ function printLabelPages(list) {
   });
 }
 const labelServerMode = () => ['share', 'net'].includes(S.labelCfg?.mode);
+const isTEX = (p) => /trendyol\s*express|^tex\b/i.test(p || '');
+// Trendyol Express dışındaki kargolar karışmasın: basmadan önce belirgin bir uyarı penceresi
+function texWarn(list) {
+  const other = list.filter((d) => !isTEX(d.provider));
+  if (!other.length) return Promise.resolve(true);
+  return new Promise((res) => {
+    const by = {}; other.forEach((d) => { (by[d.provider || 'Bilinmeyen kargo'] ||= []).push(d); });
+    openModal(`<div class="modal-h tex-warn-h"><h2>${icon('alert')} Trendyol Express değil!</h2></div>
+      <div class="modal-b tex-warn">
+        <p>${other.length === list.length ? (list.length > 1 ? 'Bu siparişlerin' : 'Bu siparişin') : `${list.length} etiketten <b>${other.length}</b> tanesinin`} kargosu <b>Trendyol Express dışında</b>. Paketi doğru kargoya ayırın:</p>
+        ${Object.entries(by).map(([pv, ds]) => `<div class="tw-row"><b>${esc(pv)}</b><span>${ds.map((d) => `${esc(d.order_number)} · ${esc(d.name || '')}`).join('<br>')}</span></div>`).join('')}
+      </div>
+      <div class="modal-f"><button class="btn" data-tw="0">Vazgeç</button><div class="right"><button class="btn btn-primary" data-tw="1">Anladım, bas</button></div></div>`, 'narrow', () => res(false));
+    $('.modal').addEventListener('click', (e) => { const b = e.target.closest('[data-tw]'); if (!b) return; modalOnClose = null; closeModal(); res(b.dataset.tw === '1'); });
+    soundClaim();
+  });
+}
 async function browserLabels(ids) {
-  const r = await api('POST', '/api/trendyol/label-data', { package_ids: ids });
+  const r = await api('POST', '/api/trendyol/label-data', { package_ids: ids, mark: false });
   if (r.errors.length) toast(`${r.errors.length} etiket hazırlanamadı: ${r.errors.slice(0, 2).map((e) => `${e.order_number || ''} ${e.error}`.trim()).join('; ')}`, { bad: true });
-  if (r.labels.length) await printLabelPages(r.labels);
+  if (r.labels.length && await texWarn(r.labels)) {
+    await printLabelPages(r.labels);
+    api('POST', '/api/trendyol/label-mark', { package_ids: r.labels.map((x) => x.package_id) }).catch(() => {});
+  }
   return r;
 }
 
@@ -3518,6 +3562,114 @@ async function tyoPick(ids) {
     else if (r.done.length && S.labelCfg?.auto && !labelServerMode()) await browserLabels(r.done).catch(fail);
     await Promise.all([loadTyOrders(), loadProducts()]); render();
   } catch (e) { fail(e); }
+}
+
+// ================================================================== İADELER
+const CLAIM_TABS = [['action', 'İşlem bekleyen'], ['transit', 'Yolda'], ['done', 'Sonuçlanan']];
+function tabFromHash(def) { const m = /[?&]tab=([\w-]+)/.exec(location.hash); return m ? m[1] : def; }
+function syncLine(st, label) {
+  if (!st || !st.at) return `<span class="muted">Henüz eşitlenmedi · Trendyol'dan 5 dakikada bir çekilir</span>`;
+  return `<span class="muted">${label} ${fmtWhen(st.at)}${st.error ? ` · <span class="warn-text">${esc(st.error)}</span>` : ''}</span>`;
+}
+PAGES.iadeler = {
+  async load() {
+    S.clTab = tabFromHash(S.clTab || 'action');
+    await Promise.all([S.settings ? null : loadSettings(), (async () => { S.claims = await api('GET', `/api/claims?tab=${S.clTab}`); })()]);
+  },
+  html() {
+    if (!S.settings?.ty_seller_id) return `<div class="empty panel"><h3>Trendyol bağlı değil</h3><p>Önce Satış sayfasından Trendyol API bilgilerini girin.</p><a class="btn btn-primary" href="#/satis">Trendyol ayarları</a></div>`;
+    const d = S.claims, t = S.clTab;
+    return `<div class="toolbar"><div class="seg">${CLAIM_TABS.map(([k, l]) => `<button type="button" data-act="cl-tab" data-v="${k}" class="${t === k ? 'on' : ''}">${l}${d.counts[k] ? ` <span class="faint">${d.counts[k]}</span>` : ''}</button>`).join('')}</div>
+      <span class="spacer"></span>${syncLine(d.sync, 'Son kontrol')}<button class="btn btn-sm" data-act="mu-sync">${icon('refresh')} Yenile</button></div>
+      ${t === 'action' ? '<p class="muted cl-hint">İade paketi elinize ulaştı; ürünü kontrol edip onaylayın ya da gerekçesiyle reddedin. Trendyol belirli bir süre içinde işlem yapılmazsa iadeyi kendiliğinden onaylar.</p>' : ''}
+      <div class="cl-list">${d.items.length ? d.items.map(claimCard).join('') : `<div class="empty panel"><h3>${t === 'action' ? 'İşlem bekleyen iade yok' : t === 'transit' ? 'Yolda iade yok' : 'Son 30 günde sonuçlanan iade yok'}</h3></div>`}</div>`;
+  },
+};
+function claimCard(c) {
+  const act = c.items.filter((i) => i.status === 'WaitingInAction');
+  return `<article class="cl-card st-${esc(c.status)}" data-cid="${esc(c.claim_id)}">
+    <header><div><b>${esc(c.order_number)}</b> <span class="muted">· ${esc(c.customer || '')}</span></div>
+      <span class="cl-st">${esc(c.status_tr)}</span>
+      <small class="muted">${c.claim_date ? `iade ${fmtWhen(c.claim_date)}` : ''}${c.cargo_no ? ` · ${esc(c.cargo_provider || 'kargo')} ${c.cargo_link ? `<a href="${esc(c.cargo_link)}" target="_blank" rel="noopener">${esc(c.cargo_no)}</a>` : esc(c.cargo_no)}` : ''}</small></header>
+    <div class="cl-items">${c.items.map((i) => `<label class="cl-item${i.status === 'WaitingInAction' ? ' can' : ''}">
+      ${i.status === 'WaitingInAction' ? `<input type="checkbox" data-cl-item="${esc(i.id)}" checked>` : '<span class="cl-dot"></span>'}
+      ${miniThumb(i.thumbnail)}
+      <span class="grow"><b>${esc(i.our_name || i.product || 'Ürün')}</b>${[i.color, i.size].filter(Boolean).length ? `<small class="faint"> · ${esc([i.color, i.size].filter(Boolean).join(' · '))}</small>` : ''}
+        <span class="cl-reason">${icon('return')} ${esc(i.reason || 'Gerekçe yok')}</span>
+        ${i.customer_note ? `<span class="cl-note">“${esc(i.customer_note)}”</span>` : ''}</span>
+      <span class="cl-ist">${esc(i.status_tr)}${i.price ? `<small>${fmtTL(i.price)}</small>` : ''}</span></label>`).join('')}</div>
+    ${act.length ? `<footer><label class="switch sm"><input type="checkbox" data-cl-restock> <span>Onaylananları stoğa geri ekle</span></label><span class="spacer"></span>
+      <button class="btn" data-act="cl-reject" data-id="${esc(c.claim_id)}">Reddet…</button>
+      <button class="btn btn-primary" data-act="cl-approve" data-id="${esc(c.claim_id)}">${icon('check')} Onayla</button></footer>` : ''}
+  </article>`;
+}
+function clSelected(cid) { return $$(`.cl-card[data-cid="${cid}"] [data-cl-item]:checked`).map((x) => x.dataset.clItem); }
+async function clReject(cid) {
+  const ids = clSelected(cid); if (!ids.length) return toast('Reddedilecek ürünü işaretleyin', { bad: true });
+  let reasons = [];
+  try { reasons = await api('GET', '/api/claims/reasons'); } catch (e) { return fail(e); }
+  const files = [];
+  openModal(`<div class="modal-h"><h2>İadeyi reddet</h2><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
+    <div class="modal-b">
+      <label class="field"><span>Gerekçe</span><select class="input" id="rj-r"><option value="">Seçin…</option>${reasons.map((r) => `<option value="${r.id}" data-file="${r.file ? 1 : 0}">${esc(r.name)}</option>`).join('')}</select></label>
+      <label class="field"><span>Açıklama <span class="faint">(en fazla 500 karakter)</span></span><textarea class="input" id="rj-d" rows="3" maxlength="500" placeholder="Ürünün durumunu kısaca anlatın"></textarea></label>
+      <div class="field"><span>Fotoğraf / belge <span class="faint" id="rj-need">(çoğu gerekçede zorunlu; her biri en fazla 5 MB)</span></span>
+        <div class="rj-files" id="rj-files"></div><button type="button" class="btn btn-sm" id="rj-add">${icon('upload')} Dosya ekle</button><input type="file" id="rj-in" accept="image/*,.pdf,video/mp4" multiple hidden></div>
+      <small class="muted">Ret talebini Trendyol inceler; sonuç "Sonuçlanan" sekmesinde görünür.</small>
+    </div>
+    <div class="modal-f"><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-danger" id="rj-go">Reddet</button></div></div>`);
+  const draw = () => { $('#rj-files').innerHTML = files.map((f, i) => `<span class="chip sm static">${esc(f.name)} <button type="button" class="linkish" data-rm="${i}">×</button></span>`).join(''); };
+  $('#rj-add').onclick = () => $('#rj-in').click();
+  $('#rj-files').onclick = (e) => { const b = e.target.closest('[data-rm]'); if (b) { files.splice(+b.dataset.rm, 1); draw(); } };
+  $('#rj-in').onchange = async (e) => {
+    for (const f of e.target.files) {
+      if (f.size > 5 * 1024 * 1024) { toast(`${f.name}: 5 MB'tan büyük`, { bad: true }); continue; }
+      const data = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(',')[1]); fr.readAsDataURL(f); });
+      files.push({ name: f.name, type: f.type, data }); if (files.length >= 5) break;
+    }
+    e.target.value = ''; draw();
+  };
+  $('#rj-go').onclick = async () => {
+    const opt = $('#rj-r').selectedOptions[0];
+    if (!opt?.value) return toast('Gerekçe seçin', { bad: true });
+    if (opt.dataset.file === '1' && !files.length) return toast('Bu gerekçe için fotoğraf ya da belge eklemelisiniz', { bad: true });
+    if (!confirm('İade reddi Trendyol\'a gönderilecek. Emin misiniz?')) return;
+    $('#rj-go').disabled = true;
+    try { await api('POST', `/api/claims/${cid}/reject`, { item_ids: ids, reason_id: +opt.value, description: $('#rj-d').value, files }); closeModal(); toast('Ret talebi gönderildi'); render(); }
+    catch (err) { fail(err); $('#rj-go').disabled = false; }
+  };
+}
+
+// ================================================================== MÜŞTERİ SORULARI
+const Q_TABS = [['wait', 'Cevap bekleyen'], ['approve', 'Onayda'], ['done', 'Cevaplanan'], ['other', 'Reddedilen / diğer']];
+PAGES.sorular = {
+  async load() {
+    S.qTab = tabFromHash(S.qTab || 'wait');
+    await Promise.all([S.settings ? null : loadSettings(), (async () => { S.qs = await api('GET', `/api/questions?tab=${S.qTab}`); })()]);
+  },
+  html() {
+    if (!S.settings?.ty_seller_id) return `<div class="empty panel"><h3>Trendyol bağlı değil</h3><p>Önce Satış sayfasından Trendyol API bilgilerini girin.</p><a class="btn btn-primary" href="#/satis">Trendyol ayarları</a></div>`;
+    const d = S.qs, t = S.qTab;
+    return `<div class="toolbar"><div class="seg">${Q_TABS.map(([k, l]) => `<button type="button" data-act="q-tab" data-v="${k}" class="${t === k ? 'on' : ''}">${l}${d.counts[k] ? ` <span class="faint">${d.counts[k]}</span>` : ''}</button>`).join('')}</div>
+      <span class="spacer"></span>${syncLine(d.sync, 'Son kontrol')}<button class="btn btn-sm" data-act="mu-sync">${icon('refresh')} Yenile</button></div>
+      <div class="q-list">${d.items.length ? d.items.map(qCard).join('') : `<div class="empty panel"><h3>${t === 'wait' ? 'Cevap bekleyen soru yok' : 'Burada soru yok'}</h3><p>Son 2 haftanın soruları görünür.</p></div>`}</div>`;
+  },
+  after() {
+    $$('.q-ans textarea').forEach((ta) => ta.addEventListener('input', () => { const n = ta.value.trim().length, c = ta.closest('.q-ans').querySelector('.q-n'); c.textContent = `${n} / 2000`; c.classList.toggle('warn-text', n > 0 && n < 10); }));
+  },
+};
+function qCard(q) {
+  const wait = q.status === 'WAITING_FOR_ANSWER';
+  return `<article class="q-card${wait ? ' wait' : ''}" data-qid="${q.id}">
+    <div class="q-prod">${q.image_url ? `<span class="mini-thumb" style="--img:url('${esc(q.image_url)}')"></span>` : ''}
+      <div class="grow">${q.web_url ? `<a href="${esc(q.web_url)}" target="_blank" rel="noopener">${esc(q.product_name || 'Ürün')}</a>` : esc(q.product_name || 'Ürün')}
+      <small class="muted">${esc(q.user_name || 'Müşteri')} · ${q.created ? fmtWhen(q.created) : ''}</small></div><span class="q-st">${esc(q.status_tr)}</span></div>
+    <p class="q-text">${icon('chat')} ${esc(q.text || '')}</p>
+    ${q.answer ? `<div class="q-a"><small>Cevabınız${q.answer_date ? ` · ${fmtWhen(q.answer_date)}` : ''}</small>${esc(q.answer)}</div>` : ''}
+    ${q.rejected?.text ? `<div class="q-a rej"><small>Reddedilen cevap${q.rejected.reason ? ` · ${esc(q.rejected.reason)}` : ''}</small>${esc(q.rejected.text)}</div>` : ''}
+    ${wait ? `<div class="q-ans"><textarea class="input" rows="3" maxlength="2000" placeholder="Cevabınızı yazın (en az 10 karakter). Kişisel bilgi, telefon, bağlantı yazmayın."></textarea>
+      <div class="q-ans-f"><small class="q-n muted">0 / 2000</small><button class="btn btn-primary" data-act="q-send" data-id="${q.id}">${icon('check')} Cevabı gönder</button></div></div>` : ''}
+  </article>`;
 }
 
 // ================================================================== FİNANS (Trendyol cari hesap ekstresi)
@@ -4647,6 +4799,25 @@ const ACTIONS = {
   'ty-products': openTyProducts,
   'typ-sync': tyProductsSync,
   'typ-import': typImportSelected,
+  'cl-tab': (el) => { S.clTab = el.dataset.v; history.replaceState(null, '', '#/iadeler'); render(); },
+  'q-tab': (el) => { S.qTab = el.dataset.v; history.replaceState(null, '', '#/sorular'); render(); },
+  'mu-sync': async (el) => { el.disabled = true; try { await api('POST', '/api/musteri/sync'); await loadNotifs(); render(); } catch (e) { fail(e); el.disabled = false; } },
+  'cl-approve': async (el) => {
+    const cid = el.dataset.id, ids = clSelected(cid); if (!ids.length) return toast('Onaylanacak ürünü işaretleyin', { bad: true });
+    const restock = $(`.cl-card[data-cid="${cid}"] [data-cl-restock]`)?.checked;
+    if (!confirm(`${ids.length} ürünün iadesi Trendyol'da onaylanacak${restock ? ' ve stoğa geri eklenecek' : ''}. Emin misiniz?`)) return;
+    el.disabled = true;
+    try { const r = await api('POST', `/api/claims/${cid}/approve`, { item_ids: ids, restock }); toast(`İade onaylandı${r.restocked ? ` · ${r.restocked} adet stoğa eklendi` : ''}`); await loadNotifs(); render(); }
+    catch (e) { fail(e); el.disabled = false; }
+  },
+  'cl-reject': (el) => clReject(el.dataset.id),
+  'q-send': async (el) => {
+    const card = el.closest('.q-card'), txt = card.querySelector('textarea').value.trim();
+    if (txt.length < 10) return toast('Cevap en az 10 karakter olmalı', { bad: true });
+    el.disabled = true;
+    try { await api('POST', `/api/questions/${el.dataset.id}/answer`, { text: txt }); toast('Cevap gönderildi; Trendyol onayından sonra yayınlanır'); await loadNotifs(); render(); }
+    catch (e) { fail(e); el.disabled = false; }
+  },
   'shapes-open': () => openShapes(),
   'shape-upload': () => $('#shape-file')?.click(),
   'shape-brands': (el) => openShapeBrands(+el.dataset.id),

@@ -1,5 +1,10 @@
 # Sürüm notları
 
+## 1.2.0
+- İadeler sayfası: onaylama, gerekçeli reddetme (dosya ekli), stoğa geri ekleme; iade için sesli uyarı.
+- Müşteri soruları sayfası: cevaplama; soru için ayrı bildirim sesi.
+- Trendyol Express dışı kargo etiketinde uyarı penceresi.
+
 ## 1.1.1
 - Etikete yuvarlak köşeli çerçeve geri geldi; kargo firması alt köşede; ilçe/il yazısında Türkçe harflerin noktaları kesilmiyor.
 

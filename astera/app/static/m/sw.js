@@ -1,5 +1,5 @@
 // Astera Mobil — service worker: uygulama kabuğunu önbelleğe alır, telefona gelen bildirimleri gösterir.
-const CACHE = 'astera-m-v6';
+const CACHE = 'astera-m-v7';
 const SHELL = ['/m/', '/static/m/m.js', '/static/pbar.js', '/static/m/m.css', '/static/app.css', '/static/m/icon-192.png', '/static/m/badge-96.png'];
 
 self.addEventListener('install', (e) => {
@@ -27,8 +27,10 @@ self.addEventListener('push', (e) => {
     if (!list.length) return self.registration.showNotification('Astera', { body: 'Yeni bildirim var', icon: '/static/m/icon-192.png', badge: '/static/m/badge-96.png', tag: 'astera', renotify: true, silent: false, vibrate: [300, 120, 300] });
     return Promise.all(list.slice(0, 3).map((n) => self.registration.showNotification(n.title || 'Astera', {
       body: n.body || '', icon: '/static/m/icon-192.png', badge: '/static/m/badge-96.png', tag: 'n' + n.id,
-      data: { id: n.id, kind: n.kind, action: n.action }, vibrate: [300, 120, 300, 120, 300],
-      silent: false, renotify: true, requireInteraction: n.level === 'bad',
+      data: { id: n.id, kind: n.kind, action: n.action },
+      // iade: uzun ve güçlü titreşim; soru: kısa çift titreşim; diğerleri: olağan
+      vibrate: n.kind === 'claim' ? [600, 200, 600, 200, 600, 200, 600] : n.kind === 'question' ? [120, 90, 120] : [300, 120, 300, 120, 300],
+      silent: false, renotify: true, requireInteraction: n.level === 'bad' || n.kind === 'claim',
     })));
   })());
 });
