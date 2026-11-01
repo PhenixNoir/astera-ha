@@ -1,0 +1,25 @@
+name: Astera Management
+version: "1.0.0"
+slug: astera
+description: 3D baskı stok, üretim, yazıcı ve Trendyol yönetimi
+url: https://github.com/PhenixNoir/astera-ha
+arch:
+  - aarch64
+  - amd64
+  - armv7
+init: false
+startup: application
+boot: auto
+host_network: true
+webui: "http://[HOST]:[PORT:8080]"
+ports:
+  8080/tcp: 8080
+ports_description:
+  8080/tcp: Astera paneli
+map:
+  - addon_config:rw
+watchdog: "http://[HOST]:[PORT:8080]/api/version"
+options:
+  port: 8080
+schema:
+  port: port
