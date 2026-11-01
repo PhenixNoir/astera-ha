@@ -3196,6 +3196,10 @@ def api_ty_orders(req):
         p["cargo_real"] = c["amount"] if c else None
         p["cargo_desi"] = c["desi"] if c else None
     # cari hesap ekstresindeki gerçek komisyon (ödeme hesaplandıysa)
+    urls = {r["barcode"].lower(): r["url"] for r in db().execute("SELECT barcode, url FROM ty_products WHERE url IS NOT NULL AND barcode<>''")}
+    for p in d["packages"]:
+        for l in p["lines"]:
+            l["ty_url"] = urls.get((l.get("barcode") or "").lower())
     cm = finans.commission_by_order([p["order_number"] for p in d["packages"]])
     for p in d["packages"]:
         p["com_real"] = cm.get(str(p["order_number"]))

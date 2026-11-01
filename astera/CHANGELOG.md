@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.6.5
+- Siparişte baskıdaki adetler de hesaba katılır ("Rafta yok · 20 baskıda", yetmezse eksik sayısı).
+- Sipariş satırında adet görselin yanında; Trendyol ürün sayfasına bağlantı.
+
 ## 1.6.4
 - Bildirim panelindeki titreme giderildi (veri değişmedikçe yeniden çizilmiyor).
 

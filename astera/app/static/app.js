@@ -3376,7 +3376,7 @@ let ALLOC = { src: null, prod: null, map: {} };
 function tyAlloc() {
   const pk = S.tyOrders?.packages || [];
   if (ALLOC.src === pk && ALLOC.prod === S.products) return ALLOC.map;
-  const left = {}, ahead = {}, map = {};
+  const left = {}, pleft = {}, ahead = {}, map = {};
   const news = pk.filter((p) => p.tab === 'new').sort((a, b) => (a.order_date || 0) - (b.order_date || 0) || String(a.order_number).localeCompare(String(b.order_number)));
   for (const p of news) {
     const need = {};
@@ -3384,10 +3384,11 @@ function tyAlloc() {
     const by = {};
     for (const [pid, n] of Object.entries(need)) {
       const pr = productById(+pid); if (!pr) continue;
-      if (!(pid in left)) { left[pid] = Math.max(0, pr.stock || 0); ahead[pid] = 0; }
-      const got = Math.min(left[pid], n);
-      by[pid] = { need: n, have: got, miss: n - got, shelf: Math.max(0, pr.stock || 0), ahead: ahead[pid] };
-      left[pid] -= got; ahead[pid] += n;
+      if (!(pid in left)) { left[pid] = Math.max(0, pr.stock || 0); pleft[pid] = Math.max(0, pr.in_production || 0); ahead[pid] = 0; }
+      // önce raf, raf bitince baskıdakiler (bitince rafa gelecek), o da yetmezse eksik
+      const got = Math.min(left[pid], n), gp = Math.min(pleft[pid], n - got);
+      by[pid] = { need: n, have: got, print: gp, miss: n - got - gp, shelf: Math.max(0, pr.stock || 0), inprint: Math.max(0, pr.in_production || 0), ahead: ahead[pid] };
+      left[pid] -= got; pleft[pid] -= gp; ahead[pid] += n;
     }
     map[p.package_id] = by;
   }
@@ -3418,8 +3419,8 @@ function tyoRow(p, r) {
     <details class="tyo" ${S.tyo.open.has(p.package_id) ? 'open' : ''} data-tyo-open="${esc(p.package_id)}">
       <summary>
         <span class="tyo-no"><b>${esc(p.order_number)}</b><small class="faint">${date}</small></span>
-        <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" title="${esc(l.name || '')} ×${l.quantity}${sh.by[l.product_id]?.miss ? ` · bu siparişe ${sh.by[l.product_id].have} kalıyor, ${sh.by[l.product_id].miss} eksik (rafta ${sh.by[l.product_id].shelf}, önceki siparişler ${sh.by[l.product_id].ahead})` : ''}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? `<i>${l.quantity}</i>` : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
-        <span class="tyo-who"><b>${esc(p.customer || '—')}</b><small class="muted">${esc(p.city || '')}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : ''}</small></span>
+        <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" title="${esc(l.name || '')} ×${l.quantity}${sh.by[l.product_id]?.miss ? ` · rafta ${sh.by[l.product_id].have}, baskıda ${sh.by[l.product_id].print}, ${sh.by[l.product_id].miss} eksik` : ''}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? `<i>${l.quantity}</i>` : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
+        <span class="tyo-who"><b>${esc(p.customer || '—')}</b><small class="muted">${esc(p.city || '')}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
         <span class="tyo-amt">${r ? fmtTL(r.price) : p.pkg_total != null ? fmtTL(p.pkg_total) : '–'}</span>
         <span class="tyo-pr">${r ? `<span class="mg ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)}</span><small class="faint">${fmtPct(r.margin)}${r.missing.length ? ' · <span class="warn-text">eksik</span>' : ''}</small>` : '<span class="faint">–</span>'}</span>
         <span class="tyo-dl">${showDl && p.tab !== 'shipped' ? `<span class="tyo-term${today ? ' today' : ''}" title="Son teslim ${fmtDl(dl)}">${today ? '<b>BUGÜN</b>' : ''}${dlChip(dl)}</span>` : ''}${p.can_label ? `<button type="button" class="btn btn-sm ${p.label_at ? 'btn-ghost' : ''} lbl-btn" data-act="ty-label" data-id="${esc(p.package_id)}" title="${p.label_at ? `Etiket ${fmtWhen(p.label_at)} basıldı · tekrar bas` : 'Kargo etiketini bas'}">${icon(p.label_at ? 'check' : 'print')} Barkod</button>`
@@ -3437,17 +3438,20 @@ function tyoBody(p) {
     const ms = !cancel && l.product_id ? sh.by[l.product_id] : null;
     const state = cancel ? '<span class="tag tag-bad">İptal</span>' : l.state === 'deducted' ? '<span class="tag tag-ok">Stoktan düştü</span>' : l.state === 'restocked' ? '<span class="tag">Stoğa geri eklendi</span>' : !l.product_id ? '<span class="tag tag-warn">Eşleşmedi</span>' : '';
     const st = pr ? pr.stock : null, out = !!ms?.miss, part = out && ms.have > 0;
-    const queue = ms?.miss && ms.ahead > 0 ? ` <small class="oc-q-note">rafta ${ms.shelf} · önceki siparişler ${Math.min(ms.ahead, ms.shelf)} adet alıyor</small>` : '';
-    const shelf = !pr ? '' : ms?.miss ? (ms.have > 0 ? `<span class="oc-out part">${icon('alert')} ${ms.have} / ${ms.need} karşılanıyor · ${ms.miss} eksik</span>${queue}` : `<span class="oc-out">${icon('alert')} ${ms.ahead > 0 && ms.shelf > 0 ? 'Sıra gelince yetmiyor' : 'Rafta yok'}${st < 0 ? ` (${st})` : ''} · ${ms.need} lazım</span>${queue}`)
+    const used = ms ? Math.min(ms.ahead, ms.shelf + ms.inprint) : 0;
+    const queue = ms && (ms.miss || ms.print) && ms.ahead > 0 && used > 0 ? ` <small class="oc-q-note">önceki siparişler ${used} adet alıyor</small>` : '';
+    const parts2 = (x) => [x.have ? `rafta ${x.have}` : 'rafta yok', x.print ? `${x.print} baskıda` : ''].filter(Boolean).join(' · ');
+    const shelf = !pr ? '' : ms?.miss ? `<span class="oc-out${ms.have || ms.print ? ' part' : ''}">${icon('alert')} ${ms.have || ms.print ? `${parts2(ms)} · <b>${ms.miss} eksik</b>` : `${ms.ahead > 0 && (ms.shelf || ms.inprint) ? 'Sıra gelince yetmiyor' : 'Rafta yok'} · ${ms.need} lazım`}</span>${queue}`
+      : ms?.print ? `<span class="oc-print">${icon('layers')} ${ms.have ? `rafta ${ms.have} + ` : 'Rafta yok · '}${ms.print} baskıda</span>${queue}`
       : st <= 0 && p.tab === 'new' && !cancel ? `<span class="oc-out">${icon('alert')} Rafta yok</span>` : `<span class="oc-shelf">rafta <b>${st}</b></span>`;
     const pmiss = pr?.parts?.length && out ? Math.max(0, (pr.parts_total || 0) - (pr.parts_ready || 0)) : 0;
     const parts = pmiss ? `<span class="oc-parts" title="Sonraki set için elde ${pr.parts_ready}/${pr.parts_total} parça">${pmiss}/${pr.parts_total} parça eksik</span>` : '';
     return `<div class="oc-item${cancel ? ' cancel' : ''}${out ? (part ? ' out part' : ' out') : ''}">
       <span class="oc-img${l.thumbnail ? '' : ' none'}" style="${thumbStyle(l.thumbnail)}" data-zoom="${esc(l.thumbnail || '')}" data-title="${esc(l.name || '')}"></span>
-      <div class="oc-tx"><b>${esc(l.name || 'Bilinmeyen ürün')}</b>${l.ty_name && pr && l.ty_name !== l.name ? `<small class="faint">${esc(l.ty_name)}</small>` : ''}
+      <span class="oc-q${l.quantity > 1 ? ' multi' : ''}">×${l.quantity}</span>
+      <div class="oc-tx"><b>${esc(l.name || 'Bilinmeyen ürün')}${l.ty_url && /^https?:\/\//.test(l.ty_url) ? ` <a class="oc-go" href="${esc(l.ty_url)}" target="_blank" rel="noopener" title="Trendyol'daki ürün sayfası">Trendyol ↗</a>` : ''}</b>${l.ty_name && pr && l.ty_name !== l.name ? `<small class="faint">${esc(l.ty_name)}</small>` : ''}
         <div class="oc-meta">${l.barcode ? `<span class="mono">${esc(l.barcode)}</span>` : ''}${shelf}${parts}${state}${l.unit_price != null ? `<span class="faint">${fmtTL(l.unit_price)}</span>` : ''}</div>
-        ${!l.product_id && l.barcode && !cancel ? `<div class="pick-match"><select class="input" data-tyo-match="${esc(l.barcode)}"><option value="">Hangi ürününüz?</option>${S.products.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select><button class="btn btn-sm btn-ok" data-act="tyo-match" data-code="${esc(l.barcode)}">Eşleştir</button></div>` : ''}</div>
-      <span class="oc-q${l.quantity > 1 ? ' multi' : ''}">×${l.quantity}</span></div>`;
+        ${!l.product_id && l.barcode && !cancel ? `<div class="pick-match"><select class="input" data-tyo-match="${esc(l.barcode)}"><option value="">Hangi ürününüz?</option>${S.products.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select><button class="btn btn-sm btn-ok" data-act="tyo-match" data-code="${esc(l.barcode)}">Eşleştir</button></div>` : ''}</div></div>`;
   }).join('');
   const dl = effDeadline(p.deadline);
   const tex = isTEX(p.cargo_provider);

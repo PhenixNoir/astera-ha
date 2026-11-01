@@ -2510,3 +2510,12 @@ details.anim-open > :not(summary) { animation: sec-in .2s cubic-bezier(.2,.8,.2,
 @keyframes nf-blink-b { 50% { background-color: color-mix(in srgb, #3C7DD9 16%, transparent); box-shadow: inset 3px 0 0 #3C7DD9; } }
 .s-bb .nf.live { box-shadow: inset 3px 0 0 #F27A1A; }
 .nf-sec .nf-ign { margin: 0 10px 8px auto; }
+/* sipariş kartı: adet görselin yanında, baskıdaki adet, Trendyol bağlantısı */
+.oc-item { gap: 14px; }
+.oc-item .oc-q { order: 0; }
+.oc-print { display: inline-flex; align-items: center; gap: 5px; background: color-mix(in srgb, #3C7DD9 22%, transparent); color: #6EA1FF; font-weight: 800; font-size: 12.5px; padding: 3px 10px 3px 8px; border-radius: 99px; box-shadow: inset 0 0 0 1.5px #3C7DD9; }
+.oc-print svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; }
+.oc-out b { font-weight: 900; }
+.sh-tag.pr { color: #fff; background: #3C7DD9; }
+.oc-go { font-size: 11.5px; font-weight: 700; color: #F27A1A; text-decoration: none; border: 1px solid color-mix(in srgb, #F27A1A 50%, transparent); border-radius: 99px; padding: 1px 8px; margin-left: 6px; vertical-align: 2px; white-space: nowrap; }
+.oc-go:hover { background: color-mix(in srgb, #F27A1A 14%, transparent); }
