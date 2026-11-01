@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.6.2
+- Sipariş kârında komisyon siparişin kendi oranından (indirimli komisyon dahil); ödeme hesaplandıysa cari hesaptaki gerçek tutar.
+
 ## 1.6.1
 - Stok uyarısı siparişler arasında sırayla hesaplanır (en eski önce): rafta 8, 10 siparişte 1'er adet varsa son 2 sipariş "Sıra gelince yetmiyor" der.
 

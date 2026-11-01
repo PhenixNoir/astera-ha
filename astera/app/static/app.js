@@ -3258,12 +3258,15 @@ function orderProfit(pkg) {
   if (!S.profit) return null;
   const cfg = S.profit.cfg, v = 1 + cfg.vat / 100;
   const live = pkg.lines.filter((l) => !TY_CANCEL.has(l.status));
-  let P = 0, com = 0, mat = 0, extra = 0, grams = 0, over = null; const missing = new Set();
+  let P = 0, com = 0, mat = 0, extra = 0, grams = 0, over = null, comLine = 0; const missing = new Set();
   for (const l of live) {
     if (l.unit_price == null) { missing.add('fiyat bilgisi yok'); continue; }
     const rev = l.unit_price * l.quantity; P += rev;
     const p = l.product_id ? productById(l.product_id) : null;
-    com += rev * (p ? (p.commission_pct ?? p.ty_commission ?? catCommission(p.category) ?? cfg.commission) : cfg.commission) / 100;
+    // Önce siparişin kendi komisyon oranı (kampanyalı / indirimli komisyon dahil), yoksa ürünün oranı
+    const rate = l.commission != null && l.commission >= 0 ? l.commission : p ? (p.commission_pct ?? p.ty_commission ?? catCommission(p.category) ?? cfg.commission) : cfg.commission;
+    if (l.commission != null) comLine++;
+    com += rev * rate / 100;
     if (!p) { missing.add('eşleşmeyen ürün'); continue; }
     const mc = materialCost(p);
     if (mc.missingGrams && !(p.extra_cost > 0)) missing.add('gramı girilmemiş ürün');
@@ -3273,7 +3276,9 @@ function orderProfit(pkg) {
   }
   if (!P) return null;
   const realCargo = pkg.cargo_real != null && pkg.cargo_real > 0;
-  const r = { price: P, commission: com, commissionPct: Math.round(com / P * 1000) / 10, comSrc: '', cargo: realCargo ? pkg.cargo_real : cargoFor(pkg.pkg_total ?? P, over),
+  const comReal = pkg.com_real != null && pkg.com_real > 0;
+  if (comReal) com = pkg.com_real;
+  const r = { price: P, commission: com, commissionPct: Math.round(com / P * 1000) / 10, comSrc: comReal ? 'cari hesaptan' : comLine ? 'siparişteki oran' : '', cargo: realCargo ? pkg.cargo_real : cargoFor(pkg.pkg_total ?? P, over),
     cargoTier: realCargo ? `kargo faturasından${pkg.cargo_desi ? `, ${pkg.cargo_desi} desi` : ''}` : cargoTierLabel(pkg.pkg_total ?? P),
     fee: cfg.service_fee, pack: cfg.packaging, material: mat * (1 + cfg.fire_pct / 100), extra };
   r.costs = r.commission + r.cargo + r.fee + r.pack + r.material + r.extra;

@@ -452,6 +452,14 @@ def sync(manual=False):
             except Exception:
                 _db().rollback()
                 raise
+        if _get("ty_backfill_v1") == "1" and _get("ty_backfill_com") != "1":
+            try:
+                stats["backfilled_com"] = backfill_details(where="commission IS NULL")
+                with _lock:
+                    _set("ty_backfill_com", "1")
+                    _db().commit()
+            except TrendyolError:
+                pass
         if _get("ty_backfill_v1") != "1":
             try:
                 stats["backfilled"] = backfill_details()
@@ -553,9 +561,10 @@ def _store_details(pkg, line, key, info=None):
     _db().execute("""UPDATE ty_lines SET unit_price=COALESCE(?, unit_price), pkg_total=COALESCE(?, pkg_total),
                      customer=COALESCE(?, customer), city=COALESCE(?, city), deadline=COALESCE(?, deadline),
                      line_id=COALESCE(?, line_id), cargo_no=COALESCE(?, cargo_no), cargo_provider=COALESCE(?, cargo_provider),
-                     cargo_link=COALESCE(?, cargo_link) WHERE line_key=?""",
+                     cargo_link=COALESCE(?, cargo_link), commission=COALESCE(?, commission) WHERE line_key=?""",
                   (line_unit_revenue(line), info["pkg_total"], info["customer"], info["city"], info["deadline"],
-                   str(lid) if lid else None, info.get("cargo_no"), info.get("cargo_provider"), info.get("cargo_link"), key))
+                   str(lid) if lid else None, info.get("cargo_no"), info.get("cargo_provider"), info.get("cargo_link"),
+                   _f(line.get("commission")), key))
 
 
 def _line_key(pkg, line):
@@ -800,11 +809,11 @@ def start_poller():
 
 # ---------------------------------------------------------------- sipariş listesi, fiyat geçmişi, Hazırlanıyor'a çekme
 
-def backfill_details(max_days=90):
+def backfill_details(max_days=90, where="unit_price IS NULL"):
     """Bu sürümden önce kaydedilmiş satırların fiyat/müşteri bilgilerini Trendyol'dan doldurur.
     Sadece mevcut satırları günceller; stoğa dokunmaz."""
     with _lock:
-        r = _db().execute("SELECT MIN(NULLIF(order_date, 0)) m, COUNT(*) n FROM ty_lines WHERE unit_price IS NULL").fetchone()
+        r = _db().execute(f"SELECT MIN(NULLIF(order_date, 0)) m, COUNT(*) n FROM ty_lines WHERE {where}").fetchone()
     if not r["n"]:
         return 0
     now_ms = int(time.time() * 1000)
@@ -818,7 +827,7 @@ def backfill_details(max_days=90):
             for pkg in packages:
                 info = pkg_info(pkg)
                 for line, key in package_lines(pkg):
-                    if _db().execute("SELECT 1 FROM ty_lines WHERE line_key=? AND unit_price IS NULL", (key,)).fetchone():
+                    if _db().execute(f"SELECT 1 FROM ty_lines WHERE line_key=? AND {where}", (key,)).fetchone():
                         _store_details(pkg, line, key, info)
                         filled += 1
             _db().commit()
@@ -870,7 +879,8 @@ def orders(month=None, start=None, end=None):
         g["statuses"].append(r["ty_status"] or "")
         g["lines"].append({"line_key": r["line_key"], "product_id": r["product_id"], "name": r["matched_name"] or r["product_name"] or r["barcode"],
                            "ty_name": r["product_name"], "barcode": r["barcode"], "thumbnail": r["thumbnail"], "quantity": r["quantity"],
-                           "unit_price": r["unit_price"], "state": r["state"], "status": r["ty_status"], "line_id": r["line_id"]})
+                           "unit_price": r["unit_price"], "state": r["state"], "status": r["ty_status"], "line_id": r["line_id"],
+                           "commission": r["commission"]})
     out, counts = [], {t: 0 for t in ORDER_TABS}
     for g in pk.values():
         live = [st for st in g["statuses"] if st not in CANCEL_STATES]

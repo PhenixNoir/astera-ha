@@ -371,6 +371,23 @@ def cargo_by_order(order_numbers=None):
             for r in _db().execute(q + " GROUP BY order_number", args)}
 
 
+def commission_by_order(order_numbers):
+    """Satış kayıtlarındaki gerçek komisyon tutarı (iadeler düşülmüş), sipariş başına."""
+    ons = [str(x) for x in order_numbers if x]
+    if not ons:
+        return {}
+    out = {}
+    for i in range(0, len(ons), 500):
+        part = ons[i:i + 500]
+        for r in _db().execute(f"""SELECT order_number, SUM(CASE WHEN tx_type IN ('Sale','DiscountCancel','CouponCancel') THEN ABS(COALESCE(commission_amount,0))
+                                                         WHEN tx_type IN ('Return','Discount','Coupon') THEN -ABS(COALESCE(commission_amount,0)) ELSE 0 END) c,
+                                         SUM(CASE WHEN tx_type='Sale' THEN 1 ELSE 0 END) n
+                                  FROM fin_tx WHERE order_number IN ({','.join('?' * len(part))}) GROUP BY order_number""", part):
+            if r["n"]:
+                out[r["order_number"]] = round(max(0, r["c"] or 0), 2)
+    return out
+
+
 def overview():
     t = _now()
     lt = time.localtime(t)

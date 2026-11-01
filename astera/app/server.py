@@ -372,7 +372,7 @@ def migrate():
     tcols = _columns("ty_lines")
     for col, typ in (("unit_price", "REAL"), ("pkg_total", "REAL"), ("customer", "TEXT"), ("city", "TEXT"),
                      ("deadline", "INTEGER"), ("line_id", "TEXT"), ("cargo_no", "TEXT"), ("cargo_provider", "TEXT"),
-                     ("cargo_link", "TEXT"), ("label_at", "INTEGER")):
+                     ("cargo_link", "TEXT"), ("label_at", "INTEGER"), ("commission", "REAL")):
         if col not in tcols:
             c.execute(f"ALTER TABLE ty_lines ADD COLUMN {col} {typ}")
     ocols = _columns("custom_orders")
@@ -3195,6 +3195,10 @@ def api_ty_orders(req):
         c = cg.get(str(p["order_number"]))
         p["cargo_real"] = c["amount"] if c else None
         p["cargo_desi"] = c["desi"] if c else None
+    # cari hesap ekstresindeki gerçek komisyon (ödeme hesaplandıysa)
+    cm = finans.commission_by_order([p["order_number"] for p in d["packages"]])
+    for p in d["packages"]:
+        p["com_real"] = cm.get(str(p["order_number"]))
     return d
 
 
