@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.6.1
+- Stok uyarısı siparişler arasında sırayla hesaplanır (en eski önce): rafta 8, 10 siparişte 1'er adet varsa son 2 sipariş "Sıra gelince yetmiyor" der.
+
 ## 1.6.0
 - "Trendyol'da düzenle": başlık, açıklama, görseller, özellikler, stok kodu ve kargoya veriliş süresi; değişenler turuncu, gönderim öncesi eski → yeni onayı.
 

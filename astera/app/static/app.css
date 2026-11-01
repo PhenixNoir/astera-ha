@@ -2486,3 +2486,4 @@ details.anim-open > :not(summary) { animation: sec-in .2s cubic-bezier(.2,.8,.2,
 .te-go:not(:disabled) { background: #F27A1A; border-color: #F27A1A; color: #fff; }
 .ty-w-row { display: flex; gap: 8px; flex-wrap: wrap; }
 @media (max-width: 760px) { .te-sub { display: none; } .te-im { width: 84px; height: 112px; } .te-im-a { opacity: 1; } }
+.oc-q-note { font-size: 11.5px; color: var(--ink-3); }

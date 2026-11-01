@@ -3352,20 +3352,35 @@ function tyoResults() {
       : `<div class="empty panel"><h3>${tyoFilterOn() ? 'Filtreye uyan sipariş yok' : 'Bu sekmede sipariş yok'}</h3><p>${tyoFilterOn() ? 'Filtreleri değiştirip tekrar deneyin.' : active ? 'Yeni siparişler birkaç dakikada bir Trendyol\'dan çekilir.' : 'Başka bir tarih aralığı seçebilirsiniz.'}</p></div>`}`;
 }
 // Siparişte rafta yetmeyen kalemler: aynı üründen siparişte kaç adet lazım, rafta kaç var
-function ordShort(p) {
-  const need = {}, out = {};
-  if (p.tab !== 'new') return { state: 'none', by: out };
-  const live = p.lines.filter((l) => !TY_CANCEL.has(l.status) && l.product_id && l.state !== 'deducted');
-  live.forEach((l) => { need[l.product_id] = (need[l.product_id] || 0) + l.quantity; });
-  let short = 0;
-  for (const [pid, n] of Object.entries(need)) {
-    const pr = productById(+pid); if (!pr) continue;
-    const have = Math.max(0, pr.stock || 0), miss = Math.max(0, n - have);
-    out[pid] = { need: n, have, miss };
-    if (miss) short++;
+// Raf stoğu Yeni siparişlere en eskiden başlayarak sırayla dağıtılır (paketleme sırası): 10 siparişe 8 adet
+// varsa ilk 8'i karşılanır, son 2'si "sıra gelince yok" olur. Sonuç sipariş listesi değişene kadar saklanır.
+let ALLOC = { src: null, prod: null, map: {} };
+function tyAlloc() {
+  const pk = S.tyOrders?.packages || [];
+  if (ALLOC.src === pk && ALLOC.prod === S.products) return ALLOC.map;
+  const left = {}, ahead = {}, map = {};
+  const news = pk.filter((p) => p.tab === 'new').sort((a, b) => (a.order_date || 0) - (b.order_date || 0) || String(a.order_number).localeCompare(String(b.order_number)));
+  for (const p of news) {
+    const need = {};
+    p.lines.filter((l) => !TY_CANCEL.has(l.status) && l.product_id && l.state !== 'deducted').forEach((l) => { need[l.product_id] = (need[l.product_id] || 0) + l.quantity; });
+    const by = {};
+    for (const [pid, n] of Object.entries(need)) {
+      const pr = productById(+pid); if (!pr) continue;
+      if (!(pid in left)) { left[pid] = Math.max(0, pr.stock || 0); ahead[pid] = 0; }
+      const got = Math.min(left[pid], n);
+      by[pid] = { need: n, have: got, miss: n - got, shelf: Math.max(0, pr.stock || 0), ahead: ahead[pid] };
+      left[pid] -= got; ahead[pid] += n;
+    }
+    map[p.package_id] = by;
   }
-  const kinds = Object.keys(need).length;
-  return { state: !short ? 'none' : short >= kinds ? 'all' : 'some', by: out };
+  ALLOC = { src: pk, prod: S.products, map };
+  return map;
+}
+function ordShort(p) {
+  if (p.tab !== 'new') return { state: 'none', by: {} };
+  const by = tyAlloc()[p.package_id] || {};
+  const vals = Object.values(by), short = vals.filter((x) => x.miss).length;
+  return { state: !short ? 'none' : short >= vals.length ? 'all' : 'some', by };
 }
 // Sabah 9'dan sonra son teslime 24 saatten az kalan sipariş bugün kargoya verilmeli
 function dueToday(dl) { if (!dl) return false; const n = new Date(); return n.getHours() >= 9 && dl - nowS() < 86400; }
@@ -3385,7 +3400,7 @@ function tyoRow(p, r) {
     <details class="tyo" ${S.tyo.open.has(p.package_id) ? 'open' : ''} data-tyo-open="${esc(p.package_id)}">
       <summary>
         <span class="tyo-no"><b>${esc(p.order_number)}</b><small class="faint">${date}</small></span>
-        <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" title="${esc(l.name || '')} ×${l.quantity}${sh.by[l.product_id]?.miss ? ` · rafta ${sh.by[l.product_id].have}, ${sh.by[l.product_id].miss} eksik` : ''}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? `<i>${l.quantity}</i>` : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
+        <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" title="${esc(l.name || '')} ×${l.quantity}${sh.by[l.product_id]?.miss ? ` · bu siparişe ${sh.by[l.product_id].have} kalıyor, ${sh.by[l.product_id].miss} eksik (rafta ${sh.by[l.product_id].shelf}, önceki siparişler ${sh.by[l.product_id].ahead})` : ''}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? `<i>${l.quantity}</i>` : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
         <span class="tyo-who"><b>${esc(p.customer || '—')}</b><small class="muted">${esc(p.city || '')}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : ''}</small></span>
         <span class="tyo-amt">${r ? fmtTL(r.price) : p.pkg_total != null ? fmtTL(p.pkg_total) : '–'}</span>
         <span class="tyo-pr">${r ? `<span class="mg ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)}</span><small class="faint">${fmtPct(r.margin)}${r.missing.length ? ' · <span class="warn-text">eksik</span>' : ''}</small>` : '<span class="faint">–</span>'}</span>
@@ -3404,7 +3419,8 @@ function tyoBody(p) {
     const ms = !cancel && l.product_id ? sh.by[l.product_id] : null;
     const state = cancel ? '<span class="tag tag-bad">İptal</span>' : l.state === 'deducted' ? '<span class="tag tag-ok">Stoktan düştü</span>' : l.state === 'restocked' ? '<span class="tag">Stoğa geri eklendi</span>' : !l.product_id ? '<span class="tag tag-warn">Eşleşmedi</span>' : '';
     const st = pr ? pr.stock : null, out = !!ms?.miss, part = out && ms.have > 0;
-    const shelf = !pr ? '' : ms?.miss ? (ms.have > 0 ? `<span class="oc-out part">${icon('alert')} Rafta ${ms.have} / ${ms.need} lazım · ${ms.miss} eksik</span>` : `<span class="oc-out">${icon('alert')} Rafta yok${st < 0 ? ` (${st})` : ''} · ${ms.need} lazım</span>`)
+    const queue = ms?.miss && ms.ahead > 0 ? ` <small class="oc-q-note">rafta ${ms.shelf} · önceki siparişler ${Math.min(ms.ahead, ms.shelf)} adet alıyor</small>` : '';
+    const shelf = !pr ? '' : ms?.miss ? (ms.have > 0 ? `<span class="oc-out part">${icon('alert')} ${ms.have} / ${ms.need} karşılanıyor · ${ms.miss} eksik</span>${queue}` : `<span class="oc-out">${icon('alert')} ${ms.ahead > 0 && ms.shelf > 0 ? 'Sıra gelince yetmiyor' : 'Rafta yok'}${st < 0 ? ` (${st})` : ''} · ${ms.need} lazım</span>${queue}`)
       : st <= 0 && p.tab === 'new' && !cancel ? `<span class="oc-out">${icon('alert')} Rafta yok</span>` : `<span class="oc-shelf">rafta <b>${st}</b></span>`;
     const pmiss = pr?.parts?.length && out ? Math.max(0, (pr.parts_total || 0) - (pr.parts_ready || 0)) : 0;
     const parts = pmiss ? `<span class="oc-parts" title="Sonraki set için elde ${pr.parts_ready}/${pr.parts_total} parça">${pmiss}/${pr.parts_total} parça eksik</span>` : '';
