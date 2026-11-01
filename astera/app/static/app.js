@@ -3554,12 +3554,14 @@ body { font-family: "Segoe UI", Arial, Helvetica, sans-serif; color: #000; }
 .loc b { font-size: 14pt; font-weight: 900; line-height: 1.2; white-space: nowrap; overflow: hidden; padding-top: .3mm; }
 .loc small { font-size: 7.5pt; font-weight: 700; }
 .ob { width: 46mm; flex: none; padding: 0 2mm; } .ob .bc { height: 9mm; } .ob small { display: block; text-align: center; font-size: 6.5pt; font-weight: 700; letter-spacing: 1px; margin-top: .3mm; }`;
+// Etiket logosu: Ayarlar'dan yüklenen, "logo yok" ya da paketle gelen
+const labelLogo = () => { const l = S.labelCfg?.logo; return l === 'none' ? '' : l || '/static/etiket-logo.png'; };
 function labelPageHTML(d) {
   const city = [d.district, d.city].filter(Boolean).join(' / ').toLocaleUpperCase('tr');
   return `<div class="L"><div class="top">${barcodeSVG(d.tracking)}<div class="tn">${esc(d.tracking)}</div></div>
     <div class="mid"><div class="who"><b class="nm">${esc((d.name || '').toLocaleUpperCase('tr'))}</b>${d.company ? `<div class="co">${esc(d.company)}</div>` : ''}
       <div class="ad">${esc(d.address || '')}</div>${d.neighborhood && !trLower(d.address || '').includes(trLower(d.neighborhood)) ? `<div class="nb">${esc(d.neighborhood)}</div>` : ''}</div>
-      <img class="logo" src="${location.origin}/static/etiket-logo.png" alt=""></div>
+      ${labelLogo() ? `<img class="logo" src="${location.origin}${esc(labelLogo())}" alt="">` : ''}</div>
     <div class="bot"><div class="loc"><b>${esc(city)}</b><small>Sipariş ${esc(d.order_number)}${d.boxes > 1 ? ` · ${d.boxes} koli` : ''}${d.provider ? `<br><span class="car${isTEX(d.provider) ? '' : ' other'}">${esc(d.provider.replace(/ Marketplace$/i, '').toLocaleUpperCase('tr'))}</span>` : ''}</small></div>
       <div class="ob">${barcodeSVG(d.tracking)}<small>${esc(d.tracking)}</small></div></div></div>`;
 }
@@ -3612,6 +3614,7 @@ function texWarn(list) {
   });
 }
 async function browserLabels(ids) {
+  if (!S.labelCfg) S.labelCfg = await api('GET', '/api/label/settings').catch(() => null);
   const r = await api('POST', '/api/trendyol/label-data', { package_ids: ids, mark: false });
   if (r.errors.length) toast(`${r.errors.length} etiket hazırlanamadı: ${r.errors.slice(0, 2).map((e) => `${e.order_number || ''} ${e.error}`.trim()).join('; ')}`, { bad: true });
   if (r.labels.length && await texWarn(r.labels)) {
@@ -4529,6 +4532,12 @@ function labelSetHTML() {
     <div class="lp-f row" data-m="net"${m === 'net' ? '' : ' hidden'}>
       <label class="field"><span>IP adresi</span><input class="input" id="lp-ip" value="${esc(c.ip)}" placeholder="192.168.1.50" inputmode="decimal"></label>
       <label class="field" style="max-width:120px"><span>Port</span><input class="input" id="lp-port" value="${c.port || 9100}" inputmode="numeric"></label></div>
+    <div class="field"><span>Etiket logosu <span class="faint">(etiketin sağında; siyah, şeffaf arka planlı PNG en iyisi)</span></span>
+      <div class="lp-logo"><span class="lp-logo-prev">${labelLogo() ? `<img src="${esc(labelLogo())}" alt="">` : '<em>Logo yok</em>'}</span>
+        <div class="lp-logo-b"><button type="button" class="btn btn-sm" data-act="lp-logo-up">${icon('upload')} Logo yükle</button>
+          ${c.logo ? '<button type="button" class="btn btn-sm btn-ghost" data-act="lp-logo-set" data-v="">Paketle gelen logo</button>' : ''}
+          ${c.logo !== 'none' ? '<button type="button" class="btn btn-sm btn-ghost" data-act="lp-logo-set" data-v="none">Logo kullanma</button>' : ''}</div>
+        <input type="file" id="lp-logo-in" accept="image/png,image/jpeg,image/webp" hidden></div></div>
     <label class="switch"><input type="checkbox" id="lp-auto" ${c.auto ? 'checked' : ''}><span>Siparişi Hazırlanıyor'a çekince etiketi kendiliğinden bas</span></label>
     <div class="bk-btns"><button class="btn btn-primary" data-act="lp-save">Kaydet</button><button class="btn" data-act="lp-test">${icon('print')} Deneme etiketi bas</button></div>
   </div></section>`;
@@ -5176,6 +5185,20 @@ const ACTIONS = {
     try { S.labelCfg = await api('PUT', '/api/label/settings', { mode, share: $('#lp-share').value.trim(), host: $('#lp-host').value.trim(), ...($('#lp-user') ? { smb_user: $('#lp-user').value.trim(), smb_pass: $('#lp-pass').value } : {}), ip: $('#lp-ip').value.trim(), port: +$('#lp-port').value || 9100, auto: $('#lp-auto').checked });
       toast('Etiket yazıcısı kaydedildi'); } catch (e) { fail(e); }
   },
+  'lp-logo-up': () => {
+    const inp = $('#lp-logo-in'); if (!inp) return;
+    inp.onchange = async () => {
+      const f = inp.files[0]; inp.value = ''; if (!f) return;
+      if (f.size > 3 * 1024 * 1024) return toast('Logo en fazla 3 MB olabilir', { bad: true });
+      try {
+        const data = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(f); });
+        const up = await api('POST', '/api/upload-image', { data });
+        S.labelCfg = await api('PUT', '/api/label/settings', { logo: up.url }); toast('Etiket logosu kaydedildi'); render();
+      } catch (e) { fail(e); }
+    };
+    inp.click();
+  },
+  'lp-logo-set': async (el) => { try { S.labelCfg = await api('PUT', '/api/label/settings', { logo: el.dataset.v }); toast(el.dataset.v === 'none' ? 'Etiketlerde logo kullanılmayacak' : 'Paketle gelen logo kullanılacak'); render(); } catch (e) { fail(e); } },
   'lp-test': async (el) => {
     const mode = $('#lp-mode button.on')?.dataset.v || 'browser';
     if (mode === 'browser') return printLabelPages([{ tracking: '7330000000000000', provider: 'Trendyol Express', name: 'Deneme Alıcı', address: 'Örnek Mahallesi Deneme Sokak No:1 Daire:2', neighborhood: 'Örnek Mah', district: 'Beykoz', city: 'İstanbul', order_number: '10000000000', boxes: 1 }]);

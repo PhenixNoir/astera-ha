@@ -2550,3 +2550,9 @@ details.anim-open > :not(summary) { animation: sec-in .2s cubic-bezier(.2,.8,.2,
 .tyo-thumbs .tt .tt-qb small { font-size: 10px; }
 .oc-item { gap: 30px; }
 @media (max-width: 900px) { .oc-qb { min-width: 38px; height: 38px; font-size: 21px; } .oc-qb.m { min-width: 42px; height: 42px; font-size: 24px; } .oc-qb.gem { min-width: 48px; height: 48px; font-size: 25px; } .oc-item { gap: 24px; } }
+.lp-logo { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.lp-logo-prev { width: 140px; height: 84px; border-radius: 10px; background: #fff; border: 1px solid var(--line); display: grid; place-items: center; padding: 8px; }
+.lp-logo-prev img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.lp-logo-prev em { color: #888; font-size: 12.5px; }
+.lp-logo-b { display: flex; gap: 6px; flex-wrap: wrap; }
+.lp-logo-prev { overflow: hidden; flex: none; box-sizing: border-box; } .lp-logo-prev img { width: auto; height: auto; max-width: 124px; max-height: 68px; display: block; }

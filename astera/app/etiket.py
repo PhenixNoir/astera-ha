@@ -39,7 +39,8 @@ def conf():
         c = {}
     return {"mode": c.get("mode") if c.get("mode") in ("share", "net") else "browser", "share": c.get("share") or "", "host": c.get("host") or "",
             "ip": c.get("ip") or "", "port": int(c.get("port") or 9100), "auto": bool(c.get("auto", True)),
-            "smb_user": c.get("smb_user") or "", "smb_pass": c.get("smb_pass") or ""}
+            "smb_user": c.get("smb_user") or "", "smb_pass": c.get("smb_pass") or "",
+            "logo": c.get("logo") or ""}   # "" = paketle gelen logo, "none" = logo yok, "/uploads/..." = yüklenen
 
 
 IS_WIN = sys.platform.startswith("win")
@@ -84,7 +85,10 @@ def save_conf(b):
             pw = str(b["smb_pass"])[:120]
     if b.get("clear_pass") or not user:
         pw = ""
-    c.update(mode=mode, share=share, host=host, ip=ip, port=port, auto=bool(b.get("auto", c["auto"])), smb_user=user, smb_pass=pw)
+    logo = b.get("logo", c["logo"]) or ""
+    if logo not in ("", "none") and not re.fullmatch(r"/uploads/[A-Za-z0-9_.-]{1,80}", logo):
+        raise ValueError("Logo geçersiz")
+    c.update(mode=mode, share=share, host=host, ip=ip, port=port, auto=bool(b.get("auto", c["auto"])), smb_user=user, smb_pass=pw, logo=logo)
     _set("label_printer", json.dumps(c))
     return public_conf()
 

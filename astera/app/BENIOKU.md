@@ -486,3 +486,5 @@ Dışarıdan erişim isterseniz Tailscale gibi bir VPN en güvenli yoldur.
 **Baskıdaki ürünler siparişte** — Stok dağıtımında raf bittikten sonra baskıdaki adetler de sırayla siparişlere ayrılır. Baskıdakiyle karşılanan siparişte mavi "Rafta yok · 20 baskıda" yazar ve sipariş yanıp sönmez; baskıdaki de yetmiyorsa "rafta yok · 20 baskıda · 5 eksik" kırmızı/sarı uyarı olur. Ürün satırında adet görselin hemen yanında durur, ürün adının yanındaki "Trendyol ↗" Trendyol'daki ürün sayfasını açar.
 
 **Adet rozeti** — Sipariş ürünlerinde adet, görselin sağ alt köşesinde yuvarlak rozettedir. Renk adede göre değişir: 1 gri, 2–4 griden kırmızıya, 5–9 turkuazdan lilaya, 10 ve üstü elmas gibi parlayan rozet. Kapalı listedeki küçük görsellerde de aynı renkler kullanılır.
+
+**Etiket logosu** — Ayarlar → Kargo etiketi yazıcısı → "Etiket logosu": kendi logonuzu yükleyin (siyah, şeffaf arka planlı PNG en iyisi), paketle gelen logoya dönün ya da "Logo kullanma" ile logosuz etiket basın. Kurulum adımları için KURULUM.txt dosyasına bakın.

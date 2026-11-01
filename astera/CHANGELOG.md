@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.6.8
+- Etiket logosu Ayarlar'dan değiştirilebilir (yükle / paketle gelen / logo yok).
+
 ## 1.6.7
 - Adet rozetindeki rakamlar büyütüldü.
 
