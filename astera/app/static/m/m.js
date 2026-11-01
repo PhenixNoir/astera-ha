@@ -23,6 +23,7 @@ const M = { route: 'baskilar', products: [], jobs: [], spools: [], bambu: { prin
 async function api(method, path, body) {
   const r = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
   const d = await r.json().catch(() => ({}));
+  if (r.status === 401 && d.login) { location.href = '/giris?next=' + encodeURIComponent(location.pathname + location.hash); throw new Error('Giriş gerekli'); }
   if (!r.ok) throw new Error(d.error || `Hata (${r.status})`);
   return d;
 }
@@ -486,7 +487,9 @@ BIND.bildirim = () => {
 };
 
 // telefon bildirimleri (Web Push): https gerekir
+const IN_APP = !!window.AsteraApp;   // Android uygulamasının içinde: bildirimleri uygulama gösterir
 function pushState() {
+  if (IN_APP) return 'app';
   if (!window.isSecureContext) return 'insecure';
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
   if (Notification.permission === 'denied') return 'denied';
@@ -500,6 +503,7 @@ function pushCard() {
     denied: 'Bildirim izni reddedilmiş. Telefon Ayarlar → Uygulamalar → Astera → Bildirimler\'den izin verin.',
     off: 'Baskı bitince, yazıcı tanımadığı bir baskıya başlayınca ve yeni sipariş gelince telefona bildirim gelsin.',
     on: 'Telefon bildirimleri açık.',
+    app: 'Bildirimleri Astera uygulaması gösteriyor. Her türün (sipariş, buybox, yazıcı, iade, soru) sesini telefonun Ayarlar → Uygulamalar → Astera → Bildirimler bölümünden ayrı ayrı değiştirebilirsiniz.',
   }[st];
   const sound = st === 'on' ? `<details class="m-help"><summary>Ses ve titreşim gelmiyor mu?</summary><ol>
       <li>Telefon <b>Ayarlar → Uygulamalar → Astera → Bildirimler</b>'e girin. (Astera listede yoksa: <b>Chrome → Bildirimler → Siteler</b>, bu adres.)</li>
@@ -508,7 +512,7 @@ function pushCard() {
       <li>Pil tasarrufunda Chrome / Astera'yı <b>Kısıtlanmamış</b> yapın; yoksa bildirimler gecikebilir.</li>
       <li><b>Deneme gönder</b> ile kontrol edin. Uygulama açıkken gelen bildirimlerde de ses ve titreşim olur.</li></ol></details>` : '';
   return `<article class="m-card m-push ${st}"><span class="m-ic">${icon('bell')}</span><div class="m-grow"><b>Telefon bildirimleri</b><small>${msg}</small>
-    ${st === 'off' ? '<button class="btn btn-primary btn-sm" id="push-on">Bildirimleri aç</button>' : st === 'on' ? '<div class="m-actions"><button class="btn btn-sm" id="push-test">Deneme gönder</button><button class="btn btn-ghost btn-sm" id="push-off">Kapat</button></div>' : ''}${sound}</div></article>`;
+    ${st === 'app' ? '<div class="m-actions"><button class="btn btn-sm" id="push-test">Deneme gönder</button><button class="btn btn-ghost btn-sm" id="app-set">Uygulama ayarları</button></div>' : st === 'off' ? '<button class="btn btn-primary btn-sm" id="push-on">Bildirimleri aç</button>' : st === 'on' ? '<div class="m-actions"><button class="btn btn-sm" id="push-test">Deneme gönder</button><button class="btn btn-ghost btn-sm" id="push-off">Kapat</button></div>' : ''}${sound}</div></article>`;
 }
 function b64ToBytes(s) { const p = '='.repeat((4 - (s.length % 4)) % 4); const b = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, (c) => c.charCodeAt(0)); }
 function bindPush() {
@@ -523,7 +527,8 @@ function bindPush() {
       M.pushSub = sub; toast('Telefon bildirimleri açıldı'); render();
     } catch (e) { fail(e); }
   });
-  $('#push-test')?.addEventListener('click', async () => { try { const r = await api('POST', '/api/push/test'); toast(`Deneme gönderildi (${r.subscribers} cihaz)`); } catch (e) { fail(e); } });
+  $('#push-test')?.addEventListener('click', async () => { try { const r = await api('POST', '/api/push/test'); toast(IN_APP ? 'Deneme gönderildi, birkaç saniye içinde gelir' : `Deneme gönderildi (${r.subscribers} cihaz)`); } catch (e) { fail(e); } });
+  $('#app-set')?.addEventListener('click', () => { try { window.AsteraApp.openSettings(); } catch { /* */ } });
   $('#push-off')?.addEventListener('click', async () => { try { await api('POST', '/api/push/unsubscribe', { endpoint: M.pushSub.endpoint }); await M.pushSub.unsubscribe(); M.pushSub = null; render(); } catch (e) { fail(e); } });
 }
 
@@ -532,14 +537,14 @@ async function boot() {
   $('#m-back').onclick = closeSheet;
   $('#m-fab').onclick = () => openNewPrint();
   window.addEventListener('hashchange', () => { if (M.sheetOpen) { document.body.classList.remove('sheet-open'); M.sheetOpen = false; } go(); });
-  if ('serviceWorker' in navigator && window.isSecureContext) {
+  if ('serviceWorker' in navigator && window.isSecureContext && !IN_APP) {
     try {
       const reg = await navigator.serviceWorker.register('/m/sw.js', { scope: '/m/' });
       M.pushSub = await reg.pushManager?.getSubscription?.() || null;
     } catch { /* */ }
     navigator.serviceWorker.addEventListener('message', (e) => { if (e.data?.go) { location.href = e.data.go; } });
   }
-  try { await loadAll(); } catch (e) { setConn(false); $('#mv').innerHTML = `<p class="m-empty">Sunucuya ulaşılamadı. Bilgisayarda Astera açık mı ve telefon aynı ağda (ya da Tailscale'de) mi?<br><br><button class="btn" onclick="location.reload()">Tekrar dene</button></p>`; return; }
+  try { await loadAll(); } catch (e) { setConn(false); $('#mv').innerHTML = `<p class="m-empty">Sunucuya ulaşılamadı. Astera çalışıyor mu, telefon internete bağlı mı?<br><br><button class="btn" onclick="location.reload()">Tekrar dene</button></p>`; return; }
   api('GET', '/api/spools').then((d) => { M.spools = d.spools; if (M.route === 'filament') render(); }).catch(() => {});
   go();
   setInterval(tick, 1000);
