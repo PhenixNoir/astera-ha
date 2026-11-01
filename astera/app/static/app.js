@@ -4944,6 +4944,7 @@ const ACTIONS = {
   'jc-save': () => jcSave(),
   'bb-f': (el) => { S.bbf = el.dataset.v; render(); },
   'bb-open': (el) => openBuybox(el.dataset.bc),
+  'ty-edit': (el) => openTyEdit(el.dataset.bc, el.dataset.name),
   'ty-price': (el) => openTyPrice(el.dataset.bc, el.dataset.name, el.dataset.pid, el.dataset.bb ? +el.dataset.bb : null),
   'ty-cargo': (el) => openTyCargo(el.dataset.id, el.dataset.cur, el.dataset.no),
   'bb-edit': (el) => { closeModal(); openProductEditor(+el.dataset.id); },
@@ -5317,7 +5318,8 @@ PAGES.urun = {
           <dt>90 günde sipariş</dt><dd>${d.ty_orders.qty} adet · ${d.ty_orders.lines} satır${d.ty_orders.avg_price ? ` · ort. ${fmtTL(d.ty_orders.avg_price)}` : ''}</dd>
           <dt>Buybox</dt><dd>${!bb ? '<span class="muted">kontrol edilmedi</span>' : !bb.multi && bb.buybox_order === 1 ? 'tek satıcı' : bb.buybox_order === 1 ? '<span class="ok-text">bizde</span>' : `<span class="bad-text">${bb.buybox_order}. sıradayız · buybox ${fmtTL(bb.buybox_price)}</span>`}${bb?.multi ? ` <a href="#/buybox" class="muted">ayrıntı</a>` : ''}</dd>
           <dt>Barkod</dt><dd>${esc(ty.barcode)}</dd></dl>
-          <button class="btn btn-sm ty-w-btn" data-act="ty-price" data-bc="${esc(ty.barcode)}" data-name="${esc(p.name)}" data-pid="${p.id}"${bb && bb.buybox_order > 1 ? ` data-bb="${bb.buybox_price}"` : ''}>${icon('edit')} Trendyol fiyatını değiştir</button>` : '<p class="muted" style="margin:0">Trendyol ürünüyle eşleşmiyor (barkod alanını kontrol edin).</p>'}</div></section>
+          <div class="ty-w-row"><button class="btn btn-sm ty-w-btn" data-act="ty-price" data-bc="${esc(ty.barcode)}" data-name="${esc(p.name)}" data-pid="${p.id}"${bb && bb.buybox_order > 1 ? ` data-bb="${bb.buybox_price}"` : ''}>${icon('edit')} Fiyatı değiştir</button>
+          <button class="btn btn-sm ty-w-btn" data-act="ty-edit" data-bc="${esc(ty.barcode)}" data-name="${esc(p.name)}">${icon('edit')} Trendyol'da düzenle</button></div>` : '<p class="muted" style="margin:0">Trendyol ürünüyle eşleşmiyor (barkod alanını kontrol edin).</p>'}</div></section>
       </div>
       <div class="two-col">
         <section class="panel" data-uisec="sec.urun.jobs"><div class="panel-h"><h2>Baskı geçmişi</h2><span class="muted" style="font-size:13px">${st.avg_job_min ? `ortalama ${fmtDur(st.avg_job_min)}` : ''}</span></div><div class="panel-b">
@@ -5406,6 +5408,7 @@ function openBuybox(bc) {
         ${x.history.map((h) => `<tr><td>${fmtWhen(h.at)}</td><td class="num">${h.order ?? '–'}</td><td class="num">${fmtTL(h.buybox)}</td><td class="num">${h.second ? fmtTL(h.second) : '–'}</td><td class="num">${fmtTL(h.ours)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">Henüz değişim kaydı yok.</p>'}</div>
     </div>
     <div class="modal-f">${x.url ? `<a class="btn btn-ghost" href="${esc(x.url)}" target="_blank" rel="noopener">Trendyol'da aç</a>` : ''}${x.product_id ? `<a class="btn" href="#/urun?id=${x.product_id}" onclick="closeModal(true)">Ürün sayfası</a><button class="btn" data-act="bb-edit" data-id="${x.product_id}">Ürünü düzenle</button>` : ''}
+      <button class="btn ty-w-btn" data-act="ty-edit" data-bc="${esc(x.barcode)}" data-name="${esc(x.name)}">Trendyol'da düzenle</button>
       <button class="btn ty-w-btn" data-act="ty-price" data-bc="${esc(x.barcode)}" data-name="${esc(x.name)}"${x.product_id ? ` data-pid="${x.product_id}"` : ''}${x.status === 'cheaper' && x.buybox ? ` data-bb="${x.buybox}"` : ''}>${icon('edit')} Trendyol fiyatını değiştir</button>
       <div class="right"><button class="btn btn-primary" data-act="close">Tamam</button></div></div>`, 'wide');
 }
@@ -5469,6 +5472,108 @@ async function openTyPrice(bc, name, pid, bbPrice) {
     } catch (e) { fail(e); go.disabled = false; go.textContent = 'Gönder…'; $('#tp-res').innerHTML = ''; }
   };
   void sub;
+}
+// ---------- Trendyol'daki ürünü düzenleme (sekmeli; değişen alan turuncu, altında Trendyol'daki eski hali)
+let TE = null;
+const TE_TABS = [['text', 'Başlık ve açıklama'], ['img', 'Görseller'], ['attr', 'Özellikler'], ['var', 'Varyant bilgileri']];
+const teAttrVal = (a) => a.value_id ? String(a.value_id) : a.custom?.trim() ? 'c:' + a.custom.trim() : '';
+function teChanges() {
+  const o = TE.orig, c = TE.cur, ch = {};
+  if (c.title.trim() !== o.title) ch.title = c.title;
+  if (c.description.trim() !== o.description.trim()) ch.description = c.description;
+  if (JSON.stringify(c.images) !== JSON.stringify(o.images)) ch.images = c.images;
+  if (c.attrs.map(teAttrVal).join('|') !== o.attrs.map(teAttrVal).join('|')) ch.attributes = c.attrs.filter((a) => a.value_id || a.custom?.trim()).map((a) => ({ id: a.id, value_id: a.value_id || null, custom: (a.custom || '').trim() }));
+  if (c.stock_code.trim() !== o.stock_code) ch.stock_code = c.stock_code;
+  if (String(c.delivery ?? '') !== String(o.delivery ?? '')) ch.delivery = c.delivery;
+  return ch;
+}
+const teTabDirty = (k, ch) => ({ text: 'title' in ch || 'description' in ch, img: 'images' in ch, attr: 'attributes' in ch, var: 'stock_code' in ch || 'delivery' in ch }[k]);
+async function openTyEdit(bc, name) {
+  openModal(`<div class="modal-h ty-w-h"><h2><span class="tybadge">TRENDYOL</span> Trendyol'da düzenle</h2><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
+    <div class="modal-b"><div class="te-load"><span class="spin-dot"></span> Ürün Trendyol'dan okunuyor…</div></div>`, 'wide xwide');
+  let d; try { d = await api('GET', `/api/trendyol/product/${encodeURIComponent(bc)}`); } catch (e) { closeModal(true); return fail(e); }
+  const byId = {}; d.attributes.forEach((a) => { byId[a.id] = a; });
+  // Kategori özellikleri + üründe olup kategoride olmayanlar
+  const defs = d.cat_attrs.length ? d.cat_attrs : d.attributes.map((a) => ({ id: a.id, name: a.name, values: [], allow_custom: true }));
+  const attrs = defs.map((def) => { const a = byId[def.id]; const known = a && a.value_id && def.values.some((v) => v.id === a.value_id); return { ...def, value_id: a?.value_id && (known || !def.values.length) ? a.value_id : null, custom: a && !(a.value_id && known) ? (a.value || '') : '', cur_name: a?.value || '' }; });
+  d.attributes.filter((a) => !defs.some((x) => x.id === a.id)).forEach((a) => attrs.push({ id: a.id, name: a.name, values: [], custom: a.value || '', value_id: a.value_id, locked: true, cur_name: a.value }));
+  const orig = { title: d.title, description: d.description, images: [...d.images], attrs: attrs.map((a) => ({ ...a })), stock_code: d.variant.stock_code || '', delivery: d.variant.delivery };
+  TE = { bc, name, d, tab: 'text', orig, cur: structuredClone(orig) };
+  teRender();
+}
+function teRender() {
+  const { d, cur, orig } = TE, ch = teChanges(), n = Object.keys(ch).length;
+  const was = (a, b) => (a !== b ? `<small class="te-was">Trendyol'daki: <s>${esc(String(b ?? '') || '(boş)')}</s></small>` : '');
+  let body = '';
+  if (TE.tab === 'text') {
+    body = `<label class="field"><span>Başlık ${ch.title ? '<span class="te-tag">değişti</span>' : ''} <span class="faint" id="te-tn">${cur.title.length}/100</span></span><input class="input${ch.title ? ' te-ch' : ''}" id="te-title" maxlength="100" value="${esc(cur.title)}">${ch.title ? was(cur.title, orig.title) : ''}</label>
+      <label class="field"><span>Açıklama ${ch.description ? '<span class="te-tag">değişti</span>' : ''} <span class="faint">(HTML olabilir)</span></span><textarea class="input te-desc${ch.description ? ' te-ch' : ''}" id="te-desc" rows="10">${esc(cur.description)}</textarea></label>`;
+  } else if (TE.tab === 'img') {
+    body = `<div class="te-imgs">${cur.images.map((u, i) => `<div class="te-im${orig.images[i] !== u ? ' te-ch' : ''}" style="--img:url('${esc(u)}')" data-zoom="${esc(u)}"><b>${i + 1}</b>
+        <span class="te-im-a">${i ? `<button type="button" data-te-mv="${i}" data-d="-1" title="Öne al">←</button>` : ''}${i < cur.images.length - 1 ? `<button type="button" data-te-mv="${i}" data-d="1" title="Arkaya al">→</button>` : ''}<button type="button" data-te-rm="${i}" title="Kaldır">×</button></span></div>`).join('')}
+      ${cur.images.length < 8 ? `<div class="te-im add"><button type="button" data-te-gal>Ürünlerimden seç</button></div>` : ''}</div>
+      ${cur.images.length < 8 ? `<div class="row te-url"><input class="input" id="te-url" placeholder="Görsel bağlantısı yapıştırın (https://…jpg)"><button class="btn" data-te-add>Ekle</button></div>` : ''}
+      <small class="muted">En fazla 8 görsel. Trendyol görselleri internetten erişilebilir https bağlantısından alır (önerilen boyut 1200×1800). İlk görsel kapak görselidir.</small>
+      ${ch.images ? `<small class="te-was">Trendyol'daki: ${orig.images.length} görsel</small>` : ''}<div id="te-gal"></div>`;
+  } else if (TE.tab === 'attr') {
+    body = `<p class="muted" style="margin:0">Kategori: <b>${esc(d.category.name || '–')}</b> · Marka: <b>${esc(d.brand.name || '–')}</b> (Trendyol onaylı üründe kategori ve marka değiştirilemez). <span class="req">*</span> zorunlu.</p>
+      <div class="te-attrs">${cur.attrs.map((a, i) => { const o = orig.attrs[i], changed = teAttrVal(a) !== teAttrVal(o), lock = a.varianter || a.slicer || a.locked;
+        const input = lock ? `<div class="input te-lock">${esc(a.cur_name || '–')} 🔒</div>`
+          : a.values.length ? `<select class="input${changed ? ' te-ch' : ''}" data-te-attr="${i}"><option value="">—</option>${a.values.map((v) => `<option value="${v.id}"${a.value_id === v.id ? ' selected' : ''}>${esc(v.name)}</option>`).join('')}${a.allow_custom ? `<option value="c"${!a.value_id && a.custom ? ' selected' : ''}>Diğer (yaz)…</option>` : ''}</select>${a.allow_custom && !a.value_id && a.custom ? `<input class="input" data-te-cust="${i}" value="${esc(a.custom.trim())}" placeholder="Değer">` : ''}`
+          : `<input class="input${changed ? ' te-ch' : ''}" data-te-cust="${i}" value="${esc(a.custom || '')}">`;
+        return `<label class="field"><span>${esc(a.name || ('#' + a.id))}${a.required ? ' <span class="req">*</span>' : ''}${lock ? ' <span class="faint">(varyant özelliği, değişmez)</span>' : ''}</span>${input}${changed ? `<small class="te-was">Trendyol'daki: <s>${esc(o.cur_name || '(boş)')}</s></small>` : ''}</label>`; }).join('')}</div>`;
+  } else {
+    body = `<div class="row"><label class="field"><span>Stok kodu ${ch.stock_code ? '<span class="te-tag">değişti</span>' : ''}</span><input class="input${ch.stock_code ? ' te-ch' : ''}" id="te-sc" value="${esc(cur.stock_code)}">${ch.stock_code ? was(cur.stock_code, orig.stock_code) : ''}</label>
+      <label class="field"><span>Kargoya veriliş süresi ${'delivery' in ch ? '<span class="te-tag">değişti</span>' : ''}</span><select class="input${'delivery' in ch ? ' te-ch' : ''}" id="te-dl">${[['', '—'], [0, 'Aynı gün'], [1, '1 iş günü'], [2, '2 iş günü'], [3, '3 iş günü'], [4, '4 iş günü'], [5, '5 iş günü']].map(([v, l]) => `<option value="${v}"${String(cur.delivery ?? '') === String(v) ? ' selected' : ''}>${l}</option>`).join('')}</select></label></div>
+      <p class="muted" style="margin:0">Barkod ${esc(d.variant.barcode)}${d.variant.variants > 1 ? ` · bu ürünün ${d.variant.variants} varyantı var; başlık, açıklama, görsel ve özellikler hepsinde ortaktır` : ''}. Fiyat için "Trendyol fiyatını değiştir"i kullanın.</p>`;
+  }
+  $('.modal').innerHTML = `<div class="modal-h ty-w-h"><h2><span class="tybadge">TRENDYOL</span> Trendyol'da düzenle</h2><span class="muted te-sub">${esc(TE.name || d.title)} · ${esc(TE.bc)}</span><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
+    <div class="te-tabs">${TE_TABS.map(([k, l]) => `<button type="button" data-te-tab="${k}" class="${TE.tab === k ? 'on' : ''}">${l}${teTabDirty(k, ch) ? '<i></i>' : ''}</button>`).join('')}</div>
+    <div class="modal-b te-b">${d.write ? '' : writeOffNote()}${body}</div>
+    <div class="modal-f"><span class="muted">${n ? `Değişen: <b class="te-chg">${[ch.title && 'başlık', ch.description && 'açıklama', ch.images && 'görseller', ch.attributes && 'özellikler', ch.stock_code && 'stok kodu', 'delivery' in ch && 'kargoya veriliş'].filter(Boolean).join(', ')}</b>` : 'Henüz değişiklik yok · Astera\'daki ürün etkilenmez'}</span>
+      <div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn te-go" id="te-go"${n && d.write ? '' : ' disabled'}>Değişiklikleri incele${n ? ` (${n})` : ''}…</button></div></div>`;
+  teBind();
+}
+function teBind() {
+  const m = $('.modal'), c = TE.cur;
+  const soft = () => { const ch = teChanges(), n = Object.keys(ch).length; $$('[data-te-tab]', m).forEach((b) => { b.querySelector('i')?.remove(); if (teTabDirty(b.dataset.teTab, ch)) b.insertAdjacentHTML('beforeend', '<i></i>'); });
+    const g = $('#te-go'); g.disabled = !(n && TE.d.write); g.textContent = `Değişiklikleri incele${n ? ` (${n})` : ''}…`; };
+  m.onclick = async (e) => {
+    const t = e.target;
+    if (t.closest('[data-te-tab]')) { TE.tab = t.closest('[data-te-tab]').dataset.teTab; return teRender(); }
+    if (t.closest('[data-te-mv]')) { const b = t.closest('[data-te-mv]'), i = +b.dataset.teMv, j = i + +b.dataset.d; [c.images[i], c.images[j]] = [c.images[j], c.images[i]]; e.stopPropagation(); return teRender(); }
+    if (t.closest('[data-te-rm]')) { c.images.splice(+t.closest('[data-te-rm]').dataset.teRm, 1); e.stopPropagation(); return teRender(); }
+    if (t.closest('[data-te-add]')) { const u = $('#te-url').value.trim(); if (!/^https:\/\/\S+$/i.test(u)) return toast('https:// ile başlayan bir görsel bağlantısı yapıştırın', { bad: true }); if (c.images.includes(u)) return toast('Bu görsel zaten var', { bad: true }); c.images.push(u); return teRender(); }
+    if (t.closest('[data-te-gal]')) { const g = $('#te-gal'); g.innerHTML = '<p class="muted">Yükleniyor…</p>'; try { const list = await api('GET', '/api/trendyol/gallery'); g.innerHTML = `<div class="te-gal">${list.map((p) => p.images.map((u) => `<button type="button" class="te-gi" data-te-pick="${esc(u)}" style="--img:url('${esc(u)}')" title="${esc(p.title)}"></button>`).join('')).join('')}</div>`; } catch (err) { fail(err); } return; }
+    if (t.closest('[data-te-pick]')) { const u = t.closest('[data-te-pick]').dataset.tePick; if (c.images.length >= 8) return toast('En fazla 8 görsel', { bad: true }); if (!c.images.includes(u)) c.images.push(u); return teRender(); }
+    if (t.closest('#te-go')) return teSend();
+  };
+  $('#te-title')?.addEventListener('input', (e) => { c.title = e.target.value; $('#te-tn').textContent = `${c.title.length}/100`; e.target.classList.toggle('te-ch', c.title.trim() !== TE.orig.title); soft(); });
+  $('#te-desc')?.addEventListener('input', (e) => { c.description = e.target.value; e.target.classList.toggle('te-ch', c.description.trim() !== TE.orig.description.trim()); soft(); });
+  $('#te-sc')?.addEventListener('input', (e) => { c.stock_code = e.target.value; soft(); });
+  $('#te-dl')?.addEventListener('change', (e) => { c.delivery = e.target.value === '' ? null : +e.target.value; teRender(); });
+  $$('[data-te-attr]', m).forEach((sel) => sel.addEventListener('change', () => { const a = c.attrs[+sel.dataset.teAttr]; if (sel.value === 'c') { a.value_id = null; a.custom = a.custom || ' '; } else { a.value_id = sel.value ? +sel.value : null; a.custom = ''; a.cur_name = sel.selectedOptions[0]?.textContent || ''; } teRender(); }));
+  $$('[data-te-cust]', m).forEach((inp) => inp.addEventListener('input', () => { const a = c.attrs[+inp.dataset.teCust]; a.custom = inp.value; a.value_id = null; soft(); }));
+}
+async function teSend() {
+  const ch = teChanges(), o = TE.orig, short = (x) => (x.length > 60 ? x.slice(0, 57) + '…' : x);
+  const rows = [];
+  if (ch.title) rows.push(['Başlık', short(o.title), short(ch.title)]);
+  if (ch.description) rows.push(['Açıklama', `${o.description.length} karakter`, `${ch.description.length} karakter`]);
+  if (ch.images) rows.push(['Görseller', `${o.images.length} görsel`, `${ch.images.length} görsel (sıra/içerik değişti)`]);
+  if (ch.attributes) TE.cur.attrs.forEach((a, i) => { if (teAttrVal(a) !== teAttrVal(o.attrs[i])) rows.push([a.name, o.attrs[i].cur_name || '(boş)', a.value_id ? (a.values.find((v) => v.id === a.value_id)?.name || a.value_id) : a.custom || '(boş)']); });
+  if (ch.stock_code) rows.push(['Stok kodu', o.stock_code || '(boş)', ch.stock_code]);
+  if ('delivery' in ch) rows.push(['Kargoya veriliş', o.delivery ?? '—', ch.delivery ?? '—']);
+  if (!await diffConfirm('Trendyol ürün değişikliği', rows.map((r) => r.map(String)))) return;
+  const g = $('#te-go'); g.disabled = true; g.textContent = 'Gönderiliyor…';
+  try {
+    const r = await api('POST', `/api/trendyol/product/${encodeURIComponent(TE.bc)}`, { changes: ch });
+    const parts = Object.entries(r).map(([k, v]) => `${{ content: 'İçerik', variant: 'Varyant', delivery: 'Kargoya veriliş' }[k]}: ${v.status === 'SUCCESS' ? 'kaydedildi' : v.status === 'FAILED' ? `reddedildi (${(v.reasons || []).join('; ') || 'sebep yok'})` : 'sıraya alındı'}`);
+    const bad = Object.values(r).some((v) => v.status === 'FAILED');
+    toast(parts.join(' · '), bad ? { bad: true, ms: 9000 } : { ms: 6000 });
+    if (!bad) closeModal();
+    else { g.disabled = false; g.textContent = 'Değişiklikleri incele…'; }
+  } catch (e) { fail(e); g.disabled = false; g.textContent = 'Değişiklikleri incele…'; }
 }
 async function openTyCargo(pkgId, cur, orderNo) {
   let d; try { d = await api('GET', '/api/trendyol/cargo-codes'); } catch (e) { return fail(e); }

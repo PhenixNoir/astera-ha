@@ -3347,6 +3347,21 @@ def api_ty_cargo(req):
     return trendyol.change_cargo(str(b.get("package_id") or ""), str(b.get("code") or ""))
 
 
+@route("GET", "/api/trendyol/product/{barcode}", lock=False)
+def api_ty_product(req, barcode):
+    return trendyol.product_detail(barcode)
+
+
+@route("POST", "/api/trendyol/product/{barcode}", lock=False)
+def api_ty_product_update(req, barcode):
+    return trendyol.update_content(barcode, req.json().get("changes") or {})
+
+
+@route("GET", "/api/trendyol/gallery", lock=False)
+def api_ty_gallery(req):
+    return trendyol.image_gallery()
+
+
 def app_version():
     try:
         with open(os.path.join(BASE_DIR, "VERSION"), encoding="utf-8") as f:

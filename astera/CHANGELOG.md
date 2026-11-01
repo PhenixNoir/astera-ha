@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.6.0
+- "Trendyol'da düzenle": başlık, açıklama, görseller, özellikler, stok kodu ve kargoya veriliş süresi; değişenler turuncu, gönderim öncesi eski → yeni onayı.
+
 ## 1.5.0
 - Trendyol fiyatı değiştirme ve sipariş kargo firması değiştirme; her seferinde "eski → yeni" onayı.
 - Satış ayarlarında varsayılan kapalı "Trendyol'a değişiklik gönder" ana anahtarı.

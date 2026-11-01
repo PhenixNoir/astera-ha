@@ -1074,6 +1074,159 @@ def change_cargo(package_id, code):
     return {"ok": True, "old": r["p"], "new": codes[code], "cargo": info}
 
 
+# ---------------------------------------------------------------- Trendyol'daki ürünü düzenleme (onaylı ürün v2)
+
+def _sf(fn):
+    """storeFrontCode isteyen servisler: önce kayıtlı/başlıksız, gerekirse TR ile dener."""
+    with _lock:
+        sf = _get("ty_storefront")
+    try:
+        return fn({"storeFrontCode": sf} if sf else None)
+    except TrendyolError as e:
+        if "storefront" in str(e).lower() and not sf:
+            with _lock:
+                _set("ty_storefront", "TR")
+                _db().commit()
+            return fn({"storeFrontCode": "TR"})
+        raise
+
+
+_cat_cache = {}
+
+
+def category_attrs(cat_id):
+    cat_id = int(cat_id)
+    c = _cat_cache.get(cat_id)
+    if c and time.time() - c[0] < 12 * 3600:
+        return c[1]
+    data = None
+    for path in (f"/integration/product/product-categories/{cat_id}/attributes", f"/integration/product/categories/{cat_id}/attributes"):
+        try:
+            data = _sf(lambda h: _request(path, None, extra_headers=h))
+            break
+        except TrendyolError as e:
+            if "(404)" not in str(e):
+                raise
+    out = []
+    for ca in (data or {}).get("categoryAttributes") or []:
+        a = ca.get("attribute") or {}
+        out.append({"id": a.get("id"), "name": a.get("name"), "required": bool(ca.get("required")), "allow_custom": bool(ca.get("allowCustom")),
+                    "multi": bool(ca.get("allowMultipleAttributeValues")), "varianter": bool(ca.get("varianter")), "slicer": bool(ca.get("slicer")),
+                    "values": [{"id": v.get("id"), "name": v.get("name")} for v in ca.get("attributeValues") or []]})
+    _cat_cache[cat_id] = (time.time(), out)
+    return out
+
+
+def product_detail(barcode):
+    data = _sf(lambda h: _request("/integration/product/sellers/{sid}/products/approved", {"barcode": barcode, "size": 1}, extra_headers=h))
+    items = data.get("content") or []
+    if not items:
+        raise TrendyolError("Bu barkod Trendyol'daki onaylı ürünlerde bulunamadı")
+    it = items[0]
+    var = next((v for v in it.get("variants") or [] if v.get("barcode") == barcode), (it.get("variants") or [{}])[0])
+    cat = it.get("category") or {}
+    attrs = []
+    try:
+        attrs = category_attrs(cat.get("id")) if cat.get("id") else []
+    except TrendyolError:
+        attrs = []
+    return {
+        "content_id": it.get("contentId"), "main_id": it.get("productMainId"), "title": it.get("title") or "",
+        "description": it.get("description") or "", "images": [i.get("url") for i in it.get("images") or [] if i.get("url")],
+        "attributes": [{"id": a.get("attributeId"), "name": a.get("attributeName"), "value_id": a.get("attributeValueId"),
+                        "value": a.get("attributeValue")} for a in it.get("attributes") or []],
+        "category": {"id": cat.get("id"), "name": cat.get("name")}, "brand": it.get("brand") or {},
+        "variant": {"barcode": var.get("barcode"), "stock_code": var.get("stockCode") or "", "vat": var.get("vatRate"),
+                    "delivery": ((var.get("deliveryOption") or {}).get("deliveryDuration")), "url": var.get("productUrl"),
+                    "variants": len(it.get("variants") or [])},
+        "cat_attrs": attrs, "write": write_enabled(),
+    }
+
+
+def _batch_wait(bid, tries=6):
+    res = {"batch": bid, "status": "PENDING", "reasons": []}
+    for _ in range(tries):
+        time.sleep(2)
+        try:
+            st = batch_status(bid)
+        except TrendyolError:
+            continue
+        if st["status"] in ("SUCCESS", "FAILED"):
+            res.update(st)
+            break
+    return res
+
+
+def update_content(barcode, ch):
+    """ch: {title?, description?, images?: [url], attributes?: [{id, value_id?, custom?}], stock_code?, delivery?}
+    Yalnızca değişen alanlar gönderilir; alan hiç yazılmazsa Trendyol'da olduğu gibi kalır."""
+    _need_write()
+    cur = product_detail(barcode)
+    out = {}
+    item = {"contentId": cur["content_id"]}
+    if "title" in ch:
+        t = (ch["title"] or "").strip()
+        if not 5 <= len(t) <= 100:
+            raise TrendyolError("Başlık 5–100 karakter olmalı")
+        item["title"] = t
+    if "description" in ch:
+        d = (ch["description"] or "").strip()
+        if not d:
+            raise TrendyolError("Açıklama boş olamaz")
+        item["description"] = d[:30000]
+    if "images" in ch:
+        imgs = [u for u in ch["images"] if isinstance(u, str) and u.startswith("https://")][:8]
+        if not imgs:
+            raise TrendyolError("En az bir görsel olmalı (https bağlantısı)")
+        item["images"] = [{"url": u} for u in imgs]
+    if "attributes" in ch:
+        attrs = []
+        for a in ch["attributes"]:
+            if a.get("value_id"):
+                attrs.append({"attributeId": int(a["id"]), "attributeValueId": int(a["value_id"])})
+            elif (a.get("custom") or "").strip():
+                attrs.append({"attributeId": int(a["id"]), "customAttributeValue": a["custom"].strip()[:100]})
+        item["attributes"] = attrs
+    if len(item) > 1:
+        d = _sf(lambda h: _request("/integration/product/sellers/{sid}/products/content-bulk-update", None, method="POST",
+                                   body={"items": [item]}, extra_headers=h))
+        out["content"] = _batch_wait(d.get("batchRequestId"))
+    if "stock_code" in ch:
+        sc = (ch["stock_code"] or "").strip()
+        if not sc:
+            raise TrendyolError("Stok kodu boş olamaz")
+        d = _sf(lambda h: _request("/integration/product/sellers/{sid}/products/variant-bulk-update", None, method="POST",
+                                   body={"items": [{"barcode": barcode, "stockCode": sc}]}, extra_headers=h))
+        out["variant"] = _batch_wait(d.get("batchRequestId"))
+    if "delivery" in ch:
+        d = _sf(lambda h: _request("/integration/product/sellers/{sid}/products/delivery-info-bulk-update", None, method="POST",
+                                   body={"items": [{"barcode": barcode, "deliveryOptions": {"deliveryDuration": int(ch["delivery"])}}]},
+                                   extra_headers=h))
+        out["delivery"] = _batch_wait(d.get("batchRequestId"))
+    if not out:
+        raise TrendyolError("Değişiklik yok")
+    if "title" in ch and out.get("content", {}).get("status") == "SUCCESS":
+        with _lock:
+            _db().execute("UPDATE ty_products SET title=? WHERE content_id=?", (item["title"], str(cur["content_id"])))
+            _db().commit()
+    return out
+
+
+def image_gallery():
+    """Bizim Trendyol ürünlerimizin görselleri (yeni ürün / düzenleme için seçilebilir, hepsi https)."""
+    with _lock:
+        rows = _db().execute("SELECT title, images FROM ty_products WHERE images IS NOT NULL AND images<>'[]' GROUP BY content_id ORDER BY title").fetchall()
+    out = []
+    for r in rows:
+        try:
+            imgs = json.loads(r["images"] or "[]")
+        except ValueError:
+            imgs = []
+        if imgs:
+            out.append({"title": r["title"], "images": [u for u in imgs if str(u).startswith("https://")]})
+    return out
+
+
 def _zpl_parts(x):
     """Yanıtın içinden ZPL etiketlerini toplar (düz metin ya da JSON içinde, her koli için bir tane)."""
     out = []
