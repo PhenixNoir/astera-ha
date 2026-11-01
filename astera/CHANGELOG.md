@@ -1,5 +1,10 @@
 # Sürüm notları
 
+## 1.1.0
+- Kendi kargo etiketimiz (100×80): takip barkodu, alıcı ve adres (uzun adreste yazı küçülür), logo, ilçe/il, sipariş no, yedek barkod.
+- "Barkod" düğmesi bilgisayarın yazdırma penceresini açar; hangi bilgisayardan basılırsa o yazıcı kullanılır.
+- Trendyol hazır etiket yetkisi yoksa anlaşılır uyarı.
+
 ## 1.0.0
 - Home Assistant eklentisi olarak ilk sürüm.
 - Veriler eklenti yapılandırma klasöründe (`/addon_configs/..._astera`), güncellemelerde korunur.

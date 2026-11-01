@@ -3397,13 +3397,106 @@ function tyoBindRes() {
     d.addEventListener('toggle', () => { d.open ? (S.tyo.open.add(d.dataset.tyoOpen), fill()) : S.tyo.open.delete(d.dataset.tyoOpen); });
   });
 }
+// ================================================================== kendi kargo etiketimiz (100×80, yazdırma penceresi)
+const C128 = ['212222','222122','222221','121223','121322','131222','122213','122312','132212','221213','221312','231212','112232','122132','122231','113222','123122','123221','223211','221132','221231','213212','223112','312131','311222','321122','321221','312212','322112','322211','212123','212321','232121','111323','131123','131321','112313','132113','132311','211313','231113','231311','112133','112331','132131','113123','113321','133121','313121','211331','231131','213113','213311','213131','311123','311321','331121','312113','312311','332111','314111','221411','431111','111224','111422','121124','121421','141122','141221','112214','112412','122114','122411','142112','142211','241211','221114','413111','241112','134111','111242','121142','121241','114212','124112','124211','411212','421112','421211','212141','214121','412121','111143','111341','131141','114113','114311','411113','411311','113141','114131','311141','411131','211412','211214','211232','2331112'];
+// Code128: rakamlar çift sayıdaysa C kümesi (daha kısa barkod), değilse B; tek haneli rakam dizisinde B'den C'ye geçer
+function code128(txt) {
+  const s = String(txt); let codes;
+  if (/^\d+$/.test(s) && s.length >= 4) {
+    if (s.length % 2 === 0) codes = [105, ...s.match(/\d\d/g).map(Number)];
+    else codes = [104, s.charCodeAt(0) - 32, 99, ...s.slice(1).match(/\d\d/g).map(Number)];
+  } else codes = [104, ...[...s].map((c) => Math.max(0, Math.min(94, c.charCodeAt(0) - 32)))];
+  let chk = codes[0]; for (let i = 1; i < codes.length; i++) chk += i * codes[i];
+  codes.push(chk % 103, 106);
+  return codes.map((c) => C128[c]).join('');
+}
+function barcodeSVG(txt) {
+  const pat = code128(txt); let x = 0, bar = true, rects = '';
+  for (const ch of pat) { const n = +ch; if (bar) rects += `<rect x="${x}" y="0" width="${n}" height="1"/>`; x += n; bar = !bar; }
+  return `<svg class="bc" viewBox="0 0 ${x} 1" preserveAspectRatio="none" shape-rendering="crispEdges">${rects}</svg>`;
+}
+const LABEL_CSS = `@page { size: 100mm 80mm; margin: 0; }
+* { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+html, body { margin: 0; padding: 0; background: #fff; }
+body { font-family: "Segoe UI", Arial, Helvetica, sans-serif; color: #000; }
+.L { width: 100mm; height: 80mm; padding: 3mm; display: flex; flex-direction: column; position: relative; overflow: hidden; page-break-after: always; break-after: page; }
+.L:last-child { page-break-after: auto; break-after: auto; }
+.bc { display: block; width: 100%; height: 100%; fill: #000; }
+.top .bc { height: 16mm; width: 86%; margin: 0 auto; }
+.tn { text-align: center; font-weight: 800; font-size: 10.5pt; letter-spacing: 2px; margin-top: .5mm; line-height: 1.1; }
+.car { position: absolute; right: 3mm; top: 21.6mm; font-size: 5.5pt; font-weight: 800; letter-spacing: .5px; }
+.mid { flex: 1; display: flex; gap: 3mm; align-items: flex-start; margin-top: 1.6mm; border-top: .4mm solid #000; padding-top: 1.8mm; min-height: 0; }
+.who { flex: 1; min-width: 0; height: 100%; overflow: hidden; }
+.nm { font-size: 13pt; font-weight: 900; line-height: 1.08; display: block; }
+.co { font-size: 8pt; font-weight: 700; }
+.ad { font-size: 9.5pt; font-weight: 700; line-height: 1.2; margin-top: 1mm; word-break: break-word; }
+.nb { font-size: 8.5pt; font-weight: 600; margin-top: .6mm; }
+.logo { width: 30mm; height: 19mm; flex: none; object-fit: contain; }
+.bot { display: flex; align-items: flex-end; gap: 3mm; border-top: .4mm solid #000; padding-top: 1.5mm; }
+.loc { flex: 1; min-width: 0; display: grid; gap: .8mm; }
+.loc b { font-size: 14pt; font-weight: 900; line-height: 1; white-space: nowrap; overflow: hidden; }
+.loc small { font-size: 7.5pt; font-weight: 700; }
+.ob { width: 46mm; flex: none; padding: 0 2mm; } .ob .bc { height: 9mm; } .ob small { display: block; text-align: center; font-size: 6.5pt; font-weight: 700; letter-spacing: 1px; margin-top: .3mm; }`;
+function labelPageHTML(d) {
+  const city = [d.district, d.city].filter(Boolean).join(' / ').toLocaleUpperCase('tr');
+  return `<div class="L"><div class="top">${barcodeSVG(d.tracking)}<div class="tn">${esc(d.tracking)}</div></div>
+    <div class="car">${esc((d.provider || '').replace(/ Marketplace$/i, '').toLocaleUpperCase('tr'))}</div>
+    <div class="mid"><div class="who"><b class="nm">${esc((d.name || '').toLocaleUpperCase('tr'))}</b>${d.company ? `<div class="co">${esc(d.company)}</div>` : ''}
+      <div class="ad">${esc(d.address || '')}</div>${d.neighborhood && !trLower(d.address || '').includes(trLower(d.neighborhood)) ? `<div class="nb">${esc(d.neighborhood)}</div>` : ''}</div>
+      <img class="logo" src="${location.origin}/static/etiket-logo.png" alt=""></div>
+    <div class="bot"><div class="loc"><b>${esc(city)}</b><small>Sipariş ${esc(d.order_number)}${d.boxes > 1 ? ` · ${d.boxes} koli` : ''}</small></div>
+      <div class="ob">${barcodeSVG(d.tracking)}<small>${esc(d.tracking)}</small></div></div></div>`;
+}
+// Uzun ad/adres: sığana kadar yazı küçülür (ad en az 9pt, adres en az 6.5pt)
+function labelFit(doc) {
+  doc.querySelectorAll('.L').forEach((L) => {
+    const who = L.querySelector('.who'), nm = L.querySelector('.nm'), ad = L.querySelector('.ad'), loc = L.querySelector('.loc b');
+    let a = 9.5, n = 13;
+    while (who.scrollHeight > who.clientHeight + 1 && (a > 6.5 || n > 9)) {
+      if (a > 6.5) a -= .5; if (n > 9 && (a <= 8 || nm.offsetHeight > 2 * n * 1.4)) n -= .5;
+      ad.style.fontSize = a + 'pt'; nm.style.fontSize = n + 'pt';
+    }
+    let c = 14; while (loc.scrollWidth > loc.clientWidth + 1 && c > 8) { c -= .5; loc.style.fontSize = c + 'pt'; }
+  });
+}
+function printLabelPages(list) {
+  return new Promise((resolve) => {
+    const fr = document.createElement('iframe');
+    fr.setAttribute('aria-hidden', 'true');
+    fr.style.cssText = 'position:fixed;right:0;bottom:0;width:100mm;height:80mm;border:0;opacity:0;pointer-events:none;';
+    document.body.appendChild(fr);
+    const doc = fr.contentDocument;
+    doc.open(); doc.write(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>Kargo etiketi</title><style>${LABEL_CSS}</style></head><body>${list.map(labelPageHTML).join('')}</body></html>`); doc.close();
+    const imgs = [...doc.images].map((im) => im.complete ? null : new Promise((r) => { im.onload = im.onerror = r; }));
+    Promise.all(imgs).then(() => (doc.fonts?.ready || Promise.resolve())).then(() => {
+      labelFit(doc);
+      const done = () => { setTimeout(() => fr.remove(), 500); resolve(); };
+      fr.contentWindow.addEventListener('afterprint', done, { once: true });
+      fr.contentWindow.focus(); fr.contentWindow.print();
+      setTimeout(() => { if (fr.isConnected) done(); }, 120000);
+    });
+  });
+}
+const labelServerMode = () => ['share', 'net'].includes(S.labelCfg?.mode);
+async function browserLabels(ids) {
+  const r = await api('POST', '/api/trendyol/label-data', { package_ids: ids });
+  if (r.errors.length) toast(`${r.errors.length} etiket hazırlanamadı: ${r.errors.slice(0, 2).map((e) => `${e.order_number || ''} ${e.error}`.trim()).join('; ')}`, { bad: true });
+  if (r.labels.length) await printLabelPages(r.labels);
+  return r;
+}
+
 function labelToast(r) {
   if (r.printed.length) toast(`${r.printed.length} kargo etiketi yazıcıya gönderildi`);
   if (r.errors.length) toast(`${r.errors.length} etiket basılamadı: ${r.errors.slice(0, 2).map((e) => e.error).join('; ')}`, { bad: true });
 }
 async function tyLabel(ids, btn) {
   if (btn) btn.disabled = true;
-  try { const r = await api('POST', '/api/trendyol/label', { package_ids: ids }); labelToast(r); await loadTyOrders(); tyoRes(); }
+  try {
+    if (!S.labelCfg) S.labelCfg = await api('GET', '/api/label/settings').catch(() => null);
+    if (labelServerMode()) labelToast(await api('POST', '/api/trendyol/label', { package_ids: ids }));
+    else await browserLabels(ids);
+    await loadTyOrders(); tyoRes();
+  }
   catch (e) { fail(e); } finally { if (btn) btn.disabled = false; }
 }
 async function tyoPick(ids) {
@@ -3416,11 +3509,13 @@ async function tyoPick(ids) {
   const warn = short.length ? `\n\nDİKKAT: Şu ürünler sistemde paketlenecek adetten az görünüyor:\n${short.map((x) => `• ${x.p.name}: sistemde ${x.p.stock}, paketlenecek ${x.n}`).join('\n')}\nRafta gerçekten varsa bir baskı kaydı eksik olabilir. Devam ederseniz stok 0'da durur ve fark panoda "Kontrol edilecekler"e düşer.` : '';
   if (!confirm(`${pk.length} sipariş Trendyol'da Hazırlanıyor durumuna çekilecek ve ürünler stoktan düşülecek.${unm ? `\n${unm} siparişte eşleşmeyen ürün var; onların stoğu düşülemez.` : ''}${warn}\n\nBu işlem Trendyol'da geri alınamaz. Devam edilsin mi?`)) return;
   try {
+    if (!S.labelCfg) S.labelCfg = await api('GET', '/api/label/settings').catch(() => null);
     const r = await api('POST', '/api/trendyol/picking', { package_ids: ids });
     ids.forEach((i) => S.tyo.sel.delete(i));
     if (r.done.length) toast(`${r.done.length} sipariş Hazırlanıyor'a çekildi${r.deducted ? ` · ${r.deducted} adet stoktan düştü` : ''}`);
     if (r.errors.length) toast(`${r.errors.length} sipariş çekilemedi: ${r.errors.slice(0, 3).map((e) => `${e.order_number || e.package_id} (${e.error})`).join('; ')}`, { bad: true });
     if (r.labels) labelToast(r.labels);
+    else if (r.done.length && S.labelCfg?.auto && !labelServerMode()) await browserLabels(r.done).catch(fail);
     await Promise.all([loadTyOrders(), loadProducts()]); render();
   } catch (e) { fail(e); }
 }
@@ -4170,8 +4265,9 @@ function labelSetHTML() {
   const c = S.labelCfg; if (!c) return '';
   const m = c.mode;
   return `<section class="panel"><div class="panel-h"><h2>Kargo etiketi yazıcısı</h2><span class="muted" style="font-size:13px">Trendyol Express ve Aras</span></div><div class="panel-b lp-set">
-    <p class="muted" style="margin:0">Trendyol etiketi ZPL olarak verir; termal etiket yazıcısına (Zebra, Xprinter vb.) doğrudan gönderilir.</p>
-    <div class="seg" id="lp-mode">${[['off', 'Kapalı'], ['share', 'Paylaşılan yazıcı (USB)'], ['net', 'Ağ (IP)']].map(([v, l]) => `<button type="button" data-v="${v}" class="${m === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div class="seg" id="lp-mode">${[['browser', 'Bu bilgisayardan (yazdır penceresi)'], ['share', 'Paylaşılan yazıcı'], ['net', 'Ağ (IP)']].map(([v, l]) => `<button type="button" data-v="${v}" class="${m === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div class="lp-f" data-m="browser"${m === 'browser' ? '' : ' hidden'}><small class="muted">Etiket (100×80 mm) Astera'da hazırlanır ve bu bilgisayarın yazdırma penceresi açılır; etiket yazıcısını bir kez seçin, tarayıcı sonraki seferlerde hatırlar. Yazıcı sürücüsünde kâğıt boyutu 100×80 mm, kenar boşluğu "Yok" olmalı. Hangi bilgisayardan basarsanız o bilgisayarın yazıcısı kullanılır.</small></div>
+    <p class="muted lp-f" data-m="share net"${m === 'share' || m === 'net' ? '' : ' hidden'} style="margin:0">Bu iki seçenek Trendyol'un hazır etiketini (ZPL) yazıcıya doğrudan gönderir; Trendyol'dan "ortak etiket" yetkisi gerekir.</p>
     <div class="lp-f" data-m="share"${m === 'share' ? '' : ' hidden'}>
       <div class="row">
         <label class="field"><span>Bilgisayar ${c.windows ? '<span class="faint">(boş = bu bilgisayar)</span>' : '<span class="faint">(yazıcının takılı olduğu)</span>'}</span><input class="input" id="lp-host" value="${esc(c.host || '')}" placeholder="ör. DIGERPC ya da 192.168.1.20" autocomplete="off" spellcheck="false"></label>
@@ -4188,7 +4284,7 @@ function labelSetHTML() {
       <label class="field"><span>IP adresi</span><input class="input" id="lp-ip" value="${esc(c.ip)}" placeholder="192.168.1.50" inputmode="decimal"></label>
       <label class="field" style="max-width:120px"><span>Port</span><input class="input" id="lp-port" value="${c.port || 9100}" inputmode="numeric"></label></div>
     <label class="switch"><input type="checkbox" id="lp-auto" ${c.auto ? 'checked' : ''}><span>Siparişi Hazırlanıyor'a çekince etiketi kendiliğinden bas</span></label>
-    <div class="bk-btns"><button class="btn btn-primary" data-act="lp-save">Kaydet</button><button class="btn" data-act="lp-test"${m === 'off' ? ' disabled' : ''}>${icon('print')} Deneme etiketi bas</button></div>
+    <div class="bk-btns"><button class="btn btn-primary" data-act="lp-save">Kaydet</button><button class="btn" data-act="lp-test">${icon('print')} Deneme etiketi bas</button></div>
   </div></section>`;
 }
 PAGES.ayarlar = {
@@ -4287,7 +4383,7 @@ PAGES.ayarlar = {
     advBind();
     const lpPath = () => { const el = $('#lp-path'); if (el) el.textContent = `\\\\${$('#lp-host').value.trim().replace(/^[\\/]+|[\\/]+$/g, '') || 'localhost'}\\${$('#lp-share').value.trim() || '…'}`; };
     $('#lp-host')?.addEventListener('input', lpPath); $('#lp-share')?.addEventListener('input', lpPath);
-    $('#lp-mode')?.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; $$('#lp-mode button').forEach((x) => x.classList.toggle('on', x === b)); $$('.lp-f').forEach((f) => { f.hidden = f.dataset.m !== b.dataset.v; }); });
+    $('#lp-mode')?.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; $$('#lp-mode button').forEach((x) => x.classList.toggle('on', x === b)); $$('.lp-f').forEach((f) => { f.hidden = !f.dataset.m.split(' ').includes(b.dataset.v); }); });
     $('#wk-on')?.addEventListener('change', (e) => { const on = e.target.checked; ['#wk-day', '#wk-time'].forEach((q) => { $(q).disabled = !on; }); $('.wk-when')?.classList.toggle('dim', !on); });
     $('#theme-seg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('theme', b.dataset.v); applyTheme(); $$('#theme-seg button').forEach((x) => x.classList.toggle('on', x === b)); };
     $$('[data-conn-type]').forEach((sel) => sel.addEventListener('change', () => { (S.connEdit ||= {})[+sel.dataset.connType] = sel.value; render(); }));
@@ -4807,11 +4903,14 @@ const ACTIONS = {
   'fin-page': async (el) => { S.finTx.page = Math.max(0, S.finTx.page + +el.dataset.d); try { await loadFinTx(); $('#fin-tx-res').innerHTML = finTxRows(); } catch (e) { fail(e); } },
   'fin-sync': async (el) => { el.disabled = true; try { await api('POST', '/api/finance/sync'); await loadFin(); render(); } catch (e) { fail(e); el.disabled = false; } },
   'lp-save': async () => {
-    const mode = $('#lp-mode button.on')?.dataset.v || 'off';
+    const mode = $('#lp-mode button.on')?.dataset.v || 'browser';
     try { S.labelCfg = await api('PUT', '/api/label/settings', { mode, share: $('#lp-share').value.trim(), host: $('#lp-host').value.trim(), ...($('#lp-user') ? { smb_user: $('#lp-user').value.trim(), smb_pass: $('#lp-pass').value } : {}), ip: $('#lp-ip').value.trim(), port: +$('#lp-port').value || 9100, auto: $('#lp-auto').checked });
-      toast('Etiket yazıcısı kaydedildi'); const t = $('[data-act=lp-test]'); if (t) t.disabled = S.labelCfg.mode === 'off'; } catch (e) { fail(e); }
+      toast('Etiket yazıcısı kaydedildi'); } catch (e) { fail(e); }
   },
-  'lp-test': async (el) => { el.disabled = true; try { await api('POST', '/api/label/test'); toast('Deneme etiketi yazıcıya gönderildi'); } catch (e) { fail(e); } finally { el.disabled = false; } },
+  'lp-test': async (el) => {
+    const mode = $('#lp-mode button.on')?.dataset.v || 'browser';
+    if (mode === 'browser') return printLabelPages([{ tracking: '7330000000000000', provider: 'Trendyol Express', name: 'Deneme Alıcı', address: 'Örnek Mahallesi Deneme Sokak No:1 Daire:2', neighborhood: 'Örnek Mah', district: 'Beykoz', city: 'İstanbul', order_number: '10000000000', boxes: 1 }]);
+    el.disabled = true; try { await api('POST', '/api/label/test'); toast('Deneme etiketi yazıcıya gönderildi'); } catch (e) { fail(e); } finally { el.disabled = false; } },
   'ty-label': (el) => tyLabel([el.dataset.id], el),
   'ty-label-all': (el) => { const ids = tyoFiltered().filter((p) => p.can_label && !p.label_at).map((p) => p.package_id); if (ids.length) tyLabel(ids, el); },
   'wk-save': async () => {

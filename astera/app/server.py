@@ -3224,7 +3224,7 @@ def api_ty_picking(req):
         raise ApiError("Tek seferde en fazla 100 sipariş")
     res = trendyol.set_picking(ids)
     c = etiket.conf()
-    if res["done"] and c["auto"] and (c["mode"] != "off" or os.environ.get("ATOLYE_LABEL_DIR")):
+    if res["done"] and c["auto"] and (c["mode"] in ("share", "net") or os.environ.get("ATOLYE_LABEL_DIR")):
         # yalnızca etiketi Trendyol'dan alınabilen (TEX / Aras) paketler
         with DB_LOCK:
             prov = {r["package_id"]: r["p"] for r in db().execute(
@@ -3242,6 +3242,20 @@ def api_ty_label(req):
     if not isinstance(ids, list) or not ids or len(ids) > 100:
         raise ApiError("Paket seçin (en fazla 100)")
     return etiket.print_packages(ids, refetch=bool(b.get("refetch")))
+
+
+@route("POST", "/api/trendyol/label-data", lock=False)
+def api_ty_label_data(req):
+    """Tarayıcıda çizilip yazdırma penceresiyle basılan kendi etiketimiz için paket bilgileri."""
+    b = req.json()
+    ids = b.get("package_ids") or []
+    if not isinstance(ids, list) or not ids or len(ids) > 100:
+        raise ApiError("Paket seçin (en fazla 100)")
+    res = trendyol.label_data(ids)
+    if b.get("mark", True):
+        for x in res["labels"]:
+            trendyol.mark_label(x["package_id"])
+    return res
 
 
 def app_version():

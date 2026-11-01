@@ -37,7 +37,7 @@ def conf():
             c = json.loads(_get("label_printer", "") or "{}")
     except ValueError:
         c = {}
-    return {"mode": c.get("mode") if c.get("mode") in ("share", "net") else "off", "share": c.get("share") or "", "host": c.get("host") or "",
+    return {"mode": c.get("mode") if c.get("mode") in ("share", "net") else "browser", "share": c.get("share") or "", "host": c.get("host") or "",
             "ip": c.get("ip") or "", "port": int(c.get("port") or 9100), "auto": bool(c.get("auto", True)),
             "smb_user": c.get("smb_user") or "", "smb_pass": c.get("smb_pass") or ""}
 
@@ -56,7 +56,7 @@ def public_conf():
 def save_conf(b):
     c = conf()
     mode = b.get("mode", c["mode"])
-    if mode not in ("off", "share", "net"):
+    if mode not in ("off", "browser", "share", "net"):
         raise ValueError("Geçersiz bağlantı türü")
     share = (b.get("share", c["share"]) or "").strip()
     host = (b.get("host", c["host"]) or "").strip().lstrip("\\/").rstrip("\\/")
@@ -102,7 +102,7 @@ def send(data):
             with open(os.path.join(dev, f"etiket-{n:04d}.zpl"), "wb") as f:
                 f.write(data)
             return None
-        if c["mode"] == "off":
+        if c["mode"] in ("off", "browser"):
             return "Etiket yazıcısı ayarlanmamış (Ayarlar → Etiket yazıcısı)"
         if c["mode"] == "net":
             try:
@@ -200,7 +200,13 @@ def label_for(package_id, refetch=False):
     if not refetch and os.path.isfile(p):
         with open(p, "rb") as f:
             return f.read(), info
-    parts = trendyol.common_label(info["cargo_no"])
+    try:
+        parts = trendyol.common_label(info["cargo_no"])
+    except trendyol.TrendyolError as e:
+        if "COMMON_LABEL_NOT_ALLOWED" in str(e):
+            raise trendyol.TrendyolError("Trendyol bu hesapta hazır etiket servisine izin vermiyor. Ayarlar → Kargo etiketi yazıcısı'nda "
+                                         "\"Bu bilgisayardan (yazdır penceresi)\" seçeneğini kullanın; etiket Astera'da hazırlanır.")
+        raise
     data = "\n".join(parts).encode("utf-8")
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "wb") as f:

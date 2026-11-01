@@ -877,7 +877,7 @@ def orders(month=None, start=None, end=None):
             continue
         counts[g["tab"]] += 1
         g["can_pick"] = g["tab"] == "new" and all(l["line_id"] for l in g["lines"] if l["status"] not in CANCEL_STATES)
-        g["can_label"] = g["tab"] == "picking" and label_supported(g["cargo_provider"])
+        g["can_label"] = g["tab"] in ("picking", "shipped") or g["tab"] == "new" and bool(g.get("cargo_no"))
         out.append(g)
     tr = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
     cur = time.localtime()
@@ -920,6 +920,63 @@ def package_cargo(package_id):
     if not r["n"]:
         raise TrendyolError("Bu pakette henüz kargo takip numarası yok")
     return {"order_number": r["o"], "cargo_no": r["n"], "cargo_provider": r["p"]}
+
+
+def _addr_text(a):
+    """Sokak/bina kısmı: address1 + address2; yoksa fullAddress."""
+    parts = [str(a.get(k) or "").strip() for k in ("address1", "address2")]
+    t = " ".join(x for x in parts if x)
+    return t or str(a.get("fullAddress") or "").strip()
+
+
+def label_data(package_ids):
+    """Kendi etiketimiz için paket bilgileri. Adres saklanmaz; her seferinde Trendyol'dan taze okunur.
+    {labels: [...], errors: [{package_id, error}]}"""
+    want = [str(x) for x in package_ids]
+    with _lock:
+        rows = {r["package_id"]: dict(r) for r in _db().execute(
+            f"""SELECT package_id, MAX(order_number) order_number, MIN(order_date) order_date FROM ty_lines
+                WHERE package_id IN ({','.join('?' * len(want))}) GROUP BY package_id""", want)}
+    labels, errors, cache = [], [], {}
+    for pid in want:
+        r = rows.get(pid)
+        if not r or not r["order_number"]:
+            errors.append({"package_id": pid, "error": "Paket bulunamadı"})
+            continue
+        on = r["order_number"]
+        if on not in cache:
+            d = int(r["order_date"] or _now() * 1000)
+            try:
+                data = _request("/integration/order/sellers/{sid}/orders",
+                                {"orderNumber": on, "startDate": to_ty(d - 14 * 86400000), "endDate": to_ty(_now() * 1000 + 86400000), "size": 50})
+            except TrendyolError as e:
+                errors.append({"package_id": pid, "order_number": on, "error": str(e)})
+                continue
+            cache[on] = data.get("content") or []
+        pkg = next((x for x in cache[on] if str(x.get("id")) == pid), None)
+        if not pkg:
+            errors.append({"package_id": pid, "order_number": on, "error": "Paket Trendyol'da bulunamadı"})
+            continue
+        with _lock:
+            info = pkg_info(pkg)
+            for line, key in package_lines(pkg):
+                _store_details(pkg, line, key, info)
+            _db().commit()
+        cno = pkg.get("cargoTrackingNumber")
+        if cno in (None, "", 0):
+            errors.append({"package_id": pid, "order_number": on, "error": "Bu pakette henüz kargo takip numarası yok"})
+            continue
+        a = pkg.get("shipmentAddress") or {}
+        name = (a.get("fullName") or " ".join(x for x in (a.get("firstName"), a.get("lastName")) if x)
+                or " ".join(x for x in (pkg.get("customerFirstName"), pkg.get("customerLastName")) if x) or "").strip()
+        labels.append({
+            "package_id": pid, "order_number": str(pkg.get("orderNumber") or on), "tracking": str(cno),
+            "provider": pkg.get("cargoProviderName") or "", "name": name, "company": (a.get("company") or "").strip(),
+            "address": _addr_text(a), "neighborhood": (a.get("neighborhood") or "").strip(),
+            "district": (a.get("district") or a.get("countyName") or "").strip(), "city": (a.get("city") or "").strip(),
+            "boxes": int(pkg.get("boxQuantity") or 1), "deci": pkg.get("cargoDeci") or pkg.get("deci"),
+        })
+    return {"labels": labels, "errors": errors}
 
 
 def _zpl_parts(x):
