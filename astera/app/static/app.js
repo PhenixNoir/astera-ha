@@ -549,6 +549,10 @@ function renderNotifs() {
   const d = { items, active: items.filter((n) => !n.resolved_at).length };
   const list = d.items; void f;
   const act = list.filter((n) => !n.resolved_at), old = list.filter((n) => n.resolved_at);
+  // Veri değişmediyse paneli yeniden çizme (her yoklamada yeniden çizmek animasyonları baştan başlatıp titretiyordu)
+  const sig = JSON.stringify([hk, Math.floor(Date.now() / 300000), list.map((n) => [n.id, n.resolved_at, n.title, n.body, n.level, n.updated_at])]);
+  if (el.dataset.sig === sig && el.firstChild) { const c = $('#nb-count'); if (c) { c.hidden = !d.active; c.textContent = d.active > 99 ? '99+' : d.active; } return; }
+  el.dataset.sig = sig;
   el.innerHTML = `<div class="nf-head"><h2>Bildirimler${d.active ? ` <span class="nf-count">${d.active}</span>` : ''}</h2>
       ${d.active ? '<button class="btn btn-ghost btn-sm" data-act="nf-all">Hepsini kapat</button>' : ''}
       <button class="icon-btn nf-close" data-act="nf-close" aria-label="Kapat">${icon('x')}</button></div>

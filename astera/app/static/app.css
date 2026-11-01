@@ -2490,7 +2490,7 @@ details.anim-open > :not(summary) { animation: sec-in .2s cubic-bezier(.2,.8,.2,
 
 /* ---------- bildirim paneli: renkli bölüm kartları */
 .nf-list { gap: 12px; }
-.nf-sec { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: var(--sheet); animation: row-in .25s cubic-bezier(.2,.8,.2,1) both; }
+.nf-sec { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: var(--sheet); }
 .nf-sh { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-weight: 800; font-size: 13px; letter-spacing: .3px; color: var(--sh-ink); background: var(--sh-bg); }
 .nf-sh svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; flex: none; }
 .nf-sh span { flex: 1; }

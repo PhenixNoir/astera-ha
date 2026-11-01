@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.6.4
+- Bildirim panelindeki titreme giderildi (veri değişmedikçe yeniden çizilmiyor).
+
 ## 1.6.3
 - Bildirim paneli renkli bölümlere ayrıldı: Buybox (tıklanana kadar kalır), Yazıcılar, Siparişler, Müşteri, Diğer.
 
