@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.6.9
+- Siparişler: "Ayrıntılı göster" anahtarı. Kapalıyken fiyat, kâr ve raf sayısı gizlenir; açıkken "rafta 19 → bu siparişten sonra 18" gibi kalan adet görünür.
+- Son teslim günü bugün olan siparişlerde, kart kapalıyken bile "Bugün verilmeli" yazar.
+
 ## 1.6.8
 - Etiket logosu Ayarlar'dan değiştirilebilir (yükle / paketle gelen / logo yok).
 

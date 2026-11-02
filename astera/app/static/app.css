@@ -2556,3 +2556,12 @@ details.anim-open > :not(summary) { animation: sec-in .2s cubic-bezier(.2,.8,.2,
 .lp-logo-prev em { color: #888; font-size: 12.5px; }
 .lp-logo-b { display: flex; gap: 6px; flex-wrap: wrap; }
 .lp-logo-prev { overflow: hidden; flex: none; box-sizing: border-box; } .lp-logo-prev img { width: auto; height: auto; max-width: 124px; max-height: 68px; display: block; }
+
+/* Siparişler: ayrıntılı göster kapalıyken fiyat, kâr ve raf sayısı gizli */
+body.tyo-lite .tyo-amt, body.tyo-lite .tyo-pr { visibility: hidden; }
+body.tyo-lite .tyo-sum > div:nth-child(2), body.tyo-lite .tyo-sum > div:nth-child(3),
+body.tyo-lite .oc-pf, body.tyo-lite .oc-shelf, body.tyo-lite .oc-up, body.tyo-lite .oc-foot { display: none; }
+.tyo-det-sw { margin-left: auto; align-self: center; white-space: nowrap; }
+.oc-after { color: var(--ink-3); font-weight: 500; }
+.oc-after b { color: var(--ink); }
+.tyo-term.today b { white-space: nowrap; }
