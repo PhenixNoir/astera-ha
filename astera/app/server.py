@@ -47,6 +47,7 @@ import etiket
 import finans
 import musteri
 import push
+import auth
 
 # Windows kayıt defterindeki bozuk MIME eşlemelerine karşı
 for _ext, _type in ((".js", "application/javascript"), (".css", "text/css"), (".svg", "image/svg+xml"),
@@ -1785,9 +1786,6 @@ def _create_job(req):
             raise ApiError("Sipariş bulunamadı", 404)
         if o["status"] in ("delivered", "cancelled"):
             raise ApiError("Teslim edilmiş veya iptal edilmiş sipariş basılamaz")
-        busy = db().execute("SELECT id FROM print_jobs WHERE order_id=? AND status='printing'", (oid,)).fetchone()
-        if busy:
-            raise ApiError("Bu siparişin zaten devam eden bir baskısı var")
         minutes = int(minutes) if minutes not in (None, "") else int(o["print_minutes"] or 0)
         if minutes < 1:
             raise ApiError("Baskı süresi girin")
@@ -1904,10 +1902,8 @@ def _complete_job(req, jid):
     status = "success" if success and good == j["quantity"] else ("partial" if success and good > 0 else "failed")
     db().execute("UPDATE print_jobs SET status=?, good_quantity=?, finished_at=? WHERE id=?", (status, good, now(), jid))
     if j["order_id"]:
-        # Özel sipariş: stok değişmez; başarılıysa Hazır'a, başarısızsa tekrar basılmak üzere Yeni'ye döner
-        new_status = "ready" if status == "success" else "new"
-        db().execute("UPDATE custom_orders SET status=?, updated_at=? WHERE id=? AND status='printing'",
-                     (new_status, now(), j["order_id"]))
+        # Özel sipariş: stok değişmez; parça parça basılabilir, hepsi basılınca Hazır'a geçer
+        order_after_job(j["order_id"])
     elif good:
         change_stock(j["product_id"], good, "print", ref=f"baskı #{jid}")
     return job_rows("j.id=?", (jid,))[0]
@@ -2050,7 +2046,7 @@ def api_job_ignore(req, jid):
     db().execute("DELETE FROM job_spools WHERE job_id=?", (j["id"],))
     db().execute("DELETE FROM print_jobs WHERE id=?", (j["id"],))
     if j["order_id"]:
-        db().execute("UPDATE custom_orders SET status='new', updated_at=? WHERE id=? AND status='printing'", (now(), j["order_id"]))
+        order_after_job(j["order_id"])
     db().execute("UPDATE notifications SET resolved_at=?, resolved_by='user', cleared=1 WHERE key=? AND resolved_at IS NULL",
                  (now(), f"job:{j['id']}"))
     return {"ok": True}
@@ -2062,8 +2058,7 @@ def api_job_cancel(req, jid):
     db().execute("UPDATE print_jobs SET status='cancelled', good_quantity=0, finished_at=? WHERE id=? AND status='printing'",
                  (now(), int(jid)))
     if j and j["order_id"]:
-        db().execute("UPDATE custom_orders SET status='new', updated_at=? WHERE id=? AND status='printing'",
-                     (now(), j["order_id"]))
+        order_after_job(j["order_id"])
     return {"ok": True}
 
 
@@ -2227,9 +2222,25 @@ ORDER_FIELDS = ["first_name", "last_name", "phone", "title", "details", "quantit
                 "order_date", "due_date", "print_minutes", "printer", "status", "image", "file_name", "resin", "grams", "print_type"]
 ORDER_STATUSES = ("new", "printing", "ready", "delivered", "cancelled")
 ORDER_SELECT = """SELECT o.*, j.id AS active_job_id, j.started_at AS job_started_at, j.ends_at AS job_ends_at,
-                         j.printer AS job_printer
+                         j.printer AS job_printer,
+                         (SELECT COALESCE(SUM(good_quantity),0) FROM print_jobs WHERE order_id=o.id AND status IN ('success','partial')) AS printed,
+                         (SELECT COALESCE(SUM(quantity),0) FROM print_jobs WHERE order_id=o.id AND status='printing') AS in_print,
+                         (SELECT COUNT(*) FROM print_jobs WHERE order_id=o.id AND status='printing') AS active_jobs
                   FROM custom_orders o
-                  LEFT JOIN print_jobs j ON j.order_id=o.id AND j.status='printing'"""
+                  LEFT JOIN print_jobs j ON j.id=(SELECT id FROM print_jobs WHERE order_id=o.id AND status='printing'
+                                                  ORDER BY ends_at LIMIT 1)"""
+
+
+def order_after_job(oid):
+    """Özel siparişin durumu baskılarına göre: baskıda olan varsa Baskıda; basılan toplam sipariş adedine
+    ulaştıysa Hazır; yoksa (kısmen basıldı ya da başarısız) Yeni. Elle Hazır/Teslim yapılmışsa dokunmaz."""
+    o = db().execute("SELECT quantity FROM custom_orders WHERE id=?", (oid,)).fetchone()
+    if not o:
+        return
+    r = db().execute("""SELECT COALESCE(SUM(CASE WHEN status IN ('success','partial') THEN good_quantity END),0) done,
+                               COALESCE(SUM(status='printing'),0) busy FROM print_jobs WHERE order_id=?""", (oid,)).fetchone()
+    st = "printing" if r["busy"] else ("ready" if r["done"] >= max(1, o["quantity"] or 1) else "new")
+    db().execute("UPDATE custom_orders SET status=?, updated_at=? WHERE id=? AND status IN ('new','printing')", (st, now(), oid))
 
 
 def clean_order(b):
@@ -2842,7 +2853,7 @@ def api_backup_settings(req):
 @route("POST", "/api/backups/restore")
 def api_backup_restore(req):
     name = req.json().get("name") or ""
-    keep = {k: get_setting(k) for k in ("backup_dir",)}
+    keep = {k: get_setting(k) for k in ("backup_dir", "remote_pass")}
     try:
         before = yedek.restore(name)
     except ValueError as e:
@@ -2854,6 +2865,7 @@ def api_backup_restore(req):
         if v is not None:
             set_setting(k, v)
     set_setting("backup_last", json.dumps(before))
+    auth.init(db, DB_LOCK, get_setting, set_setting)
     db().commit()
     bambu.reload()
     return {"ok": True, "before": before["name"]}
@@ -2927,6 +2939,93 @@ def api_push_test(req):
     db().commit()
     push.send_async()
     return {"ok": True, "subscribers": push.count()}
+
+
+# ---------------------------------------------------------------- uzaktan erişim + telefon uygulaması
+
+def _req_token(req):
+    return req.h.headers.get("X-Astera-Token") or auth._cookie_token(req.h.headers)
+
+
+@route("GET", "/api/auth/status")
+def api_auth_status(req):
+    remote = auth.is_remote(req.h.headers)
+    return {"remote": remote, "authed": (not remote) or auth.check(req.h), "has_password": auth.has_password(),
+            "version": app_version()}
+
+
+@route("POST", "/api/auth/login", lock=False)
+def api_auth_login(req):
+    b = req.json()
+    try:
+        tok = auth.login(b.get("password") or "", b.get("name") or "", b.get("kind") or "web", auth.client_ip(req.h))
+    except PermissionError as e:
+        raise ApiError(str(e), 403)
+    if b.get("kind") != "app":
+        req.out_headers["Set-Cookie"] = auth.cookie_header(tok)
+    return {"ok": True, "token": tok}
+
+
+@route("POST", "/api/auth/logout")
+def api_auth_logout(req):
+    auth.logout(_req_token(req))
+    req.out_headers["Set-Cookie"] = auth.cookie_header("", 0)
+    return {"ok": True}
+
+
+@route("GET", "/api/auth/settings")
+def api_auth_settings(req):
+    return {"has_password": auth.has_password(), "remote": auth.is_remote(req.h.headers),
+            "devices": auth.devices(_req_token(req))}
+
+
+@route("PUT", "/api/auth/password")
+def api_auth_password(req):
+    if auth.is_remote(req.h.headers):
+        raise ApiError("Uzaktan erişim şifresi yalnızca ev ağından değiştirilebilir", 403)
+    b = req.json()
+    try:
+        if b.get("clear"):
+            auth.clear_password()
+        else:
+            auth.set_password(b.get("password"), b.get("current"))
+    except ValueError as e:
+        raise ApiError(str(e))
+    return {"ok": True, "has_password": auth.has_password(), "devices": auth.devices()}
+
+
+@route("DELETE", "/api/auth/devices/{did}")
+def api_auth_revoke(req, did):
+    try:
+        auth.revoke(did)
+    except ValueError as e:
+        raise ApiError(str(e))
+    return {"ok": True, "devices": auth.devices(_req_token(req))}
+
+
+@route("GET", "/api/app/feed", lock=False)
+def api_app_feed(req):
+    """Telefon uygulamasının arka plan servisi: `after`dan yeni telefon bildirimlerini bekler (en çok `wait` sn).
+    after yok/-1 → yalnızca son kimliği döner (ilk bağlanışta eski bildirimleri yağdırmasın)."""
+    init = "after" not in req.query or req.query.get("after") in ("", "-1")
+    after = 0 if init else int(req.query["after"])
+    wait = max(0, min(int(req.query.get("wait") or 0), 50))
+    prefixes = notify.PUSH_PREFIXES + ("test:",)
+    where = " OR ".join("key LIKE ?" for _ in prefixes)
+    args = [p + "%" for p in prefixes]
+    end = time.time() + wait
+    while True:
+        with DB_LOCK:
+            last = db().execute("SELECT COALESCE(MAX(id),0) FROM notifications").fetchone()[0]
+            rows = [] if init else db().execute(
+                f"""SELECT id, key, kind, level, title, body, action, created_at FROM notifications
+                    WHERE id>? AND ({where}) AND created_at>=? ORDER BY id LIMIT 10""",
+                [after] + args + [int(time.time()) - 3600]).fetchall()
+        if rows or init or time.time() >= end:
+            break
+        time.sleep(2)
+    items = [{**dict(r), "action": json.loads(r["action"]) if r["action"] else None} for r in rows]
+    return {"last": last, "items": items}
 
 
 @route("GET", "/api/notifications")
@@ -3449,6 +3548,7 @@ class Req:
         self.h = handler
         self.query = query
         self._body = None
+        self.out_headers = {}
 
     def body(self):
         if self._body is None:
@@ -3511,7 +3611,7 @@ class Handler(BaseHTTPRequestHandler):
                             except Exception:
                                 db().rollback()
                                 raise
-                    self._send(200, res)
+                    self._send(200, res, extra=req.out_headers or None)
                 except (ConnectionError, TimeoutError):
                     self.close_connection = True
                 except ApiError as e:
@@ -3580,9 +3680,31 @@ class Handler(BaseHTTPRequestHandler):
         with open(fp, "rb") as f:
             data = f.read()
         cache = "public, max-age=31536000, immutable" if "/uploads/" in fp else "no-cache"
+        if auth.is_remote(self.headers):   # Cloudflare herkese açık önbelleğe almasın (şifreyi atlatırdı)
+            cache = "private, max-age=31536000, immutable" if "/uploads/" in fp else "private, no-cache"
         self._send(200, data, ctype, {"Cache-Control": cache})
 
+    AUTH_OPEN = ("/giris", "/api/auth/login", "/api/auth/status")
+
+    def _gate(self):
+        """Dışarıdan (Cloudflare) gelen ve oturumu olmayan istekleri durdurur. True: devam edilebilir."""
+        if auth.check(self):
+            return True
+        path = urlparse(self.path).path
+        if path in self.AUTH_OPEN:
+            return True
+        if path.startswith("/api/"):
+            self._send(401, {"error": "Giriş gerekli", "login": True})
+        else:
+            from urllib.parse import quote
+            self._send(302, b"", "text/plain", {"Location": "/giris?next=" + quote(self.path, safe=""), "Cache-Control": "no-store"})
+        return False
+
     def do_GET(self):
+        if not self._gate():
+            return
+        if urlparse(self.path).path == "/giris":
+            return self._send(200, auth.LOGIN_HTML, "text/html; charset=utf-8", {"Cache-Control": "no-store"})
         if self.path.startswith("/api/") and self.path.split("?")[0] not in ("/api/backup", "/api/backups/file"):
             return self._api("GET")
         self._static()
@@ -3590,13 +3712,16 @@ class Handler(BaseHTTPRequestHandler):
     do_HEAD = do_GET
 
     def do_POST(self):
-        self._api("POST")
+        if self._gate():
+            self._api("POST")
 
     def do_PUT(self):
-        self._api("PUT")
+        if self._gate():
+            self._api("PUT")
 
     def do_DELETE(self):
-        self._api("DELETE")
+        if self._gate():
+            self._api("DELETE")
 
 
 def lan_addresses():
@@ -3659,6 +3784,7 @@ def main():
     with DB_LOCK:
         notify.init(db, DB_LOCK, get_setting, set_setting, bambu)
         push.init(db, DB_LOCK, get_setting, set_setting)
+        auth.init(db, DB_LOCK, get_setting, set_setting)
         db().commit()
     notify.on_new = push.send_async
     notify.plan_fn = build_plan

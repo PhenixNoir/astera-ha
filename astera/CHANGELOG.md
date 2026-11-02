@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.7.0
+- Özel siparişler parça parça basılabilir: aynı siparişe aynı anda birden çok makinede baskı açılır, kartta "Basılan 12/48 · baskıda 24" ilerlemesi ve "Kalan N adedi bas" düğmesi görünür; hepsi basılınca sipariş kendiliğinden Hazır'a geçer.
+- Altyapı: uzaktan erişim şifresi (Cloudflare Tunnel için; şifre belirlenmedikçe kapalı, ev ağını etkilemez).
+
 ## 1.6.9
 - Siparişler: "Ayrıntılı göster" anahtarı. Kapalıyken fiyat, kâr ve raf sayısı gizlenir; açıkken "rafta 19 → bu siparişten sonra 18" gibi kalan adet görünür.
 - Son teslim günü bugün olan siparişlerde, kart kapalıyken bile "Bugün verilmeli" yazar.

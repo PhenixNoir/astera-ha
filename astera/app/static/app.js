@@ -17,6 +17,7 @@ async function api(method, path, body, rawBody) {
   try { res = await fetch(path, opt); }
   catch { throw new Error('Sunucuya ulaşılamıyor. Bilgisayardaki Astera penceresi açık mı?'); }
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && data.login) { location.href = '/giris?next=' + encodeURIComponent(location.pathname + location.search + location.hash); throw new Error('Giriş gerekli'); }
   if (!res.ok) throw new Error(data.error || `İstek başarısız (${res.status})`);
   return data;
 }
@@ -1525,7 +1526,9 @@ function npGroups(list) {
   return [[G.file, file ? `Yazıcıdaki dosyaya benzeyen · ${esc(file)}` : ''], [G.need, 'Siparişlerde eksik'], [G.top, 'Çok basılanlar (90 gün)'], [G.rest, 'Diğer ürünler']]
     .filter(([items]) => items.length).map(([items, title]) => ({ items, title }));
 }
-const printableOrders = () => S.orders.filter((o) => ['new', 'printing', 'ready'].includes(o.status) && !o.active_job_id);
+// Özel siparişin basılmamış kalanı (parça parça basılabilir: 48 adedin 12'si bir makinede, 12'si başkasında)
+const orderLeft = (o) => Math.max(0, (o.quantity || 1) - (o.printed || 0) - (o.in_print || 0));
+const printableOrders = () => S.orders.filter((o) => ['new', 'printing', 'ready'].includes(o.status) && (!o.active_job_id || orderLeft(o) > 0));
 // Diğer amaçlı: yazıcıdaki dosya bu kayda bağlansın mı (tek seferlik baskılarda bağlanmasın)
 function npRememberUI() {
   const el = $('#np-remember'); if (!el) return;
@@ -1686,7 +1689,7 @@ function npPartsOutcome(p) {
 }
 function npPickOrder(id) {
   const o = S.orders.find((x) => x.id === id); if (!o) return;
-  NP.oid = o.id; npFill(o.quantity, o.print_minutes);
+  NP.oid = o.id; npFill(orderLeft(o) || o.quantity, o.print_minutes);
   NP.ptype = o.print_type || 'SLA'; $$('#np-type button').forEach((x) => x.classList.toggle('on', x.dataset.v === NP.ptype));
   if (o.printer) npSetPrinter(o.printer);
   npRenderList(); npEnds();
@@ -2396,6 +2399,10 @@ function orderCard(o) {
     <div class="dates">${o.order_date ? `<span class="muted">Geldi ${fmtDay(o.order_date)}</span>` : ''}${dueLabel(o).html}</div>
     <div class="bottom"><span class="muted">${o.quantity} adet${o.resin ? ' · ' + esc(o.resin) : ''}</span>${machine ? `<span class="tag tag-mute pr-inline" style="padding-left:3px">${printerThumb(machine, 'xs')}${esc(machine)}</span>` : ''}</div>
     ${job ? `<div class="oprog"><div class="prog ${job.print_type}"><i data-prog="${job.id}"></i></div><span data-countdown="${job.id}"></span></div>` : ''}
+    ${(o.quantity || 1) > 1 && (o.printed || o.in_print) ? (() => { const q = o.quantity, d = Math.min(q, o.printed || 0), ip = Math.min(q - d, o.in_print || 0), left = orderLeft(o);
+      return `<div class="opart"><div class="opart-bar"><i class="d" style="width:${d / q * 100}%"></i><i class="p" style="width:${ip / q * 100}%"></i></div>
+        <div class="opart-t"><span>Basılan <b>${d}/${q}</b>${ip ? ` · baskıda <b>${ip}</b>${o.active_jobs > 1 ? ` <span class="faint">(${o.active_jobs} makinede)</span>` : ''}` : ''}</span>
+        ${left && o.status === 'printing' ? `<button class="btn btn-sm" data-act="order-print" data-id="${o.id}">${icon('plus')} Kalan ${left} adedi bas</button>` : left ? `<span class="faint">${left} kaldı</span>` : ''}</div></div>`; })() : ''}
     ${o.price != null ? `<div class="bottom"><span>${fmtMoney(o.price)}</span>${rem > 0 ? `<span class="tag tag-warn">${fmtMoney(rem)} kaldı</span>` : '<span class="tag tag-ok">Ödendi</span>'}</div>` : ''}
     ${(() => { const c = orderCost(o); return c.grams ? `<div class="bottom o-cost-line"><span class="muted">${fmtGram(c.grams)}${c.cost != null ? ` · malzeme ${fmtTL(c.cost)}` : ''}</span>${c.cost != null && o.price ? `<span class="${o.price - c.cost >= 0 ? 'ok-text' : 'bad-text'}">kalan ${fmtTL(o.price - c.cost)}</span>` : ''}</div>` : ''; })()}
     ${o.status === 'printing' && !o.active_job_id
@@ -4514,6 +4521,27 @@ function weeklySetHTML() {
   </div></section>`;
 }
 // ---------- Ayarlar → Etiket yazıcısı (Trendyol ortak etiketi, ZPL)
+const APK_URL = 'https://github.com/PhenixNoir/astera-ha/releases/latest';
+function remoteSetHTML() {
+  const a = S.authCfg; if (!a) return '';
+  const dev = a.devices || [];
+  return `<section class="panel"><div class="panel-h"><h2>Telefon uygulaması ve uzaktan erişim</h2>${a.has_password ? '<span class="tag tag-ok">Uzaktan erişim açık</span>' : '<span class="tag">Uzaktan erişim kapalı</span>'}</div><div class="panel-b ra-set">
+    ${S.apkReady ? `<div class="ra-app"><span class="ra-ic">${icon('phone')}</span><div><b>Android uygulaması</b><small class="muted">Mobil paneli açar ve bildirimleri (sipariş, buybox, yazıcı, iade, soru) uygulama kapalıyken de anında gösterir. Ev ağında doğrudan, dışarıda uzak adresle bağlanır.</small></div>
+      <a class="btn btn-primary btn-sm" href="${APK_URL}" target="_blank" rel="noopener">${icon('download')} APK'yı indir</a></div>` : ''}
+    <div class="ra-pw">
+      <p class="muted" style="margin:0">Cloudflare Tunnel üzerinden (ör. <span class="mono">panel.astera3d.com</span>) dışarıdan gelen her cihaz bu şifreyi bir kez girer. Ev ağında şifre sorulmaz.${a.has_password ? '' : ' <b>Şifre belirlenmeden dışarıdan hiçbir şey açılmaz.</b>'}</p>
+      ${a.remote ? `<div class="notice">${icon('lock')}<div>Şu an dışarıdan bağlısınız. Şifre yalnızca ev ağından değiştirilebilir.</div></div>` : `<div class="row">
+        ${a.has_password ? '<label class="field"><span>Mevcut şifre</span><input class="input" id="ra-cur" type="password" autocomplete="current-password"></label>' : ''}
+        <label class="field"><span>${a.has_password ? 'Yeni şifre' : 'Şifre'} <span class="faint">(en az 8 karakter)</span></span><input class="input" id="ra-new" type="password" autocomplete="new-password"></label></div>
+      <div class="bk-btns"><button class="btn btn-primary btn-sm" data-act="ra-save">${a.has_password ? 'Şifreyi değiştir' : 'Şifreyi belirle'}</button>
+        ${a.has_password ? '<button class="btn btn-ghost btn-sm" data-act="ra-clear">Uzaktan erişimi kapat</button>' : ''}
+        ${a.has_password ? '<small class="muted" style="align-self:center">Şifre değişince tüm cihazların oturumu kapanır.</small>' : ''}</div>`}
+    </div>
+    ${dev.length ? `<div class="field"><span>Giriş yapmış cihazlar</span><ul class="lst ra-dev">${dev.map((d) => `<li><span class="ra-k">${d.kind === 'app' ? 'Uygulama' : 'Tarayıcı'}</span><div class="grow"><div class="t">${esc(d.name)}${d.current ? ' <span class="faint">(bu cihaz)</span>' : ''}</div><div class="s">Son görülme ${fmtWhen(d.seen_at)}${d.ip ? ' · ' + esc(d.ip) : ''}</div></div>
+      <button class="btn btn-sm btn-ghost" data-act="ra-revoke" data-id="${esc(d.id)}">Çıkış yaptır</button></li>`).join('')}</ul></div>` : ''}
+    ${a.remote ? '<div><button class="btn btn-sm" data-act="ra-logout">Bu cihazda çıkış yap</button></div>' : ''}
+  </div></section>`;
+}
 function labelSetHTML() {
   const c = S.labelCfg; if (!c) return '';
   const m = c.mode;
@@ -4547,7 +4575,7 @@ function labelSetHTML() {
   </div></section>`;
 }
 PAGES.ayarlar = {
-  async load() { await loadCategories(); await loadSettings(); if ((S.settings.printers || []).some(hasLink)) await loadBambu(); S.archived = (await api('GET', '/api/products?archived=1')).filter((p) => p.archived); S.backups = await api('GET', '/api/backups').catch(() => null); S.weekly = await api('GET', '/api/weekly').catch(() => null); S.labelCfg = await api('GET', '/api/label/settings').catch(() => null); S.version = await api('GET', '/api/version').catch(() => null); },
+  async load() { await loadCategories(); await loadSettings(); if ((S.settings.printers || []).some(hasLink)) await loadBambu(); S.archived = (await api('GET', '/api/products?archived=1')).filter((p) => p.archived); S.backups = await api('GET', '/api/backups').catch(() => null); S.weekly = await api('GET', '/api/weekly').catch(() => null); S.labelCfg = await api('GET', '/api/label/settings').catch(() => null); S.version = await api('GET', '/api/version').catch(() => null); S.authCfg = await api('GET', '/api/auth/settings').catch(() => null); },
   html() {
     const theme = localStorage.getItem('theme') || 'auto';
     const nsup = 'Notification' in window, secure = window.isSecureContext;
@@ -4610,12 +4638,7 @@ PAGES.ayarlar = {
         <div class="input-group" style="max-width:460px"><input class="input" id="new-printer" placeholder="Örn. Bambu P1S, Saturn 4 Ultra"><button class="btn" data-act="add-printer" style="border-radius:0 8px 8px 0;border-left:0">Ekle</button></div>
       </div></section>
 
-      <section class="panel"><div class="panel-h"><h2>Telefon uygulaması</h2></div><div class="panel-b" style="display:grid;gap:10px">
-        <p class="muted" style="margin:0">Stok, baskı ve filament takibi için sade mobil sürüm (fiyat ve kâr bilgisi yok). Telefonda Chrome ile <b>${esc(location.origin)}/m</b> adresini açın; menüden <b>Uygulamayı yükle</b> deyin.</p>
-        <p class="muted" style="margin:0">Uygulama kurulumu ve kapalıyken bildirim için Chrome güvenli bağlantı ister. <b>Ev ağında</b>: telefonda <code>chrome://flags</code> → <b>Insecure origins treated as secure</b> → Enabled → kutuya şu adresi yazın: <code id="lan-origin">${esc(lanOrigin())}</code> → Relaunch. <b>Evden uzakta</b> da kullanmak için Tailscale (BENIOKU).</p>
-        <p class="muted" style="margin:0">Bildirim açmış telefon sayısı: <b id="push-n">…</b></p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-sm" href="/m/" target="_blank" rel="noopener">Mobil sürümü aç</a><button class="btn btn-sm btn-ghost" data-act="push-test">Telefona deneme bildirimi</button></div>
-      </div></section>
+      ${remoteSetHTML()}
 
       <section class="panel"><div class="panel-h"><h2>Tema ve görünüm</h2><span class="muted" style="font-size:13px">bu cihaza kaydedilir</span></div><div class="panel-b theme-box">
         <div class="field"><span>Mod</span><div class="seg" id="theme-seg">${[['auto', 'Sistem'], ['light', 'Açık'], ['dark', 'Koyu']].map(([v, l]) => `<button data-v="${v}" class="${theme === v ? 'on' : ''}">${l}</button>`).join('')}</div></div>
@@ -4891,7 +4914,7 @@ const ACTIONS = {
   'stat-goto': (el) => { S.statMonth = el.dataset.m; render(); },
   'stat-cat': (el) => { S.statCat = el.dataset.v; render(); },
   'profit-save': saveProfitCfg,
-  'push-test': async () => { try { const r = await api('POST', '/api/push/test'); toast(r.subscribers ? `Deneme bildirimi ${r.subscribers} telefona gönderildi` : 'Henüz bildirim açmış telefon yok'); } catch (e) { fail(e); } },
+  'push-test': async () => { try { const r = await api('POST', '/api/push/test'); toast('Deneme bildirimi gönderildi; uygulama yüklü telefonlarda birkaç saniye içinde görünür'); } catch (e) { fail(e); } },
   'nf-filter': (el) => { S.nfFilter = el.dataset.v; renderNotifs(); },
   'nf-close': () => notifOpen(false),
   'nf-all': async () => { try { await api('POST', '/api/notifications/resolve-all'); await loadNotifs(); } catch (e) { fail(e); } },
@@ -5202,6 +5225,20 @@ const ACTIONS = {
     };
     inp.click();
   },
+  'ra-save': async () => {
+    const cur = $('#ra-cur')?.value || '', pw = $('#ra-new')?.value || '';
+    if (pw.length < 8) return toast('Şifre en az 8 karakter olmalı', { bad: true });
+    try { const r = await api('PUT', '/api/auth/password', { password: pw, current: cur }); S.authCfg = { ...S.authCfg, ...r }; toast('Uzaktan erişim şifresi kaydedildi'); render(); } catch (e) { fail(e); }
+  },
+  'ra-clear': async () => {
+    if (!confirm('Uzaktan erişim kapatılsın mı?\n\nŞifre silinir, dışarıdan bağlı bütün cihazların oturumu kapanır. Ev ağında her şey çalışmaya devam eder.')) return;
+    try { const r = await api('PUT', '/api/auth/password', { clear: true }); S.authCfg = { ...S.authCfg, ...r }; toast('Uzaktan erişim kapatıldı'); render(); } catch (e) { fail(e); }
+  },
+  'ra-revoke': async (el) => {
+    if (!confirm('Bu cihazın oturumu kapatılsın mı? Tekrar bağlanmak için şifreyi girmesi gerekir.')) return;
+    try { const r = await api('DELETE', `/api/auth/devices/${encodeURIComponent(el.dataset.id)}`); S.authCfg.devices = r.devices; render(); } catch (e) { fail(e); }
+  },
+  'ra-logout': async () => { try { await api('POST', '/api/auth/logout'); } catch { /* */ } location.href = '/giris'; },
   'lp-logo-set': async (el) => { try { S.labelCfg = await api('PUT', '/api/label/settings', { logo: el.dataset.v }); toast(el.dataset.v === 'none' ? 'Etiketlerde logo kullanılmayacak' : 'Paketle gelen logo kullanılacak'); render(); } catch (e) { fail(e); } },
   'lp-test': async (el) => {
     const mode = $('#lp-mode button.on')?.dataset.v || 'browser';
