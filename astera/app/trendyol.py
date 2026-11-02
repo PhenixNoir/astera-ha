@@ -58,6 +58,7 @@ def public_settings():
             "app_logo": _get("app_logo") or None,
             "ship_cutoff": _get("ship_cutoff") if _get("ship_cutoff") is not None else "17:00",
             "store_city": _get("store_city", "") or "",
+            "ty_deduct_at": deduct_mode(),
             "store_district": _get("store_district", "") or "",
             "ship_days": int(_get("ship_days", "1") or 1),
             "ship_skip_sunday": _get("ship_skip_sunday", "0") == "1",
@@ -131,6 +132,8 @@ def save_settings(b):
                 _set("ty_since", int(time.time() * 1000))
         if "ty_since" in b and b["ty_since"]:
             _set("ty_since", int(b["ty_since"]))
+        if b.get("ty_deduct_at") in DEDUCT_MODES:
+            _set("ty_deduct_at", b["ty_deduct_at"])
         for k in ("store_city", "store_district"):
             if k in b:
                 _set(k, (b[k] or "").strip()[:40])
@@ -329,8 +332,34 @@ def pack_time_ms(pkg):
     return lm or None
 
 
+# Stoğun düşeceği aşama (Ayarlar → Mağaza ve Kargo): order = sipariş gelince, picking = Hazırlanıyor'a geçince
+# (varsayılan), label = kargo barkodu basılınca (ya da kargoya verilince), shipped = kargoya verilince
+DEDUCT_MODES = ("order", "picking", "label", "shipped")
+SHIPPED_STATES = {"Shipped", "Delivered", "AtCollectionPoint", "UnDelivered", "Returned"}
+DEDUCT_NOTE = {"order": "sipariş geldi", "picking": "paketlendi", "label": "barkod basıldı", "shipped": "kargoya verildi"}
+
+
+def deduct_mode():
+    m = _get("ty_deduct_at", "picking") or "picking"
+    return m if m in DEDUCT_MODES else "picking"
+
+
+def _due(status, row, mode=None):
+    """Bu satırın stoğu artık düşmeli mi?"""
+    mode = mode or deduct_mode()
+    if status in CANCEL_STATES:
+        return False
+    if mode == "order":
+        return True
+    if mode == "picking":
+        return status in PACKED_STATES
+    if mode == "label":
+        return bool(row["label_at"]) or status in SHIPPED_STATES
+    return status in SHIPPED_STATES
+
+
 def _deduct(row_key, pid, qty, order_no, name, stats):
-    _change_stock(pid, -qty, "trendyol", ref=order_no, note=f"{name or ''} · paketlendi".strip(" ·"))
+    _change_stock(pid, -qty, "trendyol", ref=order_no, note=f"{name or ''} · {DEDUCT_NOTE[deduct_mode()]}".strip(" ·"))
     _db().execute("UPDATE ty_lines SET state='deducted', product_id=?, packed_at=COALESCE(packed_at, ?) WHERE line_key=?",
                   (pid, _now(), row_key))
     stats["deducted"] += qty
@@ -342,8 +371,10 @@ def _advance(row, status, pid, restock, stats, since_ms, order_no=None, name=Non
     key, st, qty = row["line_key"], row["state"], row["quantity"]
     order_no = order_no or row["order_number"]
     name = name or row["product_name"]
-    cancelled, packed = status in CANCEL_STATES, status in PACKED_STATES
-    packed_ms = (row["packed_at"] or 0) * 1000
+    mode = deduct_mode()
+    cancelled, packed = status in CANCEL_STATES, _due(status, row, mode)
+    # takip başlangıcıyla karşılaştırılan an: "sipariş gelince" modunda sipariş tarihi, diğerlerinde paketlenme anı
+    packed_ms = (row["order_date"] or 0) if mode == "order" else (row["packed_at"] or 0) * 1000
     if st in ("pending", "unmatched", "ignored"):
         if cancelled:
             _db().execute("UPDATE ty_lines SET state='cancelled' WHERE line_key=?", (key,))
@@ -362,7 +393,7 @@ def _advance(row, status, pid, restock, stats, since_ms, order_no=None, name=Non
             _change_stock(row["product_id"], qty, "trendyol", ref=order_no, note="İptal — stoğa geri eklendi")
             _db().execute("UPDATE ty_lines SET state='restocked' WHERE line_key=?", (key,))
             stats["restocked"] += qty
-        elif status == "Created":
+        elif status == "Created" and mode == "picking" and row["packed_at"] is None:
             # Eski kuralla Yeni iken düşülmüştü; artık paketlenince düşülüyor, stoğa geri koy
             _change_stock(row["product_id"], qty, "trendyol", ref=order_no, note="Yeni sipariş — paketlenince düşülecek")
             _db().execute("UPDATE ty_lines SET state='pending', packed_at=NULL WHERE line_key=?", (key,))
@@ -1302,6 +1333,12 @@ def common_label(cargo_no, boxes=1):
 def mark_label(package_id):
     with _lock:
         _db().execute("UPDATE ty_lines SET label_at=? WHERE package_id=?", (_now(), str(package_id)))
+        if deduct_mode() == "label":   # stok barkod basılınca düşüyor
+            codes, stats = _code_map(), {"deducted": 0, "restocked": 0}
+            restock = _get("ty_restock_cancel", "1") == "1"
+            for row in _db().execute("SELECT * FROM ty_lines WHERE package_id=? AND state IN ('pending','unmatched')", (str(package_id),)).fetchall():
+                eff = row["product_id"] or codes.get((row["barcode"] or "").strip().lower())
+                _advance(row, row["ty_status"] or "", eff, restock, stats, _since(), row["order_number"], row["product_name"])
         _db().commit()
 
 

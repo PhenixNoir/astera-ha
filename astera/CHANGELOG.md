@@ -1,5 +1,10 @@
 # Sürüm notları
 
+## 1.7.4
+- Ayarlar yeniden düzenlendi: solda gruplar (Genel, Mağaza ve Kargo, Trendyol, Üretim, Bildirimler, Uzaktan erişim, Veri ve Yedek) ve ayar arama kutusu.
+- Yeni ayar: Trendyol siparişinde stok ne zaman düşsün (sipariş gelince / Hazırlanıyor'a çekilince / kargo barkodu basılınca / kargoya verilince). Varsayılan değişmedi.
+- Trendyol bağlantı ayarları Satış sayfasından Ayarlar → Trendyol'a taşındı.
+
 ## 1.7.3
 - Ürün kartında görsele tıklayınca düzenleme açılır; köşedeki küçük düğme görseli büyütür.
 - Parçalı ürünlerde parçaların gramı girilince ürünün gramı otomatik toplam olur (kâr ve malzeme hesabı buna göre).

@@ -4457,30 +4457,7 @@ PAGES.satis = {
           </tbody></table></div>` : st.ty_enabled ? `<p class="muted" style="margin:0">Açıldıktan sonra gelen siparişler burada görünecek.</p>` : ''}
         </div></section>
 
-      <details class="panel" ${st.ty_seller_id ? '' : 'open'}>
-        <summary class="panel-h" style="padding-bottom:16px"><h2>Trendyol bağlantı ayarları</h2><svg class="chev"><use href="#i-plus"/></svg></summary>
-        <div class="panel-b" style="display:grid;gap:14px;padding-top:0">
-          <ol class="steps"><li>Trendyol Satıcı Paneli → sağ üstte hesap adı → <b>Hesap Bilgilerim</b> → <b>Entegrasyon Bilgileri</b>.</li>
-            <li>Satıcı ID, API Key ve API Secret değerlerini aşağıya yapıştırın.</li>
-            <li>Ürün kartlarına Trendyol'daki barkodu yazın. Takip açıldığı andan <b>sonra</b> gelen siparişler düşülür; eski siparişlere dokunulmaz.</li></ol>
-          <div class="row">
-            <label class="field"><span>Satıcı ID</span><input class="input" id="ty-sid" value="${esc(st.ty_seller_id)}" inputmode="numeric" autocomplete="off"></label>
-            <label class="field"><span>API Key</span><input class="input" id="ty-key" value="${esc(st.ty_api_key)}" autocomplete="off"></label>
-            <label class="field"><span>API Secret</span><input class="input" id="ty-sec" type="password" placeholder="${st.ty_api_secret_set ? 'Kayıtlı — değiştirmek için yazın' : ''}" autocomplete="new-password"></label>
-          </div>
-          <label class="field" style="max-width:340px"><span>Takip başlangıcı</span>
-            <input class="input" type="datetime-local" id="ty-since" value="${st.ty_since ? new Date(st.ty_since - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}">
-            <small>Bu andan sonra Hazırlanıyor'a çekilen siparişler stoktan düşer. Son stok sayımınızı yaptığınız ana ayarlayın; geriye alırsanız o aralıkta paketlenenler bir sonraki kontrolde düşülür.</small></label>
-          <div class="row" style="align-items:center">
-            <label class="field"><span>Kontrol aralığı</span><div class="input-group"><input class="input" id="ty-int" type="number" min="2" value="${st.ty_interval_min}"><span class="suffix">dakika</span></div></label>
-            <label class="switch"><input type="checkbox" id="ty-restock" ${st.ty_restock_cancel ? 'checked' : ''}> İptal edilen siparişleri stoğa geri ekle</label>
-            <label class="switch"><input type="checkbox" id="ty-en" ${st.ty_enabled ? 'checked' : ''}> Otomatik takip açık</label>
-          </div>
-          <div class="ty-write${st.ty_write ? ' on' : ''}"><label class="switch"><input type="checkbox" id="ty-write" ${st.ty_write ? 'checked' : ''}> <b>Trendyol'a değişiklik gönder</b></label>
-            <small>Açıkken Astera'dan Trendyol'daki ürün fiyatı ve siparişin kargo firması değiştirilebilir; her değişiklikten önce "eski → yeni" onayı istenir. Kapalıyken Trendyol'a hiçbir değişiklik gönderilmez. Ürün düzenleme ekranı yalnızca Astera'yı değiştirir, Trendyol'a hiçbir şey göndermez.</small></div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-primary" data-act="ty-save">Kaydet</button><button class="btn" data-act="ty-test">Bağlantıyı dene</button><button class="btn" data-act="ty-diag">Tanılama</button></div>
-        </div>
-      </details>
+      <section class="panel"><div class="panel-b ty-conn-link">${icon('gear')}<span>Trendyol bağlantısı (Satıcı ID, API anahtarları, takip ve stok ayarları) <b>Ayarlar → Trendyol</b> bölümünde.</span><a class="btn btn-sm" href="#/ayarlar" data-act="go-set" data-g="trendyol">Ayarlara git</a></div></section>
     </div>`;
   },
   after() {
@@ -4568,6 +4545,44 @@ async function openTyDiag() {
 // ================================================================== SETTINGS
 // ---------- Ayarlar → Yedekleme: günlük otomatik yedek, ek klasör, geri yükleme
 const fmtSize = (b) => b >= 1048576 ? `${(b / 1048576).toLocaleString('tr-TR', { maximumFractionDigits: 1 })} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
+function tyConnHTML() {
+  const st = S.settings;
+  return `<details class="panel" open>
+        <summary class="panel-h" style="padding-bottom:16px"><h2>Trendyol bağlantı ayarları</h2><svg class="chev"><use href="#i-plus"/></svg></summary>
+        <div class="panel-b" style="display:grid;gap:14px;padding-top:0">
+          <ol class="steps"><li>Trendyol Satıcı Paneli → sağ üstte hesap adı → <b>Hesap Bilgilerim</b> → <b>Entegrasyon Bilgileri</b>.</li>
+            <li>Satıcı ID, API Key ve API Secret değerlerini aşağıya yapıştırın.</li>
+            <li>Ürün kartlarına Trendyol'daki barkodu yazın. Takip açıldığı andan <b>sonra</b> gelen siparişler düşülür; eski siparişlere dokunulmaz.</li></ol>
+          <div class="row">
+            <label class="field"><span>Satıcı ID</span><input class="input" id="ty-sid" value="${esc(st.ty_seller_id)}" inputmode="numeric" autocomplete="off"></label>
+            <label class="field"><span>API Key</span><input class="input" id="ty-key" value="${esc(st.ty_api_key)}" autocomplete="off"></label>
+            <label class="field"><span>API Secret</span><input class="input" id="ty-sec" type="password" placeholder="${st.ty_api_secret_set ? 'Kayıtlı — değiştirmek için yazın' : ''}" autocomplete="new-password"></label>
+          </div>
+          <label class="field" style="max-width:340px"><span>Takip başlangıcı</span>
+            <input class="input" type="datetime-local" id="ty-since" value="${st.ty_since ? new Date(st.ty_since - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}">
+            <small>Bu andan sonra Hazırlanıyor'a çekilen siparişler stoktan düşer. Son stok sayımınızı yaptığınız ana ayarlayın; geriye alırsanız o aralıkta paketlenenler bir sonraki kontrolde düşülür.</small></label>
+          <div class="row" style="align-items:center">
+            <label class="field"><span>Kontrol aralığı</span><div class="input-group"><input class="input" id="ty-int" type="number" min="2" value="${st.ty_interval_min}"><span class="suffix">dakika</span></div></label>
+            <label class="switch"><input type="checkbox" id="ty-restock" ${st.ty_restock_cancel ? 'checked' : ''}> İptal edilen siparişleri stoğa geri ekle</label>
+            <label class="switch"><input type="checkbox" id="ty-en" ${st.ty_enabled ? 'checked' : ''}> Otomatik takip açık</label>
+          </div>
+          <div class="ty-write${st.ty_write ? ' on' : ''}"><label class="switch"><input type="checkbox" id="ty-write" ${st.ty_write ? 'checked' : ''}> <b>Trendyol'a değişiklik gönder</b></label>
+            <small>Açıkken Astera'dan Trendyol'daki ürün fiyatı ve siparişin kargo firması değiştirilebilir; her değişiklikten önce "eski → yeni" onayı istenir. Kapalıyken Trendyol'a hiçbir değişiklik gönderilmez. Ürün düzenleme ekranı yalnızca Astera'yı değiştirir, Trendyol'a hiçbir şey göndermez.</small></div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-primary" data-act="ty-save">Kaydet</button><button class="btn" data-act="ty-test">Bağlantıyı dene</button><button class="btn" data-act="ty-diag">Tanılama</button></div>
+        </div>
+      </details>`;
+}
+const DEDUCT_OPTS = [['order', 'Sipariş gelir gelmez', 'Trendyol\'a sipariş düştüğü anda stoktan düşer. Rafta olmayanlar eksi stoğa iner.'],
+  ['picking', 'Hazırlanıyor\'a çekilince', 'Paketleyip Hazırlanıyor\'a çektiğinizde (Astera\'dan ya da Trendyol panelinden) düşer.'],
+  ['label', 'Kargo barkodu basılınca', 'Astera\'dan etiket basıldığında; basılmadan kargoya verilirse kargoya verilince düşer.'],
+  ['shipped', 'Kargoya verilince', 'Trendyol siparişi Kargoda olarak gösterdiğinde düşer.']];
+function stockStageHTML() {
+  const cur = S.settings?.ty_deduct_at || 'picking';
+  return `<section class="panel"><div class="panel-h"><h2>Stok ne zaman düşsün?</h2><span class="muted" style="font-size:13px">Trendyol siparişleri</span></div><div class="panel-b ds-set">
+    <div class="ds-opts" role="radiogroup">${DEDUCT_OPTS.map(([v, l, d], i) => `<label class="ds-opt${cur === v ? ' on' : ''}"><input type="radio" name="ds" value="${v}" ${cur === v ? 'checked' : ''}><span class="ds-n">${i + 1}</span><span><b>${l}</b><small class="muted">${d}</small></span></label>`).join('')}</div>
+    <small class="muted">Değiştirince daha önce düşülmüş siparişlere dokunulmaz; yeni durum değişiklikleri seçtiğiniz aşamaya göre düşer. İptal edilenler (açıksa) stoğa geri eklenir.</small>
+  </div></section>`;
+}
 function backupHTML() {
   const d = S.backups;
   const head = `<div class="panel-h"><h2>Yedekleme</h2><span class="muted" style="font-size:13px">her gün otomatik</span></div>`;
@@ -4659,13 +4674,45 @@ function labelSetHTML() {
     <div class="bk-btns"><button class="btn btn-primary" data-act="lp-save">Kaydet</button><button class="btn" data-act="lp-test">${icon('print')} Deneme etiketi bas</button></div>
   </div></section>`;
 }
+// Ayarlar grupları: her panel başlığına göre bir gruba düşer
+const SET_GROUPS = [['genel', 'Genel', 'gear'], ['magaza', 'Mağaza ve Kargo', 'pack'], ['trendyol', 'Trendyol', 'cart'], ['uretim', 'Üretim', 'layers'],
+  ['bildirim', 'Bildirimler', 'bell'], ['uzak', 'Uzaktan erişim', 'lock'], ['veri', 'Veri ve Yedek', 'download']];
+const SET_MAP = [[/^Uygulama|^Tema|^Görünüm/, 'genel'], [/^Kargo|^Stok ne zaman/, 'magaza'], [/^Trendyol/, 'trendyol'], [/^Kategoriler|^Makineler/, 'uretim'],
+  [/^Bildirimler|^Haftalık/, 'bildirim'], [/^Telefon|^Uzak/, 'uzak'], [/^Yedek|^Arşiv/, 'veri']];
+const setGroup = () => { try { const g = localStorage.getItem('setGrp'); return SET_GROUPS.some((x) => x[0] === g) ? g : 'genel'; } catch { return 'genel'; } };
+function setGroupsBind() {
+  const grid = $('.settings-grid'); if (!grid) return;
+  const panels = [...grid.children].filter((x) => x.classList.contains('panel'));
+  panels.forEach((pn) => { const h = (pn.querySelector('h2')?.textContent || '').trim(); pn.dataset.sg = (SET_MAP.find(([rx]) => rx.test(h)) || [, 'genel'])[1]; });
+  const show = (g) => { grid.dataset.g = g; $$('[data-sg-go]').forEach((b) => b.classList.toggle('on', b.dataset.sgGo === g)); try { localStorage.setItem('setGrp', g); } catch { /* */ } };
+  $$('[data-sg-go]').forEach((b) => b.addEventListener('click', () => { const q = $('#set-q'); if (q.value) { q.value = ''; q.dispatchEvent(new Event('input')); } show(b.dataset.sgGo); scrollTo({ top: 0 }); }));
+  $('#set-q')?.addEventListener('input', (e) => {
+    const q = trLow(e.target.value); grid.classList.toggle('searching', !!q);
+    const n = {};
+    panels.forEach((pn) => { const hit = !q || trLow(pn.textContent).includes(q); pn.classList.toggle('q-hit', !!q && hit); if (q && hit) { n[pn.dataset.sg] = (n[pn.dataset.sg] || 0) + 1; if (pn.tagName === 'DETAILS') pn.open = true; } });
+    $$('[data-sg-go]').forEach((b) => { b.querySelector('.sg-n').textContent = q && n[b.dataset.sgGo] ? n[b.dataset.sgGo] : ''; });
+    $('.set-empty').hidden = !q || Object.keys(n).length > 0;
+  });
+  $$('.ds-opt input').forEach((r) => r.addEventListener('change', async () => {
+    const v = r.value, l = DEDUCT_OPTS.find((x) => x[0] === v)[1];
+    if (!confirm(`Trendyol siparişlerinde stok artık "${l}" düşecek.\n\nDaha önce düşülmüş siparişler değişmez. Devam edilsin mi?`)) { render(); return; }
+    try { S.settings = await api('PUT', '/api/settings', { ty_deduct_at: v }); $$('.ds-opt').forEach((x) => x.classList.toggle('on', x.querySelector('input').checked)); toast(`Stok "${l}" düşecek`); } catch (e) { fail(e); render(); }
+  }));
+}
 PAGES.ayarlar = {
   async load() { await loadCategories(); await loadSettings(); if ((S.settings.printers || []).some(hasLink)) await loadBambu(); S.archived = (await api('GET', '/api/products?archived=1')).filter((p) => p.archived); S.backups = await api('GET', '/api/backups').catch(() => null); S.weekly = await api('GET', '/api/weekly').catch(() => null); S.labelCfg = await api('GET', '/api/label/settings').catch(() => null); S.version = await api('GET', '/api/version').catch(() => null); S.authCfg = await api('GET', '/api/auth/settings').catch(() => null); },
   html() {
     const theme = localStorage.getItem('theme') || 'auto';
     const nsup = 'Notification' in window, secure = window.isSecureContext;
     const perm = nsup ? Notification.permission : 'unsupported';
-    return `<div class="settings-grid">
+    const g = setGroup();
+    return `<div class="set-wrap">
+      <nav class="set-nav" aria-label="Ayar grupları">${SET_GROUPS.map(([k, l, ic]) => `<button type="button" data-sg-go="${k}" class="${g === k ? 'on' : ''}">${icon(ic)}<span>${l}</span><i class="sg-n"></i></button>`).join('')}</nav>
+      <div class="set-main">
+      <label class="search set-q">${icon('search')}<input class="input" id="set-q" placeholder="Ayar ara… (ör. logo, kargo, şifre)" autocomplete="off"></label>
+      <div class="settings-grid" data-g="${g}">
+      ${stockStageHTML()}
+      ${tyConnHTML()}
       <section class="panel"><div class="panel-h"><h2>Uygulama</h2>${S.version?.version ? `<span class="muted" style="font-size:13px">Sürüm ${esc(S.version.version)} · ${esc(S.version.platform)}</span>` : ''}</div><div class="panel-b">
         <div class="brand-edit">
           <button class="brand-logo-drop${S.settings.app_logo ? ' has' : ''}" id="logo-drop" data-act="logo-pick" style="${S.settings.app_logo ? `--img:url('${esc(S.settings.app_logo)}')` : ''}" aria-label="Logo yükle">
@@ -4748,9 +4795,11 @@ PAGES.ayarlar = {
         ${S.archived.map((p) => `<li>${miniThumb(p.thumbnail)}<div class="grow"><div class="t">${esc(p.name)}</div><div class="s">Stok ${p.stock}</div></div><button class="btn btn-sm" data-act="restore-product" data-id="${p.id}">Geri al</button></li>`).join('')}
       </ul></div></section>` : ''}
       ${advancedHTML()}
-    </div>`;
+      <p class="muted set-empty" hidden>Bu aramaya uyan ayar yok.</p>
+    </div></div></div>`;
   },
   after() {
+    setGroupsBind();
     api('GET', '/api/push/key').then((r) => { const el = $('#push-n'); if (el) el.textContent = r.subscribers; }).catch(() => {});
     advBind();
     const lpPath = () => { const el = $('#lp-path'); if (el) el.textContent = `\\\\${$('#lp-host').value.trim().replace(/^[\\/]+|[\\/]+$/g, '') || 'localhost'}\\${$('#lp-share').value.trim() || '…'}`; };
@@ -5316,6 +5365,7 @@ const ACTIONS = {
     };
     inp.click();
   },
+  'go-set': (el) => { try { localStorage.setItem('setGrp', el.dataset.g); } catch { /* */ } },
   'store-loc-save': async () => {
     try { S.settings = await api('PUT', '/api/settings', { store_city: $('#store-city').value, store_district: $('#store-district').value }); toast(S.settings.store_city ? `Mağaza konumu: ${S.settings.store_city}${S.settings.store_district ? ' · ' + S.settings.store_district : ''}` : 'Mağaza konumu kaldırıldı'); } catch (e) { fail(e); }
   },
