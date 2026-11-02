@@ -4724,6 +4724,7 @@ PAGES.ayarlar = {
             <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" data-act="brand-save">Kaydet</button>
               ${S.settings.app_logo ? '<button class="btn btn-ghost btn-sm" data-act="logo-rm">Logoyu kaldır</button>' : ''}
               <small class="muted" style="align-self:center">Kare bir logo en iyi görünür. Ctrl+V ile de yapıştırabilirsiniz.</small></div>
+            <div><button class="btn btn-sm btn-ghost" data-act="open-wizard">${icon('refresh')} Kurulum sihirbazını aç</button></div>
           </div>
         </div>
       </div></section>
@@ -5365,6 +5366,7 @@ const ACTIONS = {
     };
     inp.click();
   },
+  'open-wizard': () => openWizard(),
   'go-set': (el) => { try { localStorage.setItem('setGrp', el.dataset.g); } catch { /* */ } },
   'store-loc-save': async () => {
     try { S.settings = await api('PUT', '/api/settings', { store_city: $('#store-city').value, store_district: $('#store-district').value }); toast(S.settings.store_city ? `Mağaza konumu: ${S.settings.store_city}${S.settings.store_district ? ' · ' + S.settings.store_district : ''}` : 'Mağaza konumu kaldırıldı'); } catch (e) { fail(e); }
@@ -6204,6 +6206,142 @@ setInterval(() => { if (!$('#modal-root').children.length && route() === '' && d
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { syncTime(); poll(); } });
 
 // ================================================================== boot
+
+// ================================================================== ilk kurulum sihirbazı
+const WZ_STEPS = [['magaza', 'Mağaza', 'Ad ve logo'], ['trendyol', 'Trendyol', 'API bağlantısı'], ['makine', 'Makineler', 'Yazıcılarınız'],
+  ['stok', 'Stok ve kargo', 'Stok düşme, kargo saati, konum'], ['kat', 'Kategoriler', 'Ürün türleri'], ['hazir', 'Hazır', 'Özet ve ilk ürün']];
+const WZ_PRINTERS = ['Bambu Lab P1S', 'Bambu Lab A1', 'Bambu Lab X1C', 'Prusa MK4', 'Creality K1', 'Elegoo Saturn 4 Ultra', 'Anycubic Photon'];
+const WZ_CATS = ['Kitap ayracı', 'Figür', 'Anahtarlık', 'Dekorasyon', 'Saksı', 'Oyuncak', 'Masaüstü düzenleyici', 'Yedek parça', 'Reçine figür'];
+let WZ = null;
+function openWizard() {
+  const st = S.settings || {};
+  WZ = { i: 0, done: new Set(), busy: false, d: {
+    name: appName(), tag: st.app_tagline ?? 'Management', logo: st.app_logo || null,
+    sid: st.ty_seller_id || '', key: st.ty_api_key || '', sec: '', secSet: !!st.ty_api_secret_set, ty: null,
+    printers: structuredClone(st.printers || []), deduct: st.ty_deduct_at || 'picking', cut: st.ship_cutoff || '',
+    city: st.store_city || '', dist: st.store_district || '',
+    catsOld: (S.categories || []).map((c) => c.name), cats: new Set((S.categories || []).map((c) => c.name)) } };
+  let el = $('#wiz'); if (!el) { el = document.createElement('div'); el.id = 'wiz'; el.className = 'wz'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', 'Astera kurulumu'); document.body.appendChild(el); wzBind(el); }
+  document.body.classList.add('wz-open'); wzRender();
+}
+function closeWizard() { $('#wiz')?.remove(); document.body.classList.remove('wz-open'); WZ = null; render(); }
+function wzStepHTML(k) {
+  const d = WZ.d;
+  if (k === 'magaza') return `<h1>Mağazanızı tanıyalım</h1><p>Panelde ve kargo etiketlerinde görünecek ad ve logo.</p>
+    <div class="wz-brand"><button type="button" class="wz-logo${d.logo ? ' has' : ''}" data-wz="logo" style="${d.logo ? `background-image:url('${esc(d.logo)}')` : ''}" aria-label="Logo yükle">${d.logo ? '' : `${icon('upload')}<span>Logo</span>`}</button>
+      <div class="wz-fields"><label class="field"><span>Mağaza adı</span><input class="input" id="wz-name" value="${esc(d.name)}" maxlength="40" placeholder="ör. Astera 3D"></label>
+      <label class="field"><span>Alt yazı <span class="faint">(isteğe bağlı)</span></span><input class="input" id="wz-tag" value="${esc(d.tag)}" maxlength="40" placeholder="ör. Management"></label></div></div>
+    <input type="file" id="wz-logo-in" accept="image/*" hidden><small class="muted">Kare bir logo en iyi görünür. Kargo etiketi logosu Ayarlar'dan ayrıca seçilebilir.</small>`;
+  if (k === 'trendyol') return `<h1>Trendyol mağazanızı bağlayın</h1><p>Siparişler, stok, iade ve sorular otomatik gelsin. Trendyol'da satış yapmıyorsanız bu adımı atlayın.</p>
+    <ol class="wz-how"><li>Trendyol Satıcı Paneli → sağ üstte hesap adı → <b>Hesap Bilgilerim</b></li><li><b>Entegrasyon Bilgileri</b> sayfasındaki üç değeri aşağıya yapıştırın</li></ol>
+    <div class="wz-row3"><label class="field"><span>Satıcı ID</span><input class="input" id="wz-sid" value="${esc(d.sid)}" inputmode="numeric" autocomplete="off"></label>
+      <label class="field"><span>API Key</span><input class="input" id="wz-key" value="${esc(d.key)}" autocomplete="off"></label>
+      <label class="field"><span>API Secret</span><input class="input" id="wz-sec" type="password" value="${esc(d.sec)}" placeholder="${d.secSet ? 'Kayıtlı' : ''}" autocomplete="new-password"></label></div>
+    <div class="wz-test"><button type="button" class="btn" data-wz="ty-test" ${WZ.busy ? 'disabled' : ''}>${icon('refresh')} Bağlantıyı dene</button>
+      ${d.ty === true ? `<span class="wz-ok">${icon('check')} Bağlandı</span>` : d.ty ? `<span class="wz-bad">${icon('alert')} ${esc(d.ty)}</span>` : ''}</div>
+    <small class="muted">Anahtarlar yalnızca bu cihazdaki Astera'da saklanır. Trendyol'a değişiklik gönderme (fiyat, kargo) kapalı başlar; Ayarlar'dan açılır.</small>`;
+  if (k === 'makine') return `<h1>Hangi yazıcıları kullanıyorsunuz?</h1><p>Baskı başlatırken makineyi tek dokunuşla seçersiniz. Bambu, Moonraker ve Elegoo bağlantısı sonra Ayarlar → Üretim'den kurulur.</p>
+    <div class="wz-list">${d.printers.map((p, i) => `<div class="wz-pr"><span class="wz-pr-ic">${icon(p.kind === 'resin' ? 'drop' : 'layers')}</span><b>${esc(p.name)}</b>
+      <select class="input" data-wz-kind="${i}">${Object.entries(PRINTER_KINDS).map(([k2, l]) => `<option value="${k2}"${(p.kind || 'open') === k2 ? ' selected' : ''}>${l}</option>`).join('')}</select>
+      <button type="button" class="icon-btn" data-wz="pr-rm" data-i="${i}" aria-label="Kaldır">${icon('x')}</button></div>`).join('') || '<p class="faint" style="margin:0">Henüz yazıcı eklenmedi.</p>'}</div>
+    <div class="wz-add"><input class="input" id="wz-pr" placeholder="Yazıcı adı, ör. P1S sağdaki" autocomplete="off"><button type="button" class="btn" data-wz="pr-add">${icon('plus')} Ekle</button></div>
+    <div class="wz-chips">${WZ_PRINTERS.filter((n) => !d.printers.some((p) => p.name === n)).map((n) => `<button type="button" class="wz-chip" data-wz="pr-quick" data-v="${esc(n)}">+ ${esc(n)}</button>`).join('')}</div>`;
+  if (k === 'stok') return `<h1>Stok ne zaman düşsün?</h1><p>Trendyol siparişlerinde ürünü stoktan hangi anda düşelim?</p>
+    <div class="wz-grid">${DEDUCT_OPTS.map(([v, l, t]) => `<button type="button" class="wz-opt${d.deduct === v ? ' on' : ''}" data-wz="deduct" data-v="${v}" aria-pressed="${d.deduct === v}"><b>${l}</b><small>${t}</small>${v === 'picking' ? '<span class="wz-tag">Önerilen</span>' : ''}</button>`).join('')}</div>
+    <div class="wz-row3 wz-ship"><label class="field"><span>Kargo çıkış saati <span class="faint">(boş: Trendyol'un saati)</span></span><input class="input" type="time" id="wz-cut" value="${esc(d.cut)}"></label>
+      <label class="field"><span>Mağazanın ili</span><input class="input" id="wz-city" list="wz-cities" value="${esc(d.city)}" placeholder="ör. Kırklareli" autocomplete="off"><datalist id="wz-cities">${TR_CITIES.map((c) => `<option value="${c}">`).join('')}</datalist></label>
+      <label class="field"><span>İlçe</span><input class="input" id="wz-dist" value="${esc(d.dist)}" placeholder="ör. Merkez" autocomplete="off"></label></div>
+    <small class="muted">İl ve ilçe, aynı yere giden siparişlerde "Yakın" etiketi için kullanılır.</small>`;
+  if (k === 'kat') return `<h1>Neler satıyorsunuz?</h1><p>Ürünleri kategorilere ayırın; filtreler, istatistikler ve kâr hesabı buna göre çalışır. Seçin ya da kendiniz ekleyin.</p>
+    <div class="wz-chips big">${[...new Set([...d.catsOld, ...WZ_CATS, ...d.cats])].map((n) => `<button type="button" class="wz-chip${d.cats.has(n) ? ' on' : ''}" data-wz="cat" data-v="${esc(n)}" aria-pressed="${d.cats.has(n)}" ${d.catsOld.includes(n) ? 'disabled title="Kayıtlı kategori"' : ''}>${d.cats.has(n) ? icon('check') : ''}${esc(n)}</button>`).join('')}</div>
+    <div class="wz-add"><input class="input" id="wz-cat" placeholder="Yeni kategori, ör. Kitap sırtı" autocomplete="off"><button type="button" class="btn" data-wz="cat-add">${icon('plus')} Ekle</button></div>`;
+  const deduct = DEDUCT_OPTS.find((x) => x[0] === d.deduct)?.[1];
+  const row = (ok, t, s2) => `<li class="${ok ? 'ok' : ''}"><i>${ok ? icon('check') : '–'}</i><div><b>${t}</b><small>${s2}</small></div></li>`;
+  return `<h1>Her şey hazır 🎉</h1><p>Eksik kalanları istediğiniz zaman Ayarlar'dan tamamlayabilirsiniz.</p>
+    <ul class="wz-sum">${row(true, esc(d.name || 'Astera'), d.logo ? 'Logo yüklendi' : 'Logo yok')}
+      ${row(!!(d.sid && d.key), 'Trendyol', d.sid && d.key ? (d.ty === true ? 'Bağlandı' : 'Bilgiler kaydedildi') : 'Bağlanmadı')}
+      ${row(d.printers.length > 0, 'Makineler', d.printers.length ? d.printers.map((p) => esc(p.name)).join(', ') : 'Eklenmedi')}
+      ${row(true, 'Stok', esc(deduct || ''))}
+      ${row(d.cats.size > 0, 'Kategoriler', d.cats.size ? [...d.cats].map(esc).join(', ') : 'Eklenmedi')}</ul>
+    <div class="wz-final"><button type="button" class="btn btn-primary" data-wz="first-product">${icon('plus')} İlk ürünü ekle</button><button type="button" class="btn" data-wz="finish">Panele git</button></div>`;
+}
+function wzRender() {
+  const el = $('#wiz'); if (!el || !WZ) return;
+  const k = WZ_STEPS[WZ.i][0], last = WZ.i === WZ_STEPS.length - 1;
+  el.innerHTML = `<aside class="wz-side"><div class="wz-hello">${S.settings?.app_logo ? `<span class="wz-l" style="background-image:url('${esc(S.settings.app_logo)}')"></span>` : `<span class="wz-l">${esc((appName() || 'A')[0])}</span>`}<div><b>Astera'ya hoş geldiniz</b><small>Birkaç dakikada hazır</small></div></div>
+      <ol class="wz-steps">${WZ_STEPS.map(([sk, l, sub], i) => `<li class="${i === WZ.i ? 'on' : WZ.done.has(sk) ? 'd' : ''}"><button type="button" data-wz="go" data-i="${i}" ${i === WZ.i ? 'aria-current="step"' : ''}><i>${WZ.done.has(sk) && i !== WZ.i ? icon('check') : i + 1}</i><span>${l}<small>${sub}</small></span></button></li>`).join('')}</ol>
+      <div class="wz-help">Her adım sonradan Ayarlar'dan değiştirilebilir.</div></aside>
+    <main class="wz-main"><button type="button" class="wz-x" data-wz="later" title="Sonra tamamla">Sonra tamamla ${icon('x')}</button>
+      <div class="wz-k">ADIM ${WZ.i + 1} / ${WZ_STEPS.length}</div><div class="wz-body">${wzStepHTML(k)}</div>
+      ${last ? '' : `<div class="wz-foot">${WZ.i ? `<button type="button" class="btn" data-wz="back">${icon('chevron-left')} Geri</button>` : ''}<button type="button" class="linkish wz-skip" data-wz="skip">Bu adımı atla</button>
+        <button type="button" class="btn btn-primary wz-next" data-wz="next" ${WZ.busy ? 'disabled' : ''}>Devam ${icon('chevron-right')}</button></div>`}</main>`;
+  const f = el.querySelector('.wz-body input:not([type=file]):not([type=time])'); if (f && !WZ.noFocus) f.focus(); WZ.noFocus = false;
+}
+function wzRead() {
+  const d = WZ.d, v = (id) => $(id)?.value;
+  if ($('#wz-name')) { d.name = v('#wz-name').trim(); d.tag = v('#wz-tag').trim(); }
+  if ($('#wz-sid')) { d.sid = v('#wz-sid').trim(); d.key = v('#wz-key').trim(); d.sec = v('#wz-sec').trim(); }
+  if ($('#wz-cut')) { d.cut = v('#wz-cut'); d.city = v('#wz-city').trim(); d.dist = v('#wz-dist').trim(); }
+}
+async function wzSave(k) {
+  const d = WZ.d;
+  if (k === 'magaza') S.settings = await api('PUT', '/api/settings', { app_name: d.name || 'Astera', app_tagline: d.tag, app_logo: d.logo });
+  if (k === 'trendyol' && d.sid && d.key) S.settings = await api('PUT', '/api/settings', { ty_seller_id: d.sid, ty_api_key: d.key, ...(d.sec ? { ty_api_secret: d.sec } : {}), ty_enabled: true });
+  if (k === 'makine') S.settings = await api('PUT', '/api/settings', { printers: d.printers });
+  if (k === 'stok') S.settings = await api('PUT', '/api/settings', { ty_deduct_at: d.deduct, ship_cutoff: d.cut || '', store_city: d.city, store_district: d.dist });
+  if (k === 'kat') {
+    const old = S.categories || [], add = [...d.cats].filter((n) => !old.some((c) => c.name === n));
+    if (add.length) S.categories = await api('PUT', '/api/categories', { categories: [...old.map((c) => ({ name: c.name, old_name: c.name, no_materials: !!c.no_materials, no_parts: !!c.no_parts })), ...add.map((n) => ({ name: n, old_name: null, no_materials: false, no_parts: false }))] });
+  }
+  applyBrand();
+}
+function wzBind(el) {
+  el.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-wz]'); if (!b || !WZ || b.disabled) return;
+    const a = b.dataset.wz, d = WZ.d, k = WZ_STEPS[WZ.i][0];
+    if (a !== 'later' && a !== 'finish' && a !== 'first-product') wzRead();
+    if (a === 'next') {
+      WZ.busy = true; wzRender();
+      try { await wzSave(k); WZ.done.add(k); WZ.i++; } catch (err) { fail(err); }
+      WZ.busy = false; wzRender();
+    } else if (a === 'skip') { WZ.i++; wzRender(); }
+    else if (a === 'back') { WZ.i--; wzRender(); }
+    else if (a === 'go') { WZ.i = +b.dataset.i; wzRender(); }
+    else if (a === 'later') { closeWizard(); toast('Kurulumu Ayarlar → Genel\'den istediğiniz zaman tamamlayabilirsiniz'); }
+    else if (a === 'logo') $('#wz-logo-in').click();
+    else if (a === 'ty-test') {
+      if (!d.sid || !d.key || (!d.sec && !d.secSet)) { d.ty = 'Üç alanı da doldurun'; WZ.noFocus = true; return wzRender(); }
+      WZ.busy = true; wzRender();
+      try { S.settings = await api('PUT', '/api/settings', { ty_seller_id: d.sid, ty_api_key: d.key, ...(d.sec ? { ty_api_secret: d.sec } : {}) }); d.secSet = true; await api('POST', '/api/trendyol/test'); d.ty = true; }
+      catch (err) { d.ty = err.message || 'Bağlanamadı'; }
+      WZ.busy = false; WZ.noFocus = true; wzRender();
+    } else if (a === 'pr-add' || a === 'pr-quick') {
+      const n = a === 'pr-quick' ? b.dataset.v : ($('#wz-pr').value || '').trim(); if (!n) return;
+      if (!d.printers.some((p) => p.name === n)) d.printers.push({ name: n, kind: /saturn|photon|mars|form/i.test(n) ? 'resin' : /p1s|x1|k1|core/i.test(n) ? 'enclosed' : 'open' });
+      wzRender(); $('#wz-pr')?.focus();
+    } else if (a === 'pr-rm') { d.printers.splice(+b.dataset.i, 1); WZ.noFocus = true; wzRender(); }
+    else if (a === 'deduct') { d.deduct = b.dataset.v; WZ.noFocus = true; wzRender(); }
+    else if (a === 'cat') { const n = b.dataset.v; d.cats.has(n) ? d.cats.delete(n) : d.cats.add(n); WZ.noFocus = true; wzRender(); }
+    else if (a === 'cat-add') { const n = ($('#wz-cat').value || '').trim(); if (n) d.cats.add(n); wzRender(); $('#wz-cat')?.focus(); }
+    else if (a === 'finish' || a === 'first-product') {
+      try { S.settings = await api('PUT', '/api/settings', { setup_done: true }); } catch { /* */ }
+      closeWizard(); if (a === 'first-product') { location.hash = '#/urunler'; setTimeout(() => openProductEditor(), 300); }
+    }
+  });
+  el.addEventListener('change', async (e) => {
+    if (e.target.id === 'wz-logo-in' && e.target.files[0]) {
+      try { const r = await api('POST', '/api/upload-image', { data: await resizeImage(e.target.files[0], 256, true) }); wzRead(); WZ.d.logo = r.url; WZ.noFocus = true; wzRender(); } catch (err) { fail(err); }
+    } else if (e.target.dataset.wzKind != null) WZ.d.printers[+e.target.dataset.wzKind].kind = e.target.value;
+  });
+  el.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.target.tagName !== 'INPUT') return;
+    e.preventDefault();
+    if (e.target.id === 'wz-pr') el.querySelector('[data-wz="pr-add"]').click();
+    else if (e.target.id === 'wz-cat') el.querySelector('[data-wz="cat-add"]').click();
+    else el.querySelector('[data-wz="next"]')?.click();
+  });
+}
+
 (async function boot() {
   applyTheme(); applyUI();
   await syncTime();
@@ -6215,6 +6353,8 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
   await render();
   renderPBar();
   S.booted = true;
+  // ilk açılış: hiç ürün ve Trendyol bağlantısı yoksa kurulum sihirbazı
+  if (S.settings && !S.settings.setup_done && !(S.products || []).length && !S.settings.ty_seller_id) openWizard();
   S.lastJobsSig = S.jobs.map((j) => j.id + ':' + j.ends_at).join(',');
   checkDue();
 })();

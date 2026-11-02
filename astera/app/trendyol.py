@@ -59,6 +59,7 @@ def public_settings():
             "ship_cutoff": _get("ship_cutoff") if _get("ship_cutoff") is not None else "17:00",
             "store_city": _get("store_city", "") or "",
             "ty_deduct_at": deduct_mode(),
+            "setup_done": _get("setup_done", "") == "1",
             "store_district": _get("store_district", "") or "",
             "ship_days": int(_get("ship_days", "1") or 1),
             "ship_skip_sunday": _get("ship_skip_sunday", "0") == "1",
@@ -132,6 +133,8 @@ def save_settings(b):
                 _set("ty_since", int(time.time() * 1000))
         if "ty_since" in b and b["ty_since"]:
             _set("ty_since", int(b["ty_since"]))
+        if "setup_done" in b:
+            _set("setup_done", "1" if b["setup_done"] else "0")
         if b.get("ty_deduct_at") in DEDUCT_MODES:
             _set("ty_deduct_at", b["ty_deduct_at"])
         for k in ("store_city", "store_district"):

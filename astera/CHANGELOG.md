@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.7.5
+- İlk kurulum sihirbazı: mağaza adı ve logo, Trendyol bağlantısı (dene düğmesiyle), makineler, stok düşme aşaması / kargo saati / mağaza konumu, kategoriler ve özet. Hiç ürün ve Trendyol bağlantısı yokken kendiliğinden açılır; Ayarlar → Genel → "Kurulum sihirbazını aç" ile yeniden açılabilir.
+
 ## 1.7.4
 - Ayarlar yeniden düzenlendi: solda gruplar (Genel, Mağaza ve Kargo, Trendyol, Üretim, Bildirimler, Uzaktan erişim, Veri ve Yedek) ve ayar arama kutusu.
 - Yeni ayar: Trendyol siparişinde stok ne zaman düşsün (sipariş gelince / Hazırlanıyor'a çekilince / kargo barkodu basılınca / kargoya verilince). Varsayılan değişmedi.
