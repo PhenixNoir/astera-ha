@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.7.3
+- Ürün kartında görsele tıklayınca düzenleme açılır; köşedeki küçük düğme görseli büyütür.
+- Parçalı ürünlerde parçaların gramı girilince ürünün gramı otomatik toplam olur (kâr ve malzeme hesabı buna göre).
+
 ## 1.7.2
 - Siparişlerde şehrin yanında ilçe. Ayarlar → Kargo'ya mağaza il/ilçesi eklendi; aynı yere giden siparişte yeşil "Yakın · not ekle" etiketi.
 - Sipariş içindeki ürün adına tıklayınca menü: Ürünü düzenle, Satış istatistikleri, Trendyol'da aç (ayrı Trendyol bağlantısı kaldırıldı).

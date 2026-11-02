@@ -886,7 +886,7 @@ function variantCard(members) {
   return `<article class="pcard vcard" data-gid="${gid}" data-pid="${p.id}" style="view-transition-name:g-${gid}">
     <button class="thumb${p.thumbnail ? '' : ' none'}" style="${thumbStyle(p.thumbnail)}" data-initial="${esc((p.base_name || p.name || '?')[0].toLocaleUpperCase('tr'))}" data-act="edit-product" data-id="${p.id}" aria-label="${esc(p.name)} düzenle">
       <span class="tag tag-${p.print_type}">${p.print_type} · ${members.length} renk</span>
-      ${p.thumbnail ? `<span class="thumb-edit" data-edit="${p.id}" title="Düzenle">${icon('edit')}</span>` : ''}
+      ${p.thumbnail ? `<span class="thumb-edit" data-zoomp="${p.id}" title="Görseli büyüt">${icon('expand')}</span>` : ''}
       ${sc === 'neg' ? '<span class="tag tag-bad alert">Eksi stok</span>' : sc === 'low' ? '<span class="tag tag-warn alert">Azaldı</span>' : ''}
     </button>
     <div class="body">
@@ -959,7 +959,7 @@ function productCard(p) {
     ${S.psel ? `<button type="button" class="psel-cover" data-act="psel" data-id="${p.id}" aria-pressed="${S.psel.has(p.id)}" aria-label="${esc(p.name)} seç"><i>${icon('check')}</i></button>` : ''}
     <button class="thumb${p.thumbnail ? '' : ' none'}" style="${thumbStyle(p.thumbnail)}" data-initial="${esc((p.name || '?')[0].toLocaleUpperCase('tr'))}" data-act="edit-product" data-id="${p.id}" aria-label="${esc(p.name)} düzenle">
       <span class="tag tag-${p.print_type}">${p.print_type}${p.parts?.length ? ` · ${p.parts_total} parça` : p.set_size > 1 ? ` · ${p.set_size}'lü set` : ''}</span>
-      ${p.thumbnail ? `<span class="thumb-edit" data-edit="${p.id}" title="Düzenle">${icon('edit')}</span>` : ''}
+      ${p.thumbnail ? `<span class="thumb-edit" data-zoomp="${p.id}" title="Görseli büyüt">${icon('expand')}</span>` : ''}
       ${sc === 'neg' ? '<span class="tag tag-bad alert">Eksi stok</span>' : sc === 'low' ? '<span class="tag tag-warn alert">Azaldı</span>' : fc.days != null && fc.days < planDays() && U('card.forecast') ? `<span class="tag tag-warn alert" title="Son 30 günün satış hızına göre">≈${Math.floor(fc.days)} gün yeter</span>` : ''}
     </button>
     <div class="body">
@@ -1121,6 +1121,7 @@ async function openProductEditor(id) {
     ED.partsOn = e.target.checked;
     if (ED.partsOn && ED.parts.length < 2) { while (ED.parts.length < 2) ED.parts.push({ name: '', per_unit: 1, stock: 0 }); renderParts(); }
     $('#parts-box').classList.toggle('hidden', !ED.partsOn);
+    const pg = $('#parts-grams'); if (pg) pg.innerHTML = partsGramsHTML();
     applyCategoryUI();
   };
   const drop = $('#drop'), fileIn = $('#thumb-file');
@@ -1199,11 +1200,18 @@ function applyCategoryUI() {
 // Parça gramlarından bir setin gramı (ortak parçada gram boşsa ortak parçanın gramı)
 function partGram(x) { if (x.grams != null && x.grams !== '') return +x.grams; const c = x.component_id ? compById(x.component_id) : null; return c?.grams ? +c.grams : null; }
 function partsGramsHTML() {
-  const g = ED.parts.map(partGram), known = g.filter((v) => v != null);
-  if (!known.length) return '<small class="muted">Parçaların gramını girerseniz bir setin toplam gramı hesaplanır.</small>';
-  const sum = ED.parts.reduce((a, x, i) => a + (g[i] || 0) * (parseInt(x.per_unit) || 1), 0);
-  const cur = parseFloat(($('#f-grams')?.value || '').replace(',', '.')) || 0;
-  return `<small>Bir set: <b>${fmtGram(Math.round(sum * 10) / 10)}</b>${known.length < g.length ? ` <span class="muted">(${g.length - known.length} parçanın gramı boş)</span>` : ''}${Math.abs(cur - sum) > 0.5 ? ` · ürün gramı ${cur ? fmtGram(cur) : 'boş'} <button type="button" class="linkish" data-act="parts-sum-apply">toplamı ürün gramına yaz</button>` : ' · ürün gramıyla aynı'}</small>`;
+  const g = ED.partsOn === false ? [] : ED.parts.map(partGram), known = g.filter((v) => v != null && v > 0);
+  const sum = Math.round(ED.parts.reduce((a, x, i) => a + (g[i] || 0) * (parseInt(x.per_unit) || 1), 0) * 10) / 10;
+  // parçaların gramı girildiyse ürün gramı otomatik: elle değiştirilemez, toplamla birlikte güncellenir
+  queueMicrotask(() => {
+    const fg = $('#f-grams'); if (!fg) return;
+    const auto = known.length > 0;
+    fg.readOnly = auto; fg.closest('.input-group')?.classList.toggle('auto-g', auto);
+    fg.title = auto ? 'Parçaların gramından otomatik hesaplanır' : '';
+    if (auto && (parseFloat(fg.value) || 0) !== sum) { fg.value = sum; fg.dispatchEvent(new Event('input', { bubbles: true })); }
+  });
+  if (!known.length) return '<small class="muted">Parçaların gramını girerseniz bir setin toplam gramı ürün gramına otomatik yazılır.</small>';
+  return `<small>Bir set: <b>${fmtGram(sum)}</b>${known.length < g.length ? ` <span class="muted">(${g.length - known.length} parçanın gramı boş)</span>` : ''} · ürün gramına otomatik yazılıyor</small>`;
 }
 // Toplam parça sayıları değiştiyse kaç tam set çıkacağı (sunucudaki parts_from_totals ile aynı hesap); değişmediyse null
 function partsSetsCalc() {
@@ -6006,18 +6014,13 @@ function bgUrl(el) { const m = /url\((["']?)(.*?)\1\)/.exec(getComputedStyle(el)
 document.addEventListener('click', (e) => {
   const t = e.target;
   const ed = t.closest?.('.thumb-edit');
-  if (ed) { e.preventDefault(); e.stopPropagation(); openProductEditor(+ed.dataset.edit); return; }
+  if (ed && !S.psel) { e.preventDefault(); e.stopPropagation(); const p = productById(+ed.dataset.zoomp); const card = ed.closest('.thumb'); openLightbox([{ url: p?.thumbnail || (card && bgUrl(card)), title: p?.name, edit: +ed.dataset.zoomp }]); return; }
   if (t.closest?.('.drop-zoom')) { e.preventDefault(); e.stopPropagation(); if (ED?.thumbnail) openLightbox([{ url: ED.thumbnail, title: $('#f-name')?.value || ED.name }]); return; }
   const tz = t.closest?.('[data-tyzoom]');
   if (tz) {
     e.preventDefault(); e.stopPropagation();
     const all = [...document.querySelectorAll('.ty-img')].map((b) => ({ url: b.dataset.url, title: 'Trendyol görseli', use: b.dataset.url }));
     openLightbox(all, all.findIndex((x) => x.url === tz.dataset.tyzoom)); return;
-  }
-  const card = t.closest?.('.pcard .thumb[data-act="edit-product"]:not(.none)');
-  if (card && !S.psel && !t.closest('.tag')) {
-    e.preventDefault(); e.stopPropagation();
-    const p = productById(+card.dataset.id); openLightbox([{ url: p?.thumbnail || bgUrl(card), title: p?.name, edit: +card.dataset.id }]); return;
   }
   const mt = t.closest?.('.mini-thumb:not(.none), .ocard .img, [data-zoom]');
   if (mt && !mt.closest('.modal, .chip, .pick, .nf, .lb, .psel-box, .bulk-vis')) {

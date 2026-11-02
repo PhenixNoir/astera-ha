@@ -391,6 +391,7 @@ def init_db():
         finans.migrate(db())
         musteri.migrate(db())
         migrate()
+        sync_part_grams()
         db().commit()
 
 
@@ -606,6 +607,18 @@ def save_parts(pid, parts):
     for gone in existing - keep:
         db().execute("DELETE FROM product_parts WHERE id=?", (gone,))
         db().execute("UPDATE job_parts SET part_id=NULL WHERE part_id=?", (gone,))
+    sync_part_grams(pid)
+
+
+def sync_part_grams(pid=None):
+    """Parçalı üründe parçaların gramı girilmişse ürünün (bir setin) gramı = Σ parça gramı × set başına adet."""
+    q = """SELECT pp.product_id, SUM(pp.per_unit * COALESCE(pp.grams, c.grams, 0)) g
+           FROM product_parts pp LEFT JOIN components c ON c.id=pp.component_id"""
+    rows = db().execute(q + (" WHERE pp.product_id=?" if pid else "") + " GROUP BY pp.product_id", (pid,) if pid else ()).fetchall()
+    for r in rows:
+        if r["g"] and r["g"] > 0:
+            db().execute("UPDATE products SET grams=? WHERE id=? AND ABS(COALESCE(grams,0)-?)>0.05",
+                         (round(r["g"], 1), r["product_id"], round(r["g"], 1)))
 
 
 def parts_from_totals(pid, parts):

@@ -2621,3 +2621,4 @@ button.island:hover{background:#1f2226}
 .near-tag { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px 1px 5px; border-radius: 999px; background: var(--ok-wash); color: var(--ok); font-weight: 650; font-size: 11.5px; white-space: nowrap; vertical-align: 1px; }
 .near-tag svg { width: 12px; height: 12px; }
 .tyo-filters #tyo-sort { max-width: 250px; }
+.input-group.auto-g .input { background: var(--sheet-2); color: var(--ink-2); cursor: not-allowed; }
