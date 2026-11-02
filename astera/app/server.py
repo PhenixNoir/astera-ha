@@ -348,13 +348,13 @@ def migrate():
             c.execute(f"ALTER TABLE products ADD COLUMN {col} {typ}")
     jcols = _columns("print_jobs")
     for col, typ in (("bambu_task", "TEXT"), ("bambu_state", "TEXT"), ("bambu_percent", "INTEGER"), ("bambu_layer", "TEXT"),
-                     ("component_id", "INTEGER"), ("file_grams", "REAL")):
+                     ("component_id", "INTEGER"), ("file_grams", "REAL"), ("order_items", "TEXT")):
         if col not in jcols:
             c.execute(f"ALTER TABLE print_jobs ADD COLUMN {col} {typ}")
     if "price" not in _columns("spools"):
         c.execute("ALTER TABLE spools ADD COLUMN price REAL")
     ocols = _columns("custom_orders")
-    for col, typ in (("grams", "REAL"), ("print_type", "TEXT DEFAULT 'SLA'")):
+    for col, typ in (("grams", "REAL"), ("print_type", "TEXT DEFAULT 'SLA'"), ("items", "TEXT"), ("item_opts", "TEXT")):
         if col not in ocols:
             c.execute(f"ALTER TABLE custom_orders ADD COLUMN {col} {typ}")
     # kind: 'pool' = ortak parça (havuz stoğu), 'misc' = diğer amaçlı (dükkan malzemesi vs., stok tutulmaz)
@@ -1803,11 +1803,25 @@ def _create_job(req):
         minutes = int(minutes) if minutes not in (None, "") else int(o["print_minutes"] or 0)
         if minutes < 1:
             raise ApiError("Baskı süresi girin")
+        alloc = [{"leaf": str(a.get("leaf"))[:16], "qty": max(0, int(a.get("qty") or 0))}
+                 for a in (b.get("order_items") or [])[:200] if isinstance(a, dict) and a.get("leaf")]
+        alloc = [a for a in alloc if a["qty"] > 0]
+        if alloc and b.get("quantity") not in (None, ""):
+            # adet pencerede azaltıldıysa seçilen kalemleri sırayla o adede indir
+            room, cut = max(1, int(b["quantity"])), []
+            for a in alloc:
+                if room <= 0:
+                    break
+                cut.append({"leaf": a["leaf"], "qty": min(a["qty"], room)})
+                room -= cut[-1]["qty"]
+            alloc = cut
+        if alloc:
+            qty = sum(a["qty"] for a in alloc)
         cur = db().execute(
-            """INSERT INTO print_jobs(order_id,print_type,quantity,printer,note,started_at,ends_at,status)
-               VALUES(?,?,?,?,?,?,?,'printing')""",
+            """INSERT INTO print_jobs(order_id,print_type,quantity,printer,note,started_at,ends_at,status,order_items)
+               VALUES(?,?,?,?,?,?,?,'printing',?)""",
             (oid, b.get("print_type") if b.get("print_type") in ("FDM", "SLA") else (o["print_type"] or "SLA"), qty, printer,
-             _order_label(o), start, start + minutes * 60))
+             _order_label(o), start, start + minutes * 60, json.dumps(alloc) if alloc else None))
         db().execute("UPDATE custom_orders SET status='printing', printer=COALESCE(NULLIF(?,''),printer), "
                      "print_minutes=COALESCE(print_minutes,?), updated_at=? WHERE id=?", (printer, minutes, now(), oid))
         return job_rows("j.id=?", (cur.lastrowid,))[0]
@@ -1917,6 +1931,11 @@ def _complete_job(req, jid):
     db().execute("UPDATE print_jobs SET status=?, good_quantity=?, finished_at=? WHERE id=?", (status, good, now(), jid))
     if j["order_id"]:
         # Özel sipariş: stok değişmez; parça parça basılabilir, hepsi basılınca Hazır'a geçer
+        try:
+            alloc = json.loads(j["order_items"] or "[]")
+        except (ValueError, TypeError, IndexError, KeyError):
+            alloc = []
+        order_items_add_printed(j["order_id"], good, alloc)
         order_after_job(j["order_id"])
     elif good:
         change_stock(j["product_id"], good, "print", ref=f"baskı #{jid}")
@@ -2233,7 +2252,127 @@ def api_plan(req):
 # --- custom orders
 
 ORDER_FIELDS = ["first_name", "last_name", "phone", "title", "details", "quantity", "price", "paid",
-                "order_date", "due_date", "print_minutes", "printer", "status", "image", "file_name", "resin", "grams", "print_type"]
+                "order_date", "due_date", "print_minutes", "printer", "status", "image", "file_name", "resin", "grams", "print_type",
+                "items", "item_opts"]
+
+
+# --- özel sipariş kalemleri: [{id, name, qty, grams, price, color_hex, color_name, printed, parts:[{id, name, qty, grams, color_hex, color_name, printed}]}]
+# "yaprak" = basılan en küçük birim: parçası olan kalemde her parça (kalem adedi × parça adedi), olmayanda kalemin kendisi
+
+def _inum(v, lo=0.0, hi=1e7, as_int=False):
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    x = max(lo, min(hi, x))
+    return int(x) if as_int else round(x, 2)
+
+
+def _clean_color(v):
+    v = (v or "").strip()
+    return v if re.fullmatch(r"#[0-9a-fA-F]{6}", v) else None
+
+
+def clean_items(items, old=None):
+    """İstemciden gelen kalem listesini doğrular. Basılan sayılar sunucudakinden alınır (istemci değiştiremez)."""
+    if not isinstance(items, list):
+        return []
+    prev = {}
+    for k in old or []:
+        prev[k.get("id")] = k.get("printed") or 0
+        for p in k.get("parts") or []:
+            prev[p.get("id")] = p.get("printed") or 0
+    out = []
+    for k in items[:60]:
+        if not isinstance(k, dict):
+            continue
+        kid = re.sub(r"[^\w-]", "", str(k.get("id") or ""))[:16] or uuid.uuid4().hex[:8]
+        parts = []
+        for p in (k.get("parts") or [])[:40]:
+            if not isinstance(p, dict):
+                continue
+            pid = re.sub(r"[^\w-]", "", str(p.get("id") or ""))[:16] or uuid.uuid4().hex[:8]
+            parts.append({"id": pid, "name": (p.get("name") or "").strip()[:60] or "Parça", "qty": _inum(p.get("qty"), 1, 999, True) or 1,
+                          "grams": _inum(p.get("grams"), 0, 99999), "color_hex": _clean_color(p.get("color_hex")),
+                          "color_name": (p.get("color_name") or "").strip()[:40] or None, "printed": prev.get(pid, 0)})
+        out.append({"id": kid, "name": (k.get("name") or "").strip()[:80] or "Kalem", "qty": _inum(k.get("qty"), 1, 9999, True) or 1,
+                    "grams": _inum(k.get("grams"), 0, 99999), "price": _inum(k.get("price"), 0, 1e7),
+                    "color_hex": _clean_color(k.get("color_hex")), "color_name": (k.get("color_name") or "").strip()[:40] or None,
+                    "printed": prev.get(kid, 0), "parts": parts})
+    return out
+
+
+def item_leaves(items):
+    """[(yaprak_id, gereken adet, birim gram, kalem, parça)]"""
+    out = []
+    for k in items or []:
+        if k.get("parts"):
+            for p in k["parts"]:
+                out.append((p["id"], k["qty"] * p["qty"], p.get("grams"), k, p))
+        else:
+            out.append((k["id"], k["qty"], k.get("grams"), k, None))
+    return out
+
+
+def _load_items(o):
+    try:
+        return json.loads(o["items"] or "[]") if o["items"] else []
+    except (ValueError, TypeError):
+        return []
+
+
+def order_items_add_printed(oid, good, alloc):
+    """Biten baskının sağlam adedini kalemlere işler. alloc: [{leaf, qty}] (baskı açılırken seçilenler);
+    yoksa ya da eksik çıktıysa sırayla en çok eksiği olandan başlayarak dağıtılır."""
+    o = db().execute("SELECT items FROM custom_orders WHERE id=?", (oid,)).fetchone()
+    items = _load_items(o) if o else []
+    if not items or good <= 0:
+        return
+    leaves = {lid: (need, k, p) for lid, need, _, k, p in item_leaves(items)}
+
+    def bump(lid, n):
+        need, k, p = leaves[lid]
+        tgt = p if p is not None else k
+        room = max(0, need - (tgt.get("printed") or 0))
+        n = min(n, room)
+        tgt["printed"] = (tgt.get("printed") or 0) + n
+        return n
+    left = good
+    want = [(a.get("leaf"), int(a.get("qty") or 0)) for a in (alloc or []) if a.get("leaf") in leaves]
+    total = sum(q for _, q in want)
+    if want and total:
+        for lid, q in want:
+            share = q if good >= total else (q * good) // total
+            left -= bump(lid, share)
+    for lid in leaves:          # artanlar (adedi tahminden fazla çıktıysa ya da seçim yoksa) sırayla
+        if left <= 0:
+            break
+        left -= bump(lid, left)
+    db().execute("UPDATE custom_orders SET items=? WHERE id=?", (json.dumps(items, ensure_ascii=False), oid))
+
+
+def decorate_order(d):
+    """Kalemlere baskıda olan adetleri ekler (istemci ilerleme çubuğu için)."""
+    items = _load_items(d)
+    d["items"] = items
+    try:
+        d["item_opts"] = json.loads(d.get("item_opts") or "{}")
+    except (ValueError, TypeError):
+        d["item_opts"] = {}
+    if items:
+        inp = {}
+        for j in db().execute("SELECT order_items, quantity FROM print_jobs WHERE order_id=? AND status='printing'", (d["id"],)):
+            try:
+                al = json.loads(j["order_items"] or "[]")
+            except ValueError:
+                al = []
+            for a in al:
+                inp[a.get("leaf")] = inp.get(a.get("leaf"), 0) + int(a.get("qty") or 0)
+        for k in items:
+            k["in_print"] = inp.get(k["id"], 0)
+            for p in k.get("parts") or []:
+                p["in_print"] = inp.get(p["id"], 0)
+    return d
 ORDER_STATUSES = ("new", "printing", "ready", "delivered", "cancelled")
 ORDER_SELECT = """SELECT o.*, j.id AS active_job_id, j.started_at AS job_started_at, j.ends_at AS job_ends_at,
                          j.printer AS job_printer,
@@ -2282,19 +2421,42 @@ def clean_order(b):
             out[f] = v or None
     if out.get("order_date") and out.get("due_date") and out["due_date"] < out["order_date"]:
         raise ApiError("Termin, siparişin geldiği günden önce olamaz")
+    if "item_opts" in out:
+        o = out["item_opts"] if isinstance(out["item_opts"], dict) else {}
+        out["item_opts"] = json.dumps({k: bool(o.get(k)) for k in ("parts", "priced", "color")})
     return out
+
+
+def apply_items(data, old_items=None, total_grams=None):
+    """Kalemler varsa siparişin adet, gram (adet başı ortalama) ve (ayrı fiyat açıksa) fiyatını kalemlerden hesaplar."""
+    if "items" not in data:
+        return data
+    items = clean_items(data["items"], old_items)
+    data["items"] = json.dumps(items, ensure_ascii=False) if items else None
+    if items:
+        lv = item_leaves(items)
+        units = sum(n for _, n, _, _, _ in lv)
+        data["quantity"] = max(1, units)
+        opts = json.loads(data.get("item_opts") or "{}") if isinstance(data.get("item_opts"), str) else {}
+        if opts.get("priced"):
+            g = sum((gr or 0) * n for _, n, gr, _, _ in lv)
+            data["grams"] = round(g / units, 3) if g else None
+            data["price"] = round(sum((k.get("price") or 0) * k["qty"] for k in items), 2) or None
+        elif total_grams not in (None, ""):
+            data["grams"] = round(max(0.0, float(total_grams)) / units, 3)
+    return data
 
 
 def order_row(oid):
     r = db().execute(ORDER_SELECT + " WHERE o.id=?", (oid,)).fetchone()
     if not r:
         raise ApiError("Sipariş bulunamadı", 404)
-    return dict(r)
+    return decorate_order(dict(r))
 
 
 @route("GET", "/api/orders")
 def api_orders(req):
-    return [dict(r) for r in db().execute(
+    return [decorate_order(dict(r)) for r in db().execute(
         ORDER_SELECT + " ORDER BY CASE WHEN o.due_date IS NULL OR o.due_date='' THEN 1 ELSE 0 END, o.due_date, o.id DESC")]
 
 
@@ -2303,7 +2465,7 @@ def api_order_create(req):
     b = req.json()
     if not (b.get("first_name") or "").strip():
         raise ApiError("Müşteri adı boş olamaz")
-    data = clean_order(b)
+    data = apply_items(clean_order(b), None, b.get("total_grams"))
     data["status"] = "new" if data.get("status") in (None, "printing") else data["status"]
     data.setdefault("order_date", time.strftime("%Y-%m-%d"))
     t = now()
@@ -2316,8 +2478,9 @@ def api_order_create(req):
 @route("PUT", "/api/orders/{oid}")
 def api_order_update(req, oid):
     oid = int(oid)
-    data = clean_order(req.json())
+    b = req.json()
     cur = order_row(oid)
+    data = apply_items(clean_order(b), cur["items"], b.get("total_grams"))
     new_status = data.get("status")
     if new_status == "printing" and not cur["active_job_id"]:
         # Baskıda durumuna yalnızca bir baskı başlatılarak geçilir; istemci baskı penceresini açar

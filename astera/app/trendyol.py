@@ -60,6 +60,7 @@ def public_settings():
             "store_city": _get("store_city", "") or "",
             "ty_deduct_at": deduct_mode(),
             "setup_done": _get("setup_done", "") == "1",
+            "order_rules": _rules(),
             "store_district": _get("store_district", "") or "",
             "ship_days": int(_get("ship_days", "1") or 1),
             "ship_skip_sunday": _get("ship_skip_sunday", "0") == "1",
@@ -133,6 +134,8 @@ def save_settings(b):
                 _set("ty_since", int(time.time() * 1000))
         if "ty_since" in b and b["ty_since"]:
             _set("ty_since", int(b["ty_since"]))
+        if "order_rules" in b:
+            _set("order_rules", json.dumps(_clean_rules(b["order_rules"]), ensure_ascii=False))
         if "setup_done" in b:
             _set("setup_done", "1" if b["setup_done"] else "0")
         if b.get("ty_deduct_at") in DEDUCT_MODES:
@@ -340,6 +343,35 @@ def pack_time_ms(pkg):
 DEDUCT_MODES = ("order", "picking", "label", "shipped")
 SHIPPED_STATES = {"Shipped", "Delivered", "AtCollectionPoint", "UnDelivered", "Returned"}
 DEDUCT_NOTE = {"order": "sipariş geldi", "picking": "paketlendi", "label": "barkod basıldı", "shipped": "kargoya verildi"}
+
+
+# Sipariş notu kuralları: koşulları tutan Trendyol siparişinde kartta not görünür (ör. 500 TL üzeri → Hediye koy)
+RULE_FIELDS = {"total", "qty", "product", "category", "city", "cargo"}
+RULE_OPS = {">=", "<=", "=", "contains"}
+
+
+def _clean_rules(rules):
+    out = []
+    for r in (rules if isinstance(rules, list) else [])[:20]:
+        if not isinstance(r, dict) or not (r.get("text") or "").strip():
+            continue
+        conds = []
+        for c in (r.get("conds") or [])[:8]:
+            if isinstance(c, dict) and c.get("f") in RULE_FIELDS and c.get("op") in RULE_OPS:
+                conds.append({"f": c["f"], "op": c["op"], "v": str(c.get("v") or "").strip()[:60]})
+        out.append({"text": r["text"].strip()[:60], "on": bool(r.get("on", True)), "tone": r.get("tone") if r.get("tone") in ("gift", "info", "warn") else "gift",
+                    "any": bool(r.get("any")), "conds": conds})
+    return out
+
+
+def _rules():
+    raw = _get("order_rules")
+    if raw is None:   # ilk kez: örnek kural
+        return [{"text": "Hediye koy", "on": True, "tone": "gift", "any": False, "conds": [{"f": "total", "op": ">=", "v": "500"}]}]
+    try:
+        return _clean_rules(json.loads(raw))
+    except ValueError:
+        return []
 
 
 def deduct_mode():

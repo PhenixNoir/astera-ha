@@ -2747,3 +2747,85 @@ body.wz-open { overflow: hidden; }
 .upd-ov .spin { width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--line-2); border-top-color: var(--pei); animation: upd-spin .8s linear infinite; }
 @keyframes upd-spin { to { transform: rotate(360deg); } }
 .upd.new { align-items: flex-start; } .upd.new > .btn { margin-top: 2px; }
+
+/* Özel sipariş düzenleyicisi: solda müşteri, sağda kalemler */
+.modal.oe-modal { width: min(1240px, 100%); }
+.modal-b.oe { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 0; padding: 0; min-height: 0; }
+.oe-left { display: grid; gap: 12px; align-content: start; padding: 18px 20px; border-right: 1px solid var(--line); }
+.oe-left .drop.oe-drop { height: 120px; }
+.oe-right { display: flex; flex-direction: column; gap: 12px; padding: 16px 22px; min-width: 0; }
+.oe-tb { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.oe-tb h3 { margin: 0; font-size: 16px; }
+.oe-sum { margin-left: auto; color: var(--ink-3); font-size: 13px; }
+.oe-list { display: grid; gap: 8px; align-content: start; }
+.oe-it { border: 1px solid var(--line); border-radius: 12px; background: var(--sheet); }
+.oe-it.open { border-color: var(--line-2); }
+.oe-ih { display: flex; align-items: center; gap: 10px; padding: 8px 10px; flex-wrap: wrap; }
+.oe-cb { width: 17px; height: 17px; accent-color: var(--pei); flex: none; }
+.oe-chev { all: unset; cursor: pointer; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; color: var(--ink-3); flex: none; }
+.oe-chev:hover { background: var(--sheet-2); } .oe-chev svg { width: 16px; height: 16px; }
+.oe-nm { flex: 1 1 200px; min-width: 160px; display: grid; gap: 2px; }
+.oe-nm .input { height: 34px; font-weight: 600; }
+.oe-nm small { font-size: 12px; padding-left: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oe-n { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 12.5px; color: var(--ink-3); }
+.oe-n .input { width: 64px; height: 34px; text-align: right; }
+.oe-pr .input { width: 86px; }
+.oe-pc, .oe-g { font-size: 13px; color: var(--ink-2); flex: none; min-width: 58px; }
+.oe-prog { flex: 0 0 120px; display: grid; gap: 3px; }
+.oe-prog small { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+.oe-col { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.oe-col .dot { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--line-2); flex: none; }
+.oe-col select { height: 32px; width: 150px; font-size: 13px; padding: 0 8px; }
+.oe-acts { display: inline-flex; gap: 2px; flex: none; margin-left: auto; }
+.oe-acts .icon-btn svg, .oe-pt .icon-btn svg { width: 15px; height: 15px; }
+.oe-pts { border-top: 1px dashed var(--line-2); padding: 8px 10px 10px 46px; display: grid; gap: 6px; }
+.oe-pt { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.oe-pt > .input { flex: 1 1 160px; height: 32px; }
+.oe-pt .oe-n .input { height: 32px; }
+.oe-add { justify-self: start; display: inline-flex; align-items: center; gap: 5px; font-weight: 600; color: var(--pei-strong); }
+.oe-add svg { width: 15px; height: 15px; }
+.oe-empty { margin: 0; font-size: 13px; }
+.oe-print { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--line); margin-top: auto; }
+.oe-print .row { align-items: end; }
+.oe-total { margin: 0; padding: 10px 14px; border-radius: 10px; background: var(--sheet-2); }
+.oe-total:empty { display: none; }
+#oe-print-sel[hidden] { display: none; }
+@media (max-width: 900px) {
+  .modal-b.oe { grid-template-columns: minmax(0, 1fr); }
+  .oe-left { border-right: 0; border-bottom: 1px solid var(--line); }
+  .oe-pts { padding-left: 14px; }
+}
+.o-items { display: flex; flex-wrap: wrap; gap: 4px; } .o-items span { font-size: 12px; padding: 2px 7px; border-radius: 6px; background: var(--sheet-2); color: var(--ink-2); } .o-items b { color: var(--ink); }
+@media (min-width: 901px) {
+  .modal-b.oe { overflow: hidden; height: min(76vh, 780px); }
+  .oe-left, .oe-right { overflow-y: auto; min-height: 0; }
+}
+.oe-n .input { color: var(--ink); }
+.oe-left .drop.oe-drop { width: 100%; }
+
+/* Özel siparişler: sürükle-bırak */
+.kanban .ocard[draggable] { cursor: grab; }
+.kanban .ocard.dragging { opacity: .45; cursor: grabbing; transform: scale(.98); }
+body.k-dragging .kanban .kcol { transition: background .15s, outline-color .15s; outline: 2px dashed transparent; outline-offset: -4px; border-radius: var(--r-l); }
+body.k-dragging .kanban .kcol.drop-on { outline-color: var(--pei); background: var(--pei-wash); }
+
+/* Sipariş notu kuralları */
+.rl-set { display: grid; gap: 12px; }
+.rl { border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 10px; background: var(--sheet); }
+.rl.off { opacity: .6; }
+.rl-h { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rl-h .rl-tone { width: 130px; } .rl-h .rl-text { flex: 1; min-width: 180px; font-weight: 600; }
+.rl-c { display: grid; gap: 6px; padding-left: 4px; }
+.rl-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rl-row > span { width: 36px; font-size: 12.5px; }
+.rl-row .input { width: auto; min-width: 120px; flex: 1 1 140px; height: 34px; }
+.rl-any { justify-self: start; }
+.rl-add { justify-self: start; display: inline-flex; gap: 5px; align-items: center; font-weight: 600; }
+.rl-add svg { width: 14px; height: 14px; }
+.oc-rules { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; }
+.oc-rule { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 10px; font-weight: 700; font-size: 14px; background: color-mix(in srgb, #d6336c 14%, transparent); color: #e0558a; border: 1px solid color-mix(in srgb, #d6336c 35%, transparent); }
+.oc-rule.t-info { background: color-mix(in srgb, #3b82f6 14%, transparent); color: #5b9cf6; border-color: color-mix(in srgb, #3b82f6 35%, transparent); }
+.oc-rule.t-warn { background: var(--bad-wash); color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+.rule-tag { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 999px; font-weight: 650; font-size: 11.5px; white-space: nowrap; vertical-align: 1px; background: color-mix(in srgb, #d6336c 16%, transparent); color: #e0558a; }
+.rule-tag.t-info { background: color-mix(in srgb, #3b82f6 16%, transparent); color: #5b9cf6; } .rule-tag.t-warn { background: var(--bad-wash); color: var(--bad); }
+.oc-rules { padding: 12px 16px 0; }

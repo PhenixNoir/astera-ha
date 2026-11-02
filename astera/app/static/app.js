@@ -1492,7 +1492,8 @@ async function openNewPrint(arg) {
   const printable = printableOrders();
   if (!S.products.length && !printable.length) { toast('Önce bir ürün veya özel sipariş ekleyin'); location.hash = '#/urunler'; return; }
   const mode = compId ? (compById(compId)?.kind === 'misc' ? 'misc' : 'comp') : orderId || (!S.products.length && printable.length) ? 'order' : 'product';
-  NP = { mode, pid: null, oid: null, cid: null, ptype: 'SLA', printer: localStorage.getItem('lastPrinter') || '', q: '', objects: (arg && typeof arg === 'object' && arg.bambuObjects) || 0 };
+  NP = { mode, pid: null, oid: null, cid: null, ptype: 'SLA', printer: localStorage.getItem('lastPrinter') || '', q: '', objects: (arg && typeof arg === 'object' && arg.bambuObjects) || 0,
+    oitems: (arg && typeof arg === 'object' && arg.items) || null, oitemsFor: orderId };
   const printers = S.settings?.printers || [];
   NP.printer = printers.some((x) => x.name === NP.printer) ? NP.printer : '';
   openModal(`
@@ -1573,6 +1574,7 @@ function npGroups(list) {
     .filter(([items]) => items.length).map(([items, title]) => ({ items, title }));
 }
 // Özel siparişin basılmamış kalanı (parça parça basılabilir: 48 adedin 12'si bir makinede, 12'si başkasında)
+const orderLeaves = (o) => (o.items || []).flatMap((k) => (o.item_opts?.parts && k.parts?.length ? k.parts.map((p) => ({ id: p.id, need: k.qty * p.qty, t: p, k })) : [{ id: k.id, need: k.qty, t: k, k }]));
 const orderLeft = (o) => Math.max(0, (o.quantity || 1) - (o.printed || 0) - (o.in_print || 0));
 const printableOrders = () => S.orders.filter((o) => ['new', 'printing', 'ready'].includes(o.status) && (!o.active_job_id || orderLeft(o) > 0));
 // Diğer amaçlı: yazıcıdaki dosya bu kayda bağlansın mı (tek seferlik baskılarda bağlanmasın)
@@ -1735,7 +1737,12 @@ function npPartsOutcome(p) {
 }
 function npPickOrder(id) {
   const o = S.orders.find((x) => x.id === id); if (!o) return;
-  NP.oid = o.id; npFill(orderLeft(o) || o.quantity, o.print_minutes);
+  NP.oid = o.id;
+  // kalemli sipariş: seçilenler (ya da basılmamış hepsi) bu baskıya yazılır
+  if (NP.oitemsFor !== o.id) NP.oitems = null;
+  NP.oitemsFor = o.id;
+  if (!NP.oitems && o.items?.length) NP.oitems = orderLeaves(o).map((x) => ({ leaf: x.id, qty: Math.max(0, x.need - (x.t.printed || 0) - (x.t.in_print || 0)) })).filter((x) => x.qty > 0);
+  npFill(NP.oitems?.length ? NP.oitems.reduce((a, x) => a + x.qty, 0) : (orderLeft(o) || o.quantity), o.print_minutes);
   NP.ptype = o.print_type || 'SLA'; $$('#np-type button').forEach((x) => x.classList.toggle('on', x.dataset.v === NP.ptype));
   if (o.printer) npSetPrinter(o.printer);
   npRenderList(); npEnds();
@@ -1870,7 +1877,7 @@ async function startPrint() {
   const qty = parseInt($('#np-qty').value) || 0;
   const minutes = npMinutes();
   const body = { quantity: qty, duration_minutes: minutes, printer: NP.printer };
-  if (NP.mode === 'order') { body.order_id = NP.oid; body.print_type = NP.ptype; }
+  if (NP.mode === 'order') { body.order_id = NP.oid; body.print_type = NP.ptype; if (NP.oitems?.length && NP.oid === NP.oitemsFor) body.order_items = NP.oitems; }
   else if (NP.mode === 'comp' || NP.mode === 'misc') body.component_id = NP.cid;
   else body.product_id = NP.pid;
   if (NP.bambuEvent) body.bambu_event = NP.bambuEvent;
@@ -2405,6 +2412,7 @@ PAGES.siparisler = {
     const mq = window.matchMedia('(max-width: 760px)');
     $('#otabs').style.display = mq.matches ? '' : 'none';
     if (!mq.matches) $$('.kcol').forEach((c) => c.classList.add('on'));
+    kanbanDnD();
   },
 };
 const CO_SORTS = [['due', 'Termin: en yakın'], ['date_desc', 'Geliş: yeniden eskiye'], ['date_asc', 'Geliş: eskiden yeniye'], ['price_desc', 'Fiyat: yüksekten'], ['price_asc', 'Fiyat: düşükten'], ['qty_desc', 'Adet: çoktan'], ['unpaid', 'Kalan ödeme: çoktan'], ['name', 'Müşteri (A–Z)']];
@@ -2416,6 +2424,30 @@ function coSorted(list) {
     unpaid: (a, b) => ((b.price || 0) - (b.paid || 0)) - ((a.price || 0) - (a.paid || 0)),
     name: (a, b) => `${a.first_name} ${a.last_name || ''}`.localeCompare(`${b.first_name} ${b.last_name || ''}`, 'tr') }[S.coSort] || null;
   return by ? [...list].sort(by) : list;
+}
+// Özel sipariş kartlarını sütunlar arasında sürükle-bırak: Baskıda'ya bırakınca baskı penceresi açılır
+function kanbanDnD() {
+  let drag = null;
+  $$('.kanban .ocard[draggable]').forEach((c) => {
+    c.addEventListener('dragstart', (e) => { drag = +c.dataset.id; c.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(drag)); document.body.classList.add('k-dragging'); });
+    c.addEventListener('dragend', () => { c.classList.remove('dragging'); document.body.classList.remove('k-dragging'); $$('.kcol.drop-on').forEach((x) => x.classList.remove('drop-on')); drag = null; });
+  });
+  $$('.kanban .kcol').forEach((col) => {
+    col.addEventListener('dragover', (e) => { if (drag == null) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; col.classList.add('drop-on'); });
+    col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('drop-on'); });
+    col.addEventListener('drop', async (e) => {
+      e.preventDefault(); col.classList.remove('drop-on');
+      const o = S.orders.find((x) => x.id === drag), to = col.dataset.col; if (!o || o.status === to) return;
+      if (to === 'printing') return openNewPrint({ orderId: o.id });
+      const from = o.status;
+      if (from === 'printing' && o.active_job_id && !confirm(`${o.first_name} siparişinin baskısı sürüyor. ${OST[to].l} olarak işaretlenirse baskı ${to === 'ready' || to === 'delivered' ? 'başarılı olarak kapanır' : 'iptal edilir'}. Devam edilsin mi?`)) return;
+      try {
+        await api('PUT', `/api/orders/${o.id}`, { status: to });
+        toast(`${o.first_name}: ${OST[to].l}`, from === 'printing' ? {} : { action: 'Geri al', onAction: async () => { await api('PUT', `/api/orders/${o.id}`, { status: from }); render(); } });
+        await loadJobs(); render();
+      } catch (err) { fail(err); }
+    });
+  });
 }
 function customOrdersHTML(src) {
     const cols = ['new', 'printing', 'ready', 'delivered'].concat(S.showCancelled ? ['cancelled'] : []);
@@ -2435,7 +2467,7 @@ function customOrdersHTML(src) {
 
 function orderCardCompact(o) {
   const day = o.updated_at ? new Date(o.updated_at * 1000).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) : '';
-  return `<article class="ocard compact" data-act="edit-order" data-id="${o.id}" style="view-transition-name:o-${o.id}">
+  return `<article class="ocard compact" data-act="edit-order" data-id="${o.id}" draggable="true" style="view-transition-name:o-${o.id}">
     <span class="who">${esc(o.first_name)} ${esc(o.last_name || '')}</span>
     <span class="what">${esc(o.title || o.details || '')}</span>
     <span class="muted">${day}</span></article>`;
@@ -2446,12 +2478,13 @@ function orderCard(o) {
   const nx = OST[o.status]?.next;
   const machine = o.job_printer || o.printer;
   const job = o.active_job_id ? S.jobs.find((j) => j.id === o.active_job_id) : null;
-  return `<article class="ocard" data-act="edit-order" data-id="${o.id}" style="view-transition-name:o-${o.id}">
+  return `<article class="ocard" data-act="edit-order" data-id="${o.id}" draggable="true" style="view-transition-name:o-${o.id}">
     ${o.image ? `<div class="img" style="${thumbStyle(o.image)}"></div>` : ''}
     <div class="who">${esc(o.first_name)} ${esc(o.last_name || '')}</div>
     ${o.title || o.details ? `<div class="what">${esc(o.title || o.details)}</div>` : ''}
     <div class="dates">${o.order_date ? `<span class="muted">Geldi ${fmtDay(o.order_date)}</span>` : ''}${dueLabel(o).html}</div>
-    <div class="bottom"><span class="muted">${o.quantity} adet${o.resin ? ' · ' + esc(o.resin) : ''}</span>${machine ? `<span class="tag tag-mute pr-inline" style="padding-left:3px">${printerThumb(machine, 'xs')}${esc(machine)}</span>` : ''}</div>
+    ${o.items?.length ? `<div class="o-items">${o.items.slice(0, 4).map((k) => `<span>${esc(k.name)}${k.qty > 1 ? ` <b>×${k.qty}</b>` : ''}</span>`).join('')}${o.items.length > 4 ? `<span class="faint">+${o.items.length - 4} kalem</span>` : ''}</div>` : ''}
+    <div class="bottom"><span class="muted">${o.quantity} ${o.item_opts?.parts ? 'parça' : 'adet'}${o.resin ? ' · ' + esc(o.resin) : ''}</span>${machine ? `<span class="tag tag-mute pr-inline" style="padding-left:3px">${printerThumb(machine, 'xs')}${esc(machine)}</span>` : ''}</div>
     ${job ? `<div class="oprog"><div class="prog ${job.print_type}"><i data-prog="${job.id}"></i></div><span data-countdown="${job.id}"></span></div>` : ''}
     ${(o.quantity || 1) > 1 && (o.printed || o.in_print) ? (() => { const q = o.quantity, d = Math.min(q, o.printed || 0), ip = Math.min(q - d, o.in_print || 0), left = orderLeft(o);
       return `<div class="opart"><div class="opart-bar"><i class="d" style="width:${d / q * 100}%"></i><i class="p" style="width:${ip / q * 100}%"></i></div>
@@ -2468,81 +2501,177 @@ function orderCard(o) {
 let OE = null;
 function openOrderEditor(id) {
   const o = id ? structuredClone(S.orders.find((x) => x.id === id))
-    : { first_name: '', last_name: '', phone: '', title: '', details: '', quantity: 1, price: '', paid: '', order_date: localToday(), due_date: '', print_minutes: null, printer: '', status: 'new', image: null, file_name: '', resin: '', grams: null, print_type: 'SLA' };
-  OE = o; OE.print_type ||= 'SLA';
+    : { first_name: '', last_name: '', phone: '', title: '', details: '', quantity: 1, price: '', paid: '', order_date: localToday(), due_date: '', print_minutes: null, printer: '', status: 'new', image: null, file_name: '', resin: '', grams: null, print_type: 'SLA', items: [], item_opts: {} };
+  OE = o; OE.print_type ||= 'SLA'; OE.items = OE.items || []; OE.item_opts = { parts: false, priced: false, color: false, ...(OE.item_opts || {}) };
+  OE.open = new Set(); OE.sel = new Set();
   if (!S.profit) loadProfit().then(orderCostHint).catch(() => {});
+  if (!S.spools) loadSpools().then(() => { if (OE?.item_opts.color) oeRender(); }).catch(() => {});
   const wa = waLink(o.phone);
   const printers = S.settings?.printers || [];
   const pm = o.print_minutes || 0;
+  const hasItems = OE.items.length > 0;
+  const totalG = hasItems && !OE.item_opts.priced && o.grams ? Math.round(o.grams * (o.quantity || 1) * 10) / 10 : '';
   openModal(`
-    <div class="modal-h"><h2>${id ? 'Siparişi düzenle' : 'Yeni özel sipariş'}</h2><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
-    <div class="modal-b">
-      <div class="row">
-        <label class="field"><span>Ad</span><input class="input" id="o-fn" value="${esc(o.first_name)}" autocomplete="off"></label>
-        <label class="field"><span>Soyad</span><input class="input" id="o-ln" value="${esc(o.last_name || '')}" autocomplete="off"></label>
+    <div class="modal-h"><h2>${id ? 'Özel sipariş' : 'Yeni özel sipariş'}</h2>${id ? `<span class="tag oe-st">${OST[o.status]?.l || ''}</span>` : ''}<button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+    <div class="modal-b oe">
+      <div class="oe-left">
+        <div class="drop oe-drop ${o.image ? 'has' : ''}" id="o-drop" style="${o.image ? `--img:url('${esc(o.image)}')` : ''}" tabindex="0" role="button" aria-label="Referans görseli yükle"><div class="hint">${icon('upload')}<span>Görsel / referans</span><small class="paste-hint">Ctrl+V ile yapıştırın</small></div></div>
+        <input type="file" id="o-file-in" accept="image/*" hidden>
+        <div class="row"><label class="field"><span>Ad</span><input class="input" id="o-fn" value="${esc(o.first_name)}" autocomplete="off"></label>
+          <label class="field"><span>Soyad</span><input class="input" id="o-ln" value="${esc(o.last_name || '')}" autocomplete="off"></label></div>
+        <label class="field"><span>Telefon</span><div class="input-group"><input class="input" id="o-phone" type="tel" value="${esc(o.phone || '')}" placeholder="05xx xxx xx xx">
+          ${o.phone ? `<a class="btn" style="border-radius:0;border-left:0" href="tel:${esc(o.phone)}">${icon('phone')}</a><a class="btn" style="border-radius:0 8px 8px 0;border-left:0" href="${wa}" target="_blank" rel="noopener">WhatsApp</a>` : ''}</div></label>
+        <label class="field"><span>Ne istiyor?</span><input class="input" id="o-title" value="${esc(o.title || '')}" placeholder="Örn. Warhammer ekibi, 32 mm"></label>
+        <div class="row"><label class="field"><span>Geldi</span><input class="input" id="o-odate" type="date" value="${esc(o.order_date || '')}"></label>
+          <label class="field"><span>Termin</span><input class="input" id="o-due" type="date" value="${esc(o.due_date || '')}"></label></div>
+        <div class="termin-quick">${[[3, '3 gün'], [5, '5 gün'], [7, '1 hafta'], [14, '2 hafta']].map(([n, l]) => `<button type="button" class="chip" data-act="o-due-quick" data-n="${n}">+${l}</button>`).join('')}<span class="termin-hint" id="o-due-hint"></span></div>
+        <div class="row"><label class="field"><span>Toplam fiyat</span><div class="input-group"><input class="input" id="o-price" type="number" inputmode="decimal" min="0" step="0.01" value="${o.price ?? ''}" ${OE.item_opts.priced && hasItems ? 'readonly' : ''}><span class="suffix">₺</span></div></label>
+          <label class="field"><span>Alınan ödeme</span><div class="input-group"><input class="input" id="o-paid" type="number" inputmode="decimal" min="0" step="0.01" value="${o.paid ?? ''}"><span class="suffix">₺</span></div></label></div>
+        <label class="field"><span>Not</span><textarea class="input" id="o-details" rows="3" placeholder="Ölçü, boya, referans linki…">${esc(o.details || '')}</textarea></label>
+        <div class="field"><span>Durum</span><div class="seg" id="o-status" style="flex-wrap:wrap">${Object.entries(OST).map(([k, v]) => `<button type="button" data-v="${k}" class="${o.status === k ? 'on' : ''}">${v.l}</button>`).join('')}</div>
+          <small id="o-status-hint">${o.active_job_id ? 'Baskısı sürüyor. Hazır veya Teslim seçerseniz baskı başarılı olarak kapanır.' : 'Baskıda seçip kaydettiğinizde makine ve süreyi sorup Baskılar listesine eklerim.'}</small></div>
       </div>
-      <label class="field"><span>Telefon</span>
-        <div class="input-group"><input class="input" id="o-phone" type="tel" value="${esc(o.phone || '')}" placeholder="05xx xxx xx xx">
-        ${o.phone ? `<a class="btn" style="border-radius:0;border-left:0" href="tel:${esc(o.phone)}">${icon('phone')}</a><a class="btn" style="border-radius:0 8px 8px 0;border-left:0" href="${wa}" target="_blank" rel="noopener">WhatsApp</a>` : ''}</div></label>
-      <label class="field"><span>Ne istiyor?</span><input class="input" id="o-title" value="${esc(o.title || '')}" placeholder="Örn. 1:10 figür, gri reçine, boyasız"></label>
-      <label class="field"><span>Detaylar</span><textarea class="input" id="o-details" rows="3" placeholder="Ölçü, renk, boya, referans linki…">${esc(o.details || '')}</textarea></label>
-
-      <div class="dates-box">
-        <div class="row">
-          <label class="field"><span>Siparişin geldiği gün</span><input class="input" id="o-odate" type="date" value="${esc(o.order_date || '')}"></label>
-          <label class="field"><span>Termin</span><input class="input" id="o-due" type="date" value="${esc(o.due_date || '')}"></label>
-        </div>
-        <div class="termin-quick"><span class="muted">Termin:</span>
-          ${[[3, '3 gün'], [5, '5 gün'], [7, '1 hafta'], [14, '2 hafta']].map(([n, l]) => `<button type="button" class="chip" data-act="o-due-quick" data-n="${n}">+${l}</button>`).join('')}
-          <span class="termin-hint" id="o-due-hint"></span></div>
-      </div>
-
-      <div class="split" style="grid-template-columns:180px 1fr">
-        <div><div class="drop ${o.image ? 'has' : ''}" id="o-drop" style="${o.image ? `--img:url('${esc(o.image)}')` : ''}" tabindex="0" role="button" aria-label="Referans görseli yükle"><div class="hint">${icon('upload')}<span>Referans görseli</span><small class="paste-hint">Ctrl+V ile yapıştırın</small></div></div>
-          <input type="file" id="o-file-in" accept="image/*" hidden></div>
-        <div style="display:grid;gap:14px">
+      <div class="oe-right">
+        <div class="oe-tb"><h3>Kalemler</h3>
+          <label class="switch sm"><input type="checkbox" id="oe-o-parts" ${OE.item_opts.parts ? 'checked' : ''}> Parçalı</label>
+          <label class="switch sm"><input type="checkbox" id="oe-o-priced" ${OE.item_opts.priced ? 'checked' : ''}> Ayrı fiyat / gram</label>
+          <label class="switch sm"><input type="checkbox" id="oe-o-color" ${OE.item_opts.color ? 'checked' : ''}> Filament rengi</label>
+          <span class="oe-sum" id="oe-sum"></span></div>
+        <div class="oe-list" id="oe-list"></div>
+        <div class="oe-print">
           <div class="row">
-            <label class="field"><span>Adet</span><input class="input" id="o-qty" type="number" inputmode="numeric" min="1" value="${o.quantity || 1}"></label>
+            <label class="field oe-qty-f"><span>Adet</span><input class="input" id="o-qty" type="number" inputmode="numeric" min="1" value="${o.quantity || 1}"></label>
+            <label class="field oe-tg-f"><span id="o-grams-l">Malzeme (1 adet)</span><div class="input-group"><input class="input" id="o-grams" type="number" inputmode="decimal" min="0" step="0.1" value="${hasItems && !OE.item_opts.priced ? totalG : (o.grams ?? '')}" placeholder="0"><span class="suffix">gram</span></div></label>
             <div class="field"><span>Tahmini baskı süresi</span><div class="input-group"><input class="input" id="o-h" type="number" inputmode="numeric" min="0" value="${pm ? Math.floor(pm / 60) : ''}" placeholder="0" style="border-radius:8px 0 0 8px"><span class="suffix" style="border-radius:0">sa</span><input class="input" id="o-m" type="number" inputmode="numeric" min="0" max="59" value="${pm ? pm % 60 : ''}" placeholder="0" style="border-radius:0;border-left:0"><span class="suffix">dk</span></div></div>
+            <div class="field" style="flex:0 0 auto"><span>Tür</span><div class="seg type" id="o-type">${['SLA', 'FDM'].map((t) => `<button type="button" data-v="${t}" class="${OE.print_type === t ? 'on' : ''}">${t}</button>`).join('')}</div></div>
           </div>
           <div class="row">
-            <label class="field"><span>Fiyat</span><div class="input-group"><input class="input" id="o-price" type="number" inputmode="decimal" min="0" step="0.01" value="${o.price ?? ''}"><span class="suffix">₺</span></div></label>
-            <label class="field"><span>Alınan ödeme</span><div class="input-group"><input class="input" id="o-paid" type="number" inputmode="decimal" min="0" step="0.01" value="${o.paid ?? ''}"><span class="suffix">₺</span></div></label>
+            <label class="field"><span>Reçine / renk</span><input class="input" id="o-resin" value="${esc(o.resin || '')}" placeholder="Elegoo ABS-like gri"></label>
+            <label class="field"><span>Dosya adı</span><input class="input" id="o-file" value="${esc(o.file_name || '')}" placeholder="figur_v2.chitubox"></label>
           </div>
+          ${printers.length ? `<div class="field"><span>Makine</span><div class="chips" id="o-printers">${printerChips('o', o.printer)}</div></div>` : ''}
         </div>
+        <p class="o-cost oe-total" id="o-cost"></p>
       </div>
-      <div class="field"><span>Makine</span>
-        ${printers.length ? `<div class="chips" id="o-printers">${printerChips('o', o.printer)}</div>`
-          : `<small>Makine listesini Ayarlar sayfasından ekleyin; burada tek dokunuşla seçilir.</small>`}</div>
-      <div class="row">
-        <div class="field"><span>Baskı türü</span><div class="seg type" id="o-type">${['SLA', 'FDM'].map((t) => `<button type="button" data-v="${t}" class="${OE.print_type === t ? 'on' : ''}">${t}</button>`).join('')}</div></div>
-        <label class="field"><span>Malzeme (1 adet)</span><div class="input-group"><input class="input" id="o-grams" type="number" inputmode="decimal" min="0" step="0.1" value="${o.grams ?? ''}" placeholder="0"><span class="suffix">gram</span></div></label>
-      </div>
-      <p class="o-cost" id="o-cost"></p>
-      <div class="row">
-        <label class="field"><span>Reçine / renk</span><input class="input" id="o-resin" value="${esc(o.resin || '')}" placeholder="Elegoo ABS-like gri"></label>
-        <label class="field"><span>Dosya adı</span><input class="input" id="o-file" value="${esc(o.file_name || '')}" placeholder="figur_v2.chitubox"></label>
-      </div>
-      <div class="field"><span>Durum</span><div class="seg" id="o-status" style="flex-wrap:wrap">${Object.entries(OST).map(([k, v]) => `<button type="button" data-v="${k}" class="${o.status === k ? 'on' : ''}">${v.l}</button>`).join('')}</div>
-        <small id="o-status-hint">${o.active_job_id ? 'Bu siparişin baskısı sürüyor. Hazır veya Teslim seçerseniz baskı başarılı olarak kapanır.' : 'Baskıda seçip kaydettiğinizde baskı süresini ve makineyi sorup Baskılar listesine eklerim.'}</small></div>
     </div>
     <div class="modal-f">
       ${id ? `<button class="btn btn-ghost" data-act="delete-order" data-id="${id}">${icon('trash')} Sil</button>` : ''}
-      <div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" data-act="save-order">${id ? 'Kaydet' : 'Siparişi ekle'}</button></div>
-    </div>`, 'wide');
+      <div class="right"><button class="btn" data-act="close">Vazgeç</button>
+        <button class="btn" id="oe-print-sel" hidden>${icon('layers')} <span>Seçilenleri baskıya ver</span></button>
+        <button class="btn btn-primary" data-act="save-order">${id ? 'Kaydet' : 'Siparişi ekle'}</button></div>
+    </div>`, 'wide xwide oe-modal');
   const drop = $('#o-drop'), fi = $('#o-file-in');
   drop.onclick = () => fi.click();
   fi.onchange = () => fi.files[0] && uploadOrderImage(fi.files[0]);
   $('#o-status').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; OE.status = b.dataset.v; $$('#o-status button').forEach((x) => x.classList.toggle('on', x === b)); };
   $('#o-printers')?.addEventListener('click', (e) => { const b = e.target.closest('.chip'); if (!b) return; OE.printer = OE.printer === b.dataset.v ? '' : b.dataset.v; $$('#o-printers .chip').forEach((c) => c.classList.toggle('on', c.dataset.v === OE.printer)); });
-  ['#o-odate', '#o-due'].forEach((s) => $(s).addEventListener('input', dueHint));
+  ['#o-odate', '#o-due'].forEach((x) => $(x).addEventListener('input', dueHint));
   dueHint();
   $('#o-type').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; OE.print_type = b.dataset.v; $$('#o-type button').forEach((x) => x.classList.toggle('on', x === b)); orderCostHint(); };
-  ['#o-grams', '#o-qty', '#o-price'].forEach((s) => $(s).addEventListener('input', orderCostHint));
-  orderCostHint();
+  ['#o-grams', '#o-qty', '#o-price'].forEach((x) => $(x).addEventListener('input', orderCostHint));
+  ['parts', 'priced', 'color'].forEach((k) => $(`#oe-o-${k}`).addEventListener('change', (e) => { oeSync(); OE.item_opts[k] = e.target.checked; if (k === 'parts' && e.target.checked) OE.items.forEach((it) => { OE.open.add(it.id); }); oeRender(); }));
+  oeBind(); oeRender();
+  $('#oe-print-sel').onclick = oePrintSelected;
   if (!id) setTimeout(() => $('#o-fn')?.focus(), 50);
 }
-// Özel sipariş malzeme maliyeti: gram × makara alış fiyatı (reçinede reçine şişeleri), fire payı dahil
+// ---- özel sipariş kalemleri (düzenleyici)
+const oeId = () => Math.random().toString(36).slice(2, 10);
+const oeLeaves = () => OE.items.flatMap((k) => (OE.item_opts.parts && k.parts?.length ? k.parts.map((p) => ({ id: p.id, need: k.qty * p.qty, t: p, k })) : [{ id: k.id, need: k.qty, t: k, k }]));
+const oeLeft = (t, need) => Math.max(0, need - (t.printed || 0) - (t.in_print || 0));
+function oeColorSel(t, path) {
+  const opts = [...new Map((S.spools || []).filter((x) => x.color_hex).map((x) => [x.color_hex.toLowerCase(), x])).values()];
+  return `<span class="oe-col"><span class="dot" style="background:${esc(t.color_hex || 'transparent')}"></span><select class="input" data-oe="color" data-path="${path}"><option value="">Renk —</option>${opts.map((x) => `<option value="${esc(x.color_hex)}|${esc(x.color_name || colorName(x.color_hex) || '')}"${(t.color_hex || '').toLowerCase() === x.color_hex.toLowerCase() ? ' selected' : ''}>${esc(x.color_name || colorName(x.color_hex) || x.color_hex)}${x.brand ? ` · ${esc(x.brand)}` : ''}</option>`).join('')}</select></span>`;
+}
+function oeProg(done, ip, need) {
+  if (!need) return '';
+  const d = Math.min(need, done || 0), p = Math.min(need - d, ip || 0);
+  return `<div class="oe-prog" title="Basılan ${d}/${need}${p ? ` · ${p} baskıda` : ''}"><div class="opart-bar"><i class="d" style="width:${d / need * 100}%"></i><i class="p" style="width:${p / need * 100}%"></i></div><small>${d}/${need}${p ? ` · ${p} baskıda` : ''}</small></div>`;
+}
+function oeRender() {
+  const box = $('#oe-list'); if (!box || !OE) return;
+  const op = OE.item_opts, parts = op.parts, priced = op.priced, color = op.color;
+  const hasItems = OE.items.length > 0;
+  box.innerHTML = OE.items.map((k, i) => {
+    const kp = parts && k.parts?.length, need = kp ? k.qty * k.parts.reduce((a, p) => a + p.qty, 0) : k.qty;
+    const done = kp ? k.parts.reduce((a, p) => a + Math.min(k.qty * p.qty, p.printed || 0), 0) : (k.printed || 0);
+    const ip = kp ? k.parts.reduce((a, p) => a + (p.in_print || 0), 0) : (k.in_print || 0);
+    const open = parts && OE.open.has(k.id);
+    const leafSel = kp ? k.parts.every((p) => OE.sel.has(p.id)) : OE.sel.has(k.id);
+    const kGrams = kp ? k.parts.reduce((a, p) => a + (+p.grams || 0) * p.qty, 0) : null;
+    return `<div class="oe-it${open ? ' open' : ''}" data-k="${i}">
+      <div class="oe-ih">
+        <input type="checkbox" class="oe-cb" data-oe="sel-k" data-path="${i}" ${leafSel ? 'checked' : ''} aria-label="Baskı için seç">
+        ${parts ? `<button type="button" class="oe-chev" data-oe="toggle" data-path="${i}" aria-label="Parçaları aç/kapat">${icon(open ? 'chevron-down' : 'chevron-right')}</button>` : '<span></span>'}
+        <div class="oe-nm"><input class="input" data-oe="name" data-path="${i}" value="${esc(k.name)}" placeholder="Kalem adı, ör. Kaptan">${kp && !open ? `<small class="muted">${k.parts.map((p) => esc(p.name) + (p.qty > 1 ? ` ×${p.qty}` : '')).join(', ')}</small>` : ''}</div>
+        <label class="oe-n"><input class="input" type="number" min="1" data-oe="qty" data-path="${i}" value="${k.qty}"><span>adet</span></label>
+        ${parts ? `<span class="oe-pc">${kp ? `${need} parça` : '<span class="faint">parça yok</span>'}</span>` : ''}
+        ${priced ? (kp ? `<span class="oe-g">${kGrams ? fmtGram(kGrams) : '—'}</span>` : `<label class="oe-n"><input class="input" type="number" min="0" step="0.1" data-oe="grams" data-path="${i}" value="${k.grams ?? ''}" placeholder="0"><span>g</span></label>`) : ''}
+        ${priced ? `<label class="oe-n oe-pr"><input class="input" type="number" min="0" step="0.01" data-oe="price" data-path="${i}" value="${k.price ?? ''}" placeholder="0"><span>₺</span></label>` : ''}
+        ${oeProg(done, ip, need)}
+        ${color && !kp ? oeColorSel(k, i) : color ? '<span></span>' : ''}
+        <span class="oe-acts"><button type="button" class="icon-btn" data-oe="dup" data-path="${i}" title="Çoğalt">${icon('copy')}</button><button type="button" class="icon-btn" data-oe="rm" data-path="${i}" title="Sil">${icon('x')}</button></span>
+      </div>
+      ${open ? `<div class="oe-pts">${(k.parts || []).map((p, j) => `<div class="oe-pt">
+          <input type="checkbox" class="oe-cb" data-oe="sel-p" data-path="${i}.${j}" ${OE.sel.has(p.id) ? 'checked' : ''} aria-label="Baskı için seç">
+          <input class="input" data-oe="pname" data-path="${i}.${j}" value="${esc(p.name)}" placeholder="Parça adı, ör. Kol">
+          <label class="oe-n"><input class="input" type="number" min="1" data-oe="pqty" data-path="${i}.${j}" value="${p.qty}"><span>× kalem</span></label>
+          ${priced ? `<label class="oe-n"><input class="input" type="number" min="0" step="0.1" data-oe="pgrams" data-path="${i}.${j}" value="${p.grams ?? ''}" placeholder="0"><span>g</span></label>` : ''}
+          ${oeProg(p.printed, p.in_print, k.qty * p.qty)}
+          ${color ? oeColorSel(p, `${i}.${j}`) : ''}
+          <button type="button" class="icon-btn" data-oe="prm" data-path="${i}.${j}" title="Parçayı sil">${icon('x')}</button></div>`).join('')}
+        <button type="button" class="linkish oe-add" data-oe="padd" data-path="${i}">${icon('plus')} Parça ekle</button></div>` : ''}
+    </div>`;
+  }).join('') + `<button type="button" class="linkish oe-add" data-oe="add">${icon('plus')} Kalem ekle</button>
+    ${hasItems ? '' : '<p class="muted oe-empty">Tek tip bir işse kalem eklemeden aşağıdan adet girmeniz yeterli. Birden fazla karakter/model varsa her birini kalem olarak ekleyin; Parçalı açıkken her kalemin parçalarını (kol, kafa, kaide…) ayrı yazabilirsiniz.</p>'}`;
+  // adet / gram / fiyat alanları kalemlere göre
+  const lv = oeLeaves(), units = lv.reduce((a, x) => a + x.need, 0);
+  $('.oe-qty-f').style.display = hasItems ? 'none' : '';
+  $('#o-grams-l').textContent = hasItems ? 'Toplam malzeme' : 'Malzeme (1 adet)';
+  $('.oe-tg-f').style.display = hasItems && priced ? 'none' : '';
+  const pr = $('#o-price'); pr.readOnly = hasItems && priced;
+  if (hasItems && priced) pr.value = Math.round(OE.items.reduce((a, k) => a + (+k.price || 0) * k.qty, 0) * 100) / 100 || '';
+  const done = lv.reduce((a, x) => a + Math.min(x.need, x.t.printed || 0), 0);
+  $('#oe-sum').textContent = hasItems ? `${OE.items.length} kalem · ${units} ${parts ? 'parça' : 'adet'} · basılan ${done}/${units}` : '';
+  const sel = lv.filter((x) => OE.sel.has(x.id) && oeLeft(x.t, x.need) > 0), n = sel.reduce((a, x) => a + oeLeft(x.t, x.need), 0);
+  const b = $('#oe-print-sel'); b.hidden = !n; b.querySelector('span').textContent = `Seçilenleri baskıya ver (${n})`;
+  orderCostHint();
+}
+function oeAt(path) { const [i, j] = String(path).split('.').map(Number); const k = OE.items[i]; return j == null || Number.isNaN(j) ? k : k.parts[j]; }
+function oeSync() { /* girişler anında OE'ye yazılıyor; bu yalnızca yer tutucu */ }
+function oeBind() {
+  const box = $('#oe-list');
+  box.addEventListener('input', (e) => {
+    const t = e.target, a = t.dataset.oe; if (!a) return;
+    const it = oeAt(t.dataset.path), num = (v, min) => (v === '' ? null : Math.max(min, +v || 0));
+    if (a === 'name' || a === 'pname') it.name = t.value;
+    else if (a === 'qty' || a === 'pqty') { it.qty = Math.max(1, parseInt(t.value) || 1); clearTimeout(OE.rt); OE.rt = setTimeout(() => { const f = document.activeElement?.dataset?.path; const fa = document.activeElement?.dataset?.oe; oeRender(); if (f) $(`[data-oe="${fa}"][data-path="${f}"]`)?.focus(); }, 600); }
+    else if (a === 'grams' || a === 'pgrams') { it.grams = num(t.value, 0); orderCostHint(); }
+    else if (a === 'price') { it.price = num(t.value, 0); const pr = $('#o-price'); pr.value = Math.round(OE.items.reduce((s2, k) => s2 + (+k.price || 0) * k.qty, 0) * 100) / 100 || ''; orderCostHint(); }
+  });
+  box.addEventListener('change', (e) => {
+    const t = e.target, a = t.dataset.oe; if (!a) return;
+    if (a === 'color') { const [hx, nm] = (t.value || '|').split('|'); const it = oeAt(t.dataset.path); it.color_hex = hx || null; it.color_name = nm || null; t.previousElementSibling.style.background = hx || 'transparent'; }
+    else if (a === 'sel-k') { const k = oeAt(t.dataset.path); const ids = OE.item_opts.parts && k.parts?.length ? k.parts.map((p) => p.id) : [k.id]; ids.forEach((x) => (t.checked ? OE.sel.add(x) : OE.sel.delete(x))); oeRender(); }
+    else if (a === 'sel-p') { const p = oeAt(t.dataset.path); t.checked ? OE.sel.add(p.id) : OE.sel.delete(p.id); oeRender(); }
+  });
+  box.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-oe]'); if (!b) return;
+    const a = b.dataset.oe, i = +String(b.dataset.path).split('.')[0];
+    if (a === 'add') { const k = { id: oeId(), name: '', qty: 1, grams: null, price: null, parts: [], printed: 0 }; if (OE.item_opts.parts) { k.parts = [{ id: oeId(), name: '', qty: 1, grams: null, printed: 0 }]; OE.open.add(k.id); } OE.items.push(k); oeRender(); $(`[data-oe="name"][data-path="${OE.items.length - 1}"]`)?.focus(); }
+    else if (a === 'toggle') { const k = OE.items[i]; OE.open.has(k.id) ? OE.open.delete(k.id) : OE.open.add(k.id); oeRender(); }
+    else if (a === 'dup') { const c = structuredClone(OE.items[i]); c.id = oeId(); c.printed = 0; c.in_print = 0; c.name = c.name ? `${c.name} (kopya)` : ''; (c.parts || []).forEach((p) => { p.id = oeId(); p.printed = 0; p.in_print = 0; }); OE.items.splice(i + 1, 0, c); oeRender(); $(`[data-oe="name"][data-path="${i + 1}"]`)?.select(); }
+    else if (a === 'rm') { const k = OE.items[i]; if (((k.printed || 0) + (k.parts || []).reduce((s2, p) => s2 + (p.printed || 0), 0)) && !confirm(`"${k.name}" kaleminin basılmış parçaları var. Yine de silinsin mi?`)) return; OE.items.splice(i, 1); oeRender(); }
+    else if (a === 'padd') { OE.items[i].parts.push({ id: oeId(), name: '', qty: 1, grams: null, printed: 0 }); oeRender(); $(`[data-oe="pname"][data-path="${i}.${OE.items[i].parts.length - 1}"]`)?.focus(); }
+    else if (a === 'prm') { const j = +b.dataset.path.split('.')[1]; OE.items[i].parts.splice(j, 1); oeRender(); }
+  });
+}
+async function oePrintSelected() {
+  const lv = oeLeaves().filter((x) => OE.sel.has(x.id)).map((x) => ({ leaf: x.id, qty: oeLeft(x.t, x.need) })).filter((x) => x.qty > 0);
+  if (!lv.length) return;
+  const id = await saveOrder({ keepOpen: true }); if (!id) return;
+  closeModal(true); await loadOrders().catch(() => {});
+  openNewPrint({ orderId: id, items: lv });
+}
 function orderCost(o) {
   const grams = (+o.grams || 0) * Math.max(1, +o.quantity || 1);
   if (!grams || !S.profit) return { grams, cost: null };
@@ -2552,7 +2681,11 @@ function orderCost(o) {
 }
 function orderCostHint() {
   const el = $('#o-cost'); if (!el) return;
-  const o = { grams: $('#o-grams').value, quantity: $('#o-qty').value, print_type: OE.print_type };
+  let o = { grams: $('#o-grams').value, quantity: $('#o-qty').value, print_type: OE.print_type };
+  if (OE.items?.length) {   // kalemler: ayrı gram açıksa kalemlerden, değilse "Toplam malzeme"den
+    const total = OE.item_opts.priced ? oeLeaves().reduce((a, x) => a + (+x.t.grams || 0) * x.need, 0) : (numIn($('#o-grams').value) || 0);
+    o = { grams: total, quantity: 1, print_type: OE.print_type };
+  }
   const c = orderCost(o), price = numIn($('#o-price').value);
   if (!c.grams) { el.innerHTML = '<span class="muted">Gram girerseniz malzeme maliyeti ve fiyattan kalan tutar hesaplanır.</span>'; return; }
   if (c.noPrice) { el.innerHTML = `Toplam <b>${fmtGram(c.grams)}</b> · <span class="warn-text">${o.print_type === 'FDM' ? 'Makaralarda alış fiyatı yok' : 'Reçine fiyatı yok (Filamentler\'e türü “Reçine” olan şişe ekleyip fiyatını girin)'}</span>`; return; }
@@ -2597,23 +2730,30 @@ function waLink(phone) {
   else if (d.length === 10 && d.startsWith('5')) d = '90' + d;
   return `https://wa.me/${d}`;
 }
-async function saveOrder() {
-  const v = (s) => $(s).value.trim();
+async function saveOrder(opts = {}) {
+  const v = (x) => ($(x)?.value || '').trim();
   const mins = (parseInt(v('#o-h')) || 0) * 60 + (parseInt(v('#o-m')) || 0);
+  const items = OE.items.filter((k) => k.name.trim() || k.parts?.some((p) => p.name.trim()) || OE.items.length === 1).map((k) => ({ ...k, parts: OE.item_opts.parts ? (k.parts || []).filter((p) => p.name.trim()) : [] }));
+  const hasItems = items.length > 0;
   const body = { first_name: v('#o-fn'), last_name: v('#o-ln'), phone: v('#o-phone'), title: v('#o-title'), details: v('#o-details'),
     quantity: parseInt(v('#o-qty')) || 1, order_date: v('#o-odate'), due_date: v('#o-due'), print_minutes: mins || null, printer: OE.printer || '',
     price: v('#o-price'), paid: v('#o-paid'), resin: v('#o-resin'), file_name: v('#o-file'), status: OE.status, image: OE.image,
-    grams: v('#o-grams'), print_type: OE.print_type || 'SLA' };
-  if (!body.first_name) { $('#o-fn').focus(); return toast('Müşterinin adını yazın', { bad: true }); }
-  const wantsPrint = OE.status === 'printing' && !OE.active_job_id;
+    print_type: OE.print_type || 'SLA', items, item_opts: OE.item_opts };
+  if (hasItems && !OE.item_opts.priced) body.total_grams = v('#o-grams');
+  else if (!hasItems) body.grams = v('#o-grams');
+  if (!body.first_name) { $('#o-fn').focus(); toast('Müşterinin adını yazın', { bad: true }); return null; }
+  const wantsPrint = !opts.keepOpen && OE.status === 'printing' && !OE.active_job_id;
   try {
     const r = OE.id ? await api('PUT', `/api/orders/${OE.id}`, body) : await api('POST', '/api/orders', body);
+    if (opts.keepOpen) { OE.id = r.id; return r.id; }
     closeModal(true);
     toast(OE.id ? 'Sipariş kaydedildi' : 'Sipariş eklendi');
     await render();
     if (wantsPrint) openNewPrint({ orderId: r.id });
-  } catch (e) { fail(e); }
+    return r.id;
+  } catch (e) { fail(e); return null; }
 }
+
 
 // ================================================================== SALES / TRENDYOL
 // ================================================================== FİLAMENTLER (makaralar)
@@ -3503,7 +3643,7 @@ function tyoRow(p, r) {
       <summary>
         <span class="tyo-no"><b>${esc(p.order_number)}</b><small class="faint">${date}</small></span>
         <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" title="${esc(l.name || '')} ×${l.quantity}${sh.by[l.product_id]?.miss ? ` · rafta ${sh.by[l.product_id].have}, baskıda ${sh.by[l.product_id].print}, ${sh.by[l.product_id].miss} eksik` : ''}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? qtyBadge(l.quantity, 'tt-qb') : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
-        <span class="tyo-who"><b>${esc(p.customer || '—')}</b><small class="muted">${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''}${isNear(p) ? ` <span class="near-tag" title="Mağazayla aynı yer: pakete not eklemeyi unutmayın">${icon('pin')} Yakın · not ekle</span>` : ''}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
+        <span class="tyo-who"><b>${esc(p.customer || '—')}</b><small class="muted">${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''}${orderRuleHits(p).map((h) => ` <span class="rule-tag t-${h.tone}" title="${esc(h.text)}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? ` <span class="near-tag" title="Mağazayla aynı yer: pakete not eklemeyi unutmayın">${icon('pin')} Yakın · not ekle</span>` : ''}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
         <span class="tyo-amt">${r ? fmtTL(r.price) : p.pkg_total != null ? fmtTL(p.pkg_total) : '–'}</span>
         <span class="tyo-pr">${r ? `<span class="mg ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)}</span><small class="faint">${fmtPct(r.margin)}${r.missing.length ? ' · <span class="warn-text">eksik</span>' : ''}</small>` : '<span class="faint">–</span>'}</span>
         <span class="tyo-dl">${showDl && p.tab !== 'shipped' ? `<span class="tyo-term${today ? ' today' : ''}" title="Son teslim ${fmtDl(dl)}">${today ? '<b>Bugün verilmeli</b>' : ''}${dlChip(dl)}</span>` : ''}${p.can_label ? `<button type="button" class="btn btn-sm ${p.label_at ? 'btn-ghost' : ''} lbl-btn" data-act="ty-label" data-id="${esc(p.package_id)}" title="${p.label_at ? `Etiket ${fmtWhen(p.label_at)} basıldı · tekrar bas` : 'Kargo etiketini bas'}">${icon(p.label_at ? 'check' : 'print')} Barkod</button>`
@@ -3540,7 +3680,9 @@ function tyoBody(p) {
   const pfOpen = (() => { try { return localStorage.getItem('tyoPf') === '1'; } catch { return false; } })();
   const acts = `${p.tab === 'new' ? (p.can_pick ? `<button class="oc-btn pri" data-act="tyo-pick" data-id="${esc(p.package_id)}">${icon('pack')} Hazırlanıyor'a çek</button>` : '<span class="muted" style="font-size:13px">Bu sipariş buradan çekilemiyor; bir kez Yenile\'ye basın.</span>') : ''}
     ${p.can_label ? `<button class="oc-btn${p.tab !== 'new' && !p.label_at ? ' pri' : ''}" data-act="ty-label" data-id="${esc(p.package_id)}">${icon(p.label_at ? 'check' : 'print')} ${p.label_at ? 'Barkodu tekrar bas' : 'Barkodu bas'}</button>${p.label_at ? `<small class="faint oc-lbl">${fmtWhen(p.label_at)} basıldı</small>` : ''}` : ''}`;
+  const hits = orderRuleHits(p);
   return `<div class="oc">
+    ${hits.length ? `<div class="oc-rules">${hits.map((h) => `<span class="oc-rule t-${h.tone}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}</div>` : ''}
     <div class="oc-items">${lines}
       <p class="muted oc-foot">${p.pkg_total != null ? `Müşterinin ödediği <b>${fmtTL(p.pkg_total)}</b>` : ''}${dl ? ` · son teslim ${fmtDl(dl)}` : ''} · paket ${esc(p.package_id || '')}</p></div>
     <aside class="oc-side">
@@ -4576,6 +4718,77 @@ const DEDUCT_OPTS = [['order', 'Sipariş gelir gelmez', 'Trendyol\'a sipariş d�
   ['picking', 'Hazırlanıyor\'a çekilince', 'Paketleyip Hazırlanıyor\'a çektiğinizde (Astera\'dan ya da Trendyol panelinden) düşer.'],
   ['label', 'Kargo barkodu basılınca', 'Astera\'dan etiket basıldığında; basılmadan kargoya verilirse kargoya verilince düşer.'],
   ['shipped', 'Kargoya verilince', 'Trendyol siparişi Kargoda olarak gösterdiğinde düşer.']];
+// ---- sipariş notu kuralları (Ayarlar → Mağaza ve Kargo)
+const RULE_F = [['total', 'Sipariş tutarı (₺)'], ['qty', 'Toplam ürün adedi'], ['product', 'Ürün adı'], ['category', 'Ürün kategorisi'], ['city', 'İl'], ['cargo', 'Kargo firması']];
+const RULE_OP = { total: [['>=', 'en az'], ['<=', 'en çok']], qty: [['>=', 'en az'], ['<=', 'en çok'], ['=', 'tam']], product: [['contains', 'içerir']], category: [['=', 'şu olan ürün var']], city: [['=', 'şu']], cargo: [['contains', 'içerir']] };
+const RULE_TONE = [['gift', '🎁 Hediye'], ['info', 'ℹ️ Bilgi'], ['warn', '⚠️ Uyarı']];
+function orderRuleHits(p) {
+  const rules = (S.settings?.order_rules || []).filter((r) => r.on && r.conds.length);
+  if (!rules.length) return [];
+  const live = p.lines.filter((l) => !TY_CANCEL.has(l.status));
+  const low = (x) => trLow(String(x || ''));
+  const test = (c) => {
+    const v = c.v, n = numIn(v);
+    if (c.f === 'total') { const t = p.pkg_total ?? live.reduce((a, l) => a + (l.unit_price || 0) * l.quantity, 0); return n != null && (c.op === '>=' ? t >= n : t <= n); }
+    if (c.f === 'qty') { const q = live.reduce((a, l) => a + l.quantity, 0); return n != null && (c.op === '>=' ? q >= n : c.op === '<=' ? q <= n : q === n); }
+    if (c.f === 'product') return !!v && live.some((l) => low(l.name).includes(low(v)) || low(l.ty_name).includes(low(v)));
+    if (c.f === 'category') return !!v && live.some((l) => low(productById(l.product_id)?.category) === low(v));
+    if (c.f === 'city') return !!v && low(p.city) === low(v);
+    if (c.f === 'cargo') return !!v && low(p.cargo_provider).includes(low(v));
+    return false;
+  };
+  return rules.filter((r) => (r.any ? r.conds.some(test) : r.conds.every(test)));
+}
+function rulesHTML() {
+  const rules = S.ruleDraft || (S.ruleDraft = structuredClone(S.settings?.order_rules || []));
+  const cats = (S.categories || []).map((c) => c.name);
+  return `<section class="panel"><div class="panel-h"><h2>Sipariş notları</h2><span class="muted" style="font-size:13px">kurala uyan siparişte kartta görünür</span></div><div class="panel-b rl-set">
+    <p class="muted" style="margin:0">Örneğin 500 ₺ üzeri siparişlere hediye koyuyorsanız: not "Hediye koy", koşul "Sipariş tutarı en az 500". Bir kurala birden fazla koşul ekleyebilirsiniz.</p>
+    ${rules.map((r, i) => `<div class="rl${r.on ? '' : ' off'}" data-ri="${i}">
+      <div class="rl-h"><select class="input rl-tone" data-rl="tone">${RULE_TONE.map(([k, l]) => `<option value="${k}"${r.tone === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
+        <input class="input rl-text" data-rl="text" value="${esc(r.text)}" placeholder="Kartta görünecek not, ör. Hediye koy" maxlength="60">
+        <label class="switch sm"><input type="checkbox" data-rl="on" ${r.on ? 'checked' : ''}> Açık</label>
+        <button type="button" class="icon-btn" data-rl="rm" aria-label="Kuralı sil">${icon('trash')}</button></div>
+      <div class="rl-c">${r.conds.length > 1 ? `<div class="seg rl-any"><button type="button" data-rl="all" class="${r.any ? '' : 'on'}">Hepsi tutsun</button><button type="button" data-rl="any" class="${r.any ? 'on' : ''}">Biri yeter</button></div>` : ''}
+        ${r.conds.map((c, j) => `<div class="rl-row" data-ci="${j}"><span class="faint">${j ? (r.any ? 'veya' : 've') : 'Eğer'}</span>
+          <select class="input" data-rl="f">${RULE_F.map(([k, l]) => `<option value="${k}"${c.f === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
+          <select class="input" data-rl="op">${(RULE_OP[c.f] || []).map(([k, l]) => `<option value="${k}"${c.op === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
+          ${c.f === 'category' ? `<select class="input" data-rl="v"><option value="">Kategori seçin</option>${cats.map((x) => `<option${c.v === x ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>`
+            : c.f === 'city' ? `<input class="input" data-rl="v" list="tr-cities-r" value="${esc(c.v)}" placeholder="ör. Kırklareli"><datalist id="tr-cities-r">${TR_CITIES.map((x) => `<option value="${x}">`).join('')}</datalist>`
+            : `<input class="input" data-rl="v" value="${esc(c.v)}" ${c.f === 'total' || c.f === 'qty' ? 'inputmode="decimal" placeholder="ör. 500"' : 'placeholder="ör. Kitap"'}>`}
+          <button type="button" class="icon-btn" data-rl="crm" aria-label="Koşulu sil">${icon('x')}</button></div>`).join('')}
+        <button type="button" class="linkish rl-add" data-rl="cadd">${icon('plus')} Koşul ekle</button></div></div>`).join('')}
+    <div class="bk-btns"><button type="button" class="btn btn-sm" data-rl="add">${icon('plus')} Kural ekle</button><button type="button" class="btn btn-primary btn-sm" data-rl="save">Kaydet</button></div>
+  </div></section>`;
+}
+function rulesBind() {
+  const box = $('.rl-set'); if (!box) return;
+  const redraw = () => { const pn = box.closest('.panel'), ph = document.createElement('div'); ph.innerHTML = rulesHTML(); const np = ph.firstElementChild; np.dataset.sg = pn.dataset.sg; pn.replaceWith(np); rulesBind(); };
+  const at = (el) => { const r = S.ruleDraft[+el.closest('[data-ri]').dataset.ri]; const ci = el.closest('[data-ci]'); return [r, ci ? r.conds[+ci.dataset.ci] : null]; };
+  box.addEventListener('input', (e) => { const a = e.target.dataset.rl; if (!a) return; const [r, c] = at(e.target); if (a === 'text') r.text = e.target.value; else if (a === 'v') c.v = e.target.value; });
+  box.addEventListener('change', (e) => {
+    const a = e.target.dataset.rl; if (!a) return; const [r, c] = at(e.target);
+    if (a === 'on') { r.on = e.target.checked; e.target.closest('.rl').classList.toggle('off', !r.on); }
+    else if (a === 'tone') r.tone = e.target.value;
+    else if (a === 'f') { c.f = e.target.value; c.op = RULE_OP[c.f][0][0]; c.v = ''; redraw(); }
+    else if (a === 'op') c.op = e.target.value;
+    else if (a === 'v') c.v = e.target.value;
+  });
+  box.addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-rl]'); if (!b) return; const a = b.dataset.rl;
+    if (a === 'add') { S.ruleDraft.push({ text: '', on: true, tone: 'gift', any: false, conds: [{ f: 'total', op: '>=', v: '' }] }); return redraw(); }
+    if (a === 'save') {
+      try { S.settings = await api('PUT', '/api/settings', { order_rules: S.ruleDraft }); S.ruleDraft = null; toast('Sipariş notları kaydedildi'); redraw(); } catch (err) { fail(err); }
+      return;
+    }
+    const [r] = at(b);
+    if (a === 'rm') S.ruleDraft.splice(S.ruleDraft.indexOf(r), 1);
+    else if (a === 'cadd') r.conds.push({ f: 'total', op: '>=', v: '' });
+    else if (a === 'crm') { const ci = +b.closest('[data-ci]').dataset.ci; r.conds.splice(ci, 1); }
+    else if (a === 'all') r.any = false; else if (a === 'any') r.any = true;
+    redraw();
+  });
+}
 function stockStageHTML() {
   const cur = S.settings?.ty_deduct_at || 'picking';
   return `<section class="panel"><div class="panel-h"><h2>Stok ne zaman düşsün?</h2><span class="muted" style="font-size:13px">Trendyol siparişleri</span></div><div class="panel-b ds-set">
@@ -4636,7 +4849,7 @@ function remoteSetHTML() {
   const a = S.authCfg; if (!a) return '';
   const dev = a.devices || [];
   return `<section class="panel"><div class="panel-h"><h2>Telefon uygulaması ve uzaktan erişim</h2>${a.has_password ? '<span class="tag tag-ok">Uzaktan erişim açık</span>' : '<span class="tag">Uzaktan erişim kapalı</span>'}</div><div class="panel-b ra-set">
-    ${S.apkReady ? `<div class="ra-app"><span class="ra-ic">${icon('phone')}</span><div><b>Android uygulaması</b><small class="muted">Mobil paneli açar ve bildirimleri (sipariş, buybox, yazıcı, iade, soru) uygulama kapalıyken de anında gösterir. Ev ağında doğrudan, dışarıda uzak adresle bağlanır.</small></div>
+    ${S.apkReady ? `<div class="ra-app"><span class="ra-ic">${icon('mobile')}</span><div><b>Android uygulaması</b><small class="muted">Mobil paneli açar ve bildirimleri (sipariş, buybox, yazıcı, iade, soru) uygulama kapalıyken de anında gösterir. Ev ağında doğrudan, dışarıda uzak adresle bağlanır.</small></div>
       <a class="btn btn-primary btn-sm" href="${APK_URL}" target="_blank" rel="noopener">${icon('download')} APK'yı indir</a></div>` : ''}
     <div class="ra-pw">
       <p class="muted" style="margin:0">Cloudflare Tunnel üzerinden (ör. <span class="mono">panel.astera3d.com</span>) dışarıdan gelen her cihaz bu şifreyi bir kez girer. Ev ağında şifre sorulmaz.${a.has_password ? '' : ' <b>Şifre belirlenmeden dışarıdan hiçbir şey açılmaz.</b>'}</p>
@@ -4687,7 +4900,7 @@ function labelSetHTML() {
 // Ayarlar grupları: her panel başlığına göre bir gruba düşer
 const SET_GROUPS = [['genel', 'Genel', 'gear'], ['magaza', 'Mağaza ve Kargo', 'pack'], ['trendyol', 'Trendyol', 'cart'], ['uretim', 'Üretim', 'layers'],
   ['bildirim', 'Bildirimler', 'bell'], ['uzak', 'Uzaktan erişim', 'lock'], ['veri', 'Veri ve Yedek', 'download']];
-const SET_MAP = [[/^Uygulama|^Tema|^Görünüm/, 'genel'], [/^Kargo|^Stok ne zaman/, 'magaza'], [/^Trendyol/, 'trendyol'], [/^Kategoriler|^Makineler/, 'uretim'],
+const SET_MAP = [[/^Uygulama|^Tema|^Görünüm/, 'genel'], [/^Kargo|^Stok ne zaman|^Sipariş notları/, 'magaza'], [/^Trendyol/, 'trendyol'], [/^Kategoriler|^Makineler/, 'uretim'],
   [/^Bildirimler|^Haftalık/, 'bildirim'], [/^Telefon|^Uzak/, 'uzak'], [/^Yedek|^Arşiv/, 'veri']];
 const setGroup = () => { try { const g = localStorage.getItem('setGrp'); return SET_GROUPS.some((x) => x[0] === g) ? g : 'genel'; } catch { return 'genel'; } };
 function setGroupsBind() {
@@ -4710,7 +4923,7 @@ function setGroupsBind() {
   }));
 }
 PAGES.ayarlar = {
-  async load() { await loadCategories(); await loadSettings(); if ((S.settings.printers || []).some(hasLink)) await loadBambu(); S.archived = (await api('GET', '/api/products?archived=1')).filter((p) => p.archived); S.backups = await api('GET', '/api/backups').catch(() => null); S.weekly = await api('GET', '/api/weekly').catch(() => null); S.labelCfg = await api('GET', '/api/label/settings').catch(() => null); S.version = await api('GET', '/api/version').catch(() => null); S.authCfg = await api('GET', '/api/auth/settings').catch(() => null); S.upd = await api('GET', '/api/update').catch(() => null); },
+  async load() { await loadCategories(); await loadSettings(); if ((S.settings.printers || []).some(hasLink)) await loadBambu(); S.archived = (await api('GET', '/api/products?archived=1')).filter((p) => p.archived); S.backups = await api('GET', '/api/backups').catch(() => null); S.weekly = await api('GET', '/api/weekly').catch(() => null); S.labelCfg = await api('GET', '/api/label/settings').catch(() => null); S.version = await api('GET', '/api/version').catch(() => null); S.authCfg = await api('GET', '/api/auth/settings').catch(() => null); S.upd = await api('GET', '/api/update').catch(() => null); S.ruleDraft = null; },
   html() {
     const theme = localStorage.getItem('theme') || 'auto';
     const nsup = 'Notification' in window, secure = window.isSecureContext;
@@ -4722,6 +4935,7 @@ PAGES.ayarlar = {
       <label class="search set-q">${icon('search')}<input class="input" id="set-q" placeholder="Ayar ara… (ör. logo, kargo, şifre)" autocomplete="off"></label>
       <div class="settings-grid" data-g="${g}">
       ${stockStageHTML()}
+      ${rulesHTML()}
       ${tyConnHTML()}
       <section class="panel"><div class="panel-h"><h2>Uygulama</h2>${S.version?.version ? `<span class="muted" style="font-size:13px">Sürüm ${esc(S.version.version)} · ${esc(S.version.platform)}</span>` : ''}</div><div class="panel-b">
         <div class="brand-edit">
@@ -4811,7 +5025,7 @@ PAGES.ayarlar = {
     </div></div></div>`;
   },
   after() {
-    setGroupsBind();
+    setGroupsBind(); rulesBind();
     api('GET', '/api/push/key').then((r) => { const el = $('#push-n'); if (el) el.textContent = r.subscribers; }).catch(() => {});
     advBind();
     const lpPath = () => { const el = $('#lp-path'); if (el) el.textContent = `\\\\${$('#lp-host').value.trim().replace(/^[\\/]+|[\\/]+$/g, '') || 'localhost'}\\${$('#lp-share').value.trim() || '…'}`; };

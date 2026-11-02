@@ -1,5 +1,10 @@
 # Sürüm notları
 
+## 1.7.7
+- Özel sipariş düzenleyicisi yenilendi (geniş pencere): solda müşteri, tarih ve ödeme; sağda kalemler. Her kalemin adedi, isteğe bağlı parçaları (kol, kafa, kaide…), basılan ilerlemesi; "Parçalı", "Ayrı fiyat / gram" ve "Filament rengi" tikleri; kalemi çoğaltma; seçilen kalem/parçaları baskıya verme. Baskı bitince basılan adetler kalemlere işlenir.
+- Özel sipariş kartları sütunlar arasında sürükle-bırak ile taşınır (Baskıda'ya bırakınca baskı penceresi açılır).
+- Sipariş notları: Ayarlar → Mağaza ve Kargo'da kurallar (ör. sipariş tutarı en az 500 ₺ → "🎁 Hediye koy"); birden çok koşul (hepsi / biri). Uyan Trendyol siparişinde kartta not görünür.
+
 ## 1.7.6
 - Kendi bilgisayarında çalışan Astera için tek tuşla güncelleme: Ayarlar → Genel → Uygulama'da "Yeni sürüm hazır" kutusu, değişiklik listesi ve Güncelle düğmesi. Güncellemeden önce otomatik yedek alınır, eski dosyalar data/eski_surum'a saklanır, program kendiliğinden yeniden başlar. Yeni sürüm çıkınca bildirim gelir (6 saatte bir kontrol).
 
