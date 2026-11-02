@@ -5029,6 +5029,8 @@ PAGES.ayarlar = {
       ${remoteSetHTML()}
 
       <section class="panel"><div class="panel-h"><h2>Tema ve görünüm</h2><span class="muted" style="font-size:13px">bu cihaza kaydedilir</span></div><div class="panel-b theme-box">
+        <div class="field"><span>Tema</span><div class="skin-pick" id="skin-pick">${THEME_SKINS.map(([v, l, d]) => `<button type="button" data-v="${v}" class="${uiOpt('skin', 'classic') === v ? 'on' : ''}" aria-pressed="${uiOpt('skin', 'classic') === v}"><span class="skin-prev ${v}"><b>Pano</b></span><b>${l}</b><small>${d}</small></button>`).join('')}</div></div>
+        <div class="field"><span>Renk paleti <span class="faint">(seçince aşağıdaki mod, ton ve vurgu ona göre ayarlanır; sonra tek tek değiştirebilirsiniz)</span></span><div class="pal-pick" id="pal-pick">${THEME_PALETTES.map(([v, l, d, , c]) => `<button type="button" data-v="${v}" class="${uiOpt('palette', '') === v ? 'on' : ''}"><span class="pal-prev" style="--p1:${c[0]};--p2:${c[1]};--p3:${c[2]};--p4:${c[3]}"><i></i><span><em></em><em></em><em></em></span></span><b>${l}</b><small>${d}</small></button>`).join('')}</div></div>
         <div class="field"><span>Mod</span><div class="seg" id="theme-seg">${[['auto', 'Sistem'], ['light', 'Açık'], ['dark', 'Koyu']].map(([v, l]) => `<button data-v="${v}" class="${theme === v ? 'on' : ''}">${l}</button>`).join('')}</div></div>
         <div class="field"><span>Koyu tema tonu</span><div class="swatches" id="tone-pick">${THEME_TONES.map(([v, l, c]) => `<button type="button" class="tone-sw${themeOpt('tone') === v ? ' on' : ''}" data-v="${v}" style="--c1:${c[0]};--c2:${c[1]};--c3:${c[2]}"><i></i><span>${l}</span></button>`).join('')}</div></div>
         <div class="row">
@@ -5057,6 +5059,13 @@ PAGES.ayarlar = {
     $('#lp-host')?.addEventListener('input', lpPath); $('#lp-share')?.addEventListener('input', lpPath);
     $('#lp-mode')?.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; $$('#lp-mode button').forEach((x) => x.classList.toggle('on', x === b)); $$('.lp-f').forEach((f) => { f.hidden = !f.dataset.m.split(' ').includes(b.dataset.v); }); });
     $('#wk-on')?.addEventListener('change', (e) => { const on = e.target.checked; ['#wk-day', '#wk-time'].forEach((q) => { $(q).disabled = !on; }); $('.wk-when')?.classList.toggle('dim', !on); });
+    $('#skin-pick').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('skin', b.dataset.v); applyTheme(); $$('#skin-pick button').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); }); };
+    $('#pal-pick').onclick = (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      const [, l, , cfg] = THEME_PALETTES.find((x) => x[0] === b.dataset.v);
+      try { localStorage.setItem('palette', b.dataset.v); Object.entries(cfg).forEach(([k, v]) => (v ? localStorage.setItem(k, v) : localStorage.removeItem(k))); } catch { /* */ }
+      applyTheme(); render(); toast(`Renk paleti: ${l}`);
+    };
     $('#theme-seg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('theme', b.dataset.v); applyTheme(); $$('#theme-seg button').forEach((x) => x.classList.toggle('on', x === b)); };
     $$('[data-conn-type]').forEach((sel) => sel.addEventListener('change', () => { (S.connEdit ||= {})[+sel.dataset.connType] = sel.value; render(); }));
     $('#tone-pick').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('tone', b.dataset.v); applyTheme(); $$('#tone-pick button').forEach((x) => x.classList.toggle('on', x === b)); if (!document.documentElement.dataset.theme && !matchMedia('(prefers-color-scheme: dark)').matches) toast('Ton koyu modda görünür'); };
@@ -5162,8 +5171,17 @@ function advBind() {
 
 // Tema: mod (sistem/açık/koyu), koyu tema tonu ve vurgu rengi; cihaz başına saklanır
 const THEME_TONES = [['cool', 'Soğuk antrasit', ['#1A1C1F', '#222529', '#33383D']], ['neutral', 'Nötr antrasit', ['#1B1C1E', '#232427', '#36383C']],
-  ['warm', 'Sıcak antrasit', ['#1D1B1A', '#262322', '#3A3532']], ['navy', 'Lacivert gri', ['#141A1F', '#1C252B', '#2F3B43']]];
-const THEME_ACCENTS = [['copper', 'Bakır', '#C98F3E'], ['green', 'Yeşil', '#4BAE7F'], ['blue', 'Mavi', '#4F86E6'], ['purple', 'Mor', '#8B73E6'], ['red', 'Kırmızı', '#D9604A']];
+  ['warm', 'Sıcak antrasit', ['#1D1B1A', '#262322', '#3A3532']], ['navy', 'Lacivert gri', ['#141A1F', '#1C252B', '#2F3B43']],
+  ['gece', 'Gece kömürü', ['#131417', '#1B1D21', '#2E3137']], ['dolgu', 'Derin lacivert', ['#0B1220', '#111A2E', '#24304D']]];
+const THEME_ACCENTS = [['copper', 'Bakır', '#C98F3E'], ['ember', 'Kor', '#D08A54'], ['orange', 'Turuncu', '#F27A1A'], ['lime', 'Limon', '#C6F432'], ['green', 'Yeşil', '#4BAE7F'], ['blue', 'Mavi', '#4F86E6'], ['purple', 'Mor', '#8B73E6'], ['red', 'Kırmızı', '#D9604A']];
+// Tema = yapı (yazı, menü, filigran); palet = renkler. Her palet her temayla kullanılabilir.
+const THEME_SKINS = [['classic', 'Güncel', 'Bugünkü düzen'], ['gece', 'Atölye Gece', 'Büyük başlıklar, kontur filigranı']];
+const THEME_PALETTES = [
+  ['classic', 'Güncel', 'Soğuk antrasit + bakır', { theme: 'auto', tone: 'cool', accent: 'copper', ltone: '' }, ['#1A1C1F', '#222529', '#33383D', '#C98F3E']],
+  ['gece', 'Atölye Gece', 'Kömür + kor', { theme: 'dark', tone: 'gece', accent: 'ember', ltone: '' }, ['#131417', '#1B1D21', '#2E3137', '#D08A54']],
+  ['dolgu', 'Dolgu', 'Derin lacivert + limon', { theme: 'dark', tone: 'dolgu', accent: 'lime', ltone: '' }, ['#0B1220', '#111A2E', '#24304D', '#C6F432']],
+  ['pazar', 'Pazar Yeri', 'Beyaz + turuncu (açık)', { theme: 'light', tone: 'gece', accent: 'orange', ltone: 'pazar' }, ['#F5F6F8', '#FFFFFF', '#E1E4E9', '#F27A1A']],
+  ['pazar-k', 'Pazar Yeri Koyu', 'Kömür + turuncu', { theme: 'dark', tone: 'neutral', accent: 'orange', ltone: 'pazar' }, ['#1B1C1E', '#232427', '#36383C', '#F27A1A']]];
 const themeOpt = (k) => { try { return localStorage.getItem(k) || (k === 'tone' ? 'cool' : k === 'accent' ? 'copper' : 'auto'); } catch { return k === 'tone' ? 'cool' : k === 'accent' ? 'copper' : 'auto'; } };
 const UI_SIZES = [['90', 'Küçük'], ['100', 'Normal'], ['110', 'Büyük'], ['120', 'Çok büyük']];
 const uiOpt = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
@@ -5171,6 +5189,9 @@ function applyTheme() {
   const t = themeOpt('theme'), de = document.documentElement;
   if (t === 'auto') de.removeAttribute('data-theme'); else de.dataset.theme = t;
   de.dataset.tone = themeOpt('tone'); de.dataset.accent = themeOpt('accent');
+  const sk = uiOpt('skin', 'classic'), lt = uiOpt('ltone', '');
+  if (sk === 'classic') de.removeAttribute('data-skin'); else de.dataset.skin = sk;
+  if (lt) de.dataset.ltone = lt; else de.removeAttribute('data-ltone');
   de.dataset.density = uiOpt('density', 'comfy');
   const z = +uiOpt('uisize', '100') / 100; de.style.zoom = z === 1 ? '' : String(z);
   fitSoon?.(); setTimeout(() => window.dispatchEvent(new Event('resize')), 50);

@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.7.9
+- Tema ve renk paleti ayrıldı (Ayarlar → Genel → Tema ve görünüm). Tema: Güncel ya da Atölye Gece (büyük başlıklar, kontur filigranı, belirgin menü). Palet: Güncel, Atölye Gece (kömür + kor), Dolgu (derin lacivert + limon), Pazar Yeri (beyaz + turuncu), Pazar Yeri Koyu. Her palet her temayla kullanılabilir.
+- Yeni koyu tonlar (Gece kömürü, Derin lacivert) ve vurgu renkleri (Kor, Turuncu, Limon).
+
 ## 1.7.8
 - Devam eden baskıyı düzenle: ürün, adet ve parçalı üründe her parçadan kaç tane basıldığı değiştirilebilir.
 - Baskı sonucu girilirken parçalı üründe ürünün bütün parçaları sorulur; planda olmayan parça ya da planlanandan fazlası da girilebilir.
