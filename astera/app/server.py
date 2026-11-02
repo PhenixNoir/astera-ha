@@ -1882,12 +1882,22 @@ def _complete_job(req, jid):
     success = bool(b.get("success"))
     jparts = db().execute("SELECT * FROM job_parts WHERE job_id=?", (jid,)).fetchall()
     assembled = 0
+    given = {int(x.get("part_id") or 0): max(0, min(999, int(x.get("good") or 0))) for x in (b.get("parts_good") or []) if isinstance(x, dict)}
+    if j["product_id"] and given and success:
+        # sonuç girilirken planda olmayan parça da basılmış olabilir (ör. yazıcıdan otomatik açılan baskı): ekle
+        plist = {x["id"]: x for x in load_parts(j["product_id"]).get(j["product_id"], [])}
+        have = {jp["part_id"] for jp in jparts}
+        for pid_, g in given.items():
+            if g > 0 and pid_ in plist and pid_ not in have:
+                db().execute("INSERT INTO job_parts(job_id,part_id,part_name,quantity) VALUES(?,?,?,?)", (jid, pid_, plist[pid_]["name"], g))
+        jparts = db().execute("SELECT * FROM job_parts WHERE job_id=?", (jid,)).fetchall()
     if jparts and j["product_id"]:
-        given = {int(x.get("part_id") or 0): int(x.get("good") or 0) for x in (b.get("parts_good") or [])}
         good = 0
         for jp in jparts:
             g = (given.get(jp["part_id"], jp["quantity"]) if success else 0)
-            g = max(0, min(g, jp["quantity"]))
+            g = max(0, g)
+            if g > jp["quantity"]:   # planlanandan fazla çıktı: plan da o kadar sayılır
+                db().execute("UPDATE job_parts SET quantity=? WHERE id=?", (g, jp["id"]))
             good += g
             db().execute("UPDATE job_parts SET good_quantity=? WHERE id=?", (g, jp["id"]))
             if g and jp["part_id"]:
@@ -1896,8 +1906,9 @@ def _complete_job(req, jid):
                     db().execute("UPDATE components SET stock=stock+?, updated_at=? WHERE id=?", (g, now(), comp["component_id"]))
                 else:
                     db().execute("UPDATE product_parts SET stock=stock+? WHERE id=?", (g, jp["part_id"]))
-        status = "success" if good == j["quantity"] else ("partial" if good > 0 else "failed")
-        db().execute("UPDATE print_jobs SET status=?, good_quantity=?, finished_at=? WHERE id=?", (status, good, now(), jid))
+        planned = db().execute("SELECT COALESCE(SUM(quantity),0) FROM job_parts WHERE job_id=?", (jid,)).fetchone()[0]
+        status = "success" if good >= planned else ("partial" if good > 0 else "failed")
+        db().execute("UPDATE print_jobs SET status=?, quantity=?, good_quantity=?, finished_at=? WHERE id=?", (status, planned, good, now(), jid))
         assembled = assemble(j["product_id"], ref=f"baskı #{jid}")
         res = job_rows("j.id=?", (jid,))[0]
         res["assembled"] = assembled
@@ -2047,12 +2058,17 @@ def api_job_change(req, jid):
             raise ApiError("Ürün seçin")
         plist = load_parts(pid).get(pid, [])
         total = qty
-        if plist:   # çok parçalı ürün: adet = set sayısı, her parçadan set başına düşen kadar
+        if plist:   # çok parçalı ürün: verilen parça adetleri, yoksa set sayısı × set başına düşen
+            given = {int(x.get("part_id") or 0): max(0, min(999, int(x.get("quantity") or 0))) for x in (b.get("parts") or []) if isinstance(x, dict)}
             total = 0
             for x in plist:
-                q = x["per_unit"] * qty
+                q = given.get(x["id"], x["per_unit"] * qty) if given else x["per_unit"] * qty
+                if q <= 0:
+                    continue
                 total += q
                 db().execute("INSERT INTO job_parts(job_id,part_id,part_name,quantity) VALUES(?,?,?,?)", (jid, x["id"], x["name"], q))
+            if total <= 0:
+                raise ApiError("En az bir parçanın adedini girin")
         db().execute("UPDATE print_jobs SET product_id=?, component_id=NULL, print_type=?, quantity=? WHERE id=?",
                      (pid, p["print_type"], total, jid))
         cid = None

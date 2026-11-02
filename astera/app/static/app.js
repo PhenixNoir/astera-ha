@@ -2238,8 +2238,12 @@ function openResult(id) {
           <p class="muted" style="margin:6px 0 0">${j.parts?.length ? `${j.quantity} parça` : p?.set_size > 1 ? `${j.quantity} set (${j.quantity * p.set_size} adet)` : `${j.quantity} adet`}${j.printer ? ' · ' + esc(j.printer) : ''}</p>
           ${j.is_order ? '<span class="tag tag-order" style="margin-top:6px">Özel sipariş</span>' : ''}${j.is_component ? '<span class="tag tag-pool" style="margin-top:6px">Ortak parça · havuza</span>' : ''}${j.is_misc ? '<span class="tag tag-misc" style="margin-top:6px">Diğer amaçlı · stoğa eklenmez</span>' : ''}</div>
         ${j.is_order ? `<p class="muted" style="margin:0;font-size:14px">Sağlam derseniz sipariş Hazır'a geçer; sorunlu derseniz tekrar basılmak üzere Yeni'ye döner.</p>`
-        : j.parts?.length ? `<div class="res-parts"><span class="muted" style="font-size:13px">Sağlam çıkan parçalar (sorunlu olanları azaltın)</span>${j.parts.map((x) => `<div class="np-part on"><div><b>${partDot(p, x.part_id)}${esc(x.name)}</b><span class="s">${x.quantity} basıldı</span></div>
-            <div class="stepper sm"><button type="button" data-act="res-part" data-id="${x.part_id}" data-d="-1" aria-label="Azalt">${icon('minus')}</button><input type="number" min="0" max="${x.quantity}" value="${x.quantity}" data-res-part="${x.part_id}"><button type="button" data-act="res-part" data-id="${x.part_id}" data-d="1" aria-label="Arttır">${icon('plus')}</button></div></div>`).join('')}</div>`
+        : j.parts?.length || p?.parts?.length ? (() => {
+            // ürünün bütün parçaları: planda olmayan da basılmış olabilir, fazlası da girilebilir
+            const planned = Object.fromEntries((j.parts || []).map((x) => [x.part_id, x.quantity]));
+            const rows = p?.parts?.length ? p.parts.map((x) => ({ id: x.id, name: x.name, q: planned[x.id] ?? (j.parts?.length ? 0 : x.per_unit * Math.max(1, j.quantity)) })) : j.parts.map((x) => ({ id: x.part_id, name: x.name, q: x.quantity }));
+            return `<div class="res-parts"><span class="muted" style="font-size:13px">Sağlam çıkan parçalar: hangi parçadan kaç tane? (sorunluları azaltın, basılmayanı 0 yapın)</span>${rows.map((x) => `<div class="np-part on"><div><b>${partDot(p, x.id)}${esc(x.name)}</b><span class="s">${planned[x.id] != null ? `${planned[x.id]} planlandı` : 'planda yoktu'}</span></div>
+            <div class="stepper sm"><button type="button" data-act="res-part" data-id="${x.id}" data-d="-1" aria-label="Azalt">${icon('minus')}</button><input type="number" min="0" max="999" value="${x.q}" data-res-part="${x.id}"><button type="button" data-act="res-part" data-id="${x.id}" data-d="1" aria-label="Arttır">${icon('plus')}</button></div></div>`).join('')}</div>`; })()
         : j.quantity > 1 || j.bambu_task || j.is_component || j.is_misc ? `<div class="field" style="justify-items:center"><span>${p?.set_size > 1 ? `Sağlam çıkan set (${p.set_size}'lü)` : 'Sağlam çıkan adet'}</span>
           <div class="stepper"><button type="button" data-act="res-qty" data-d="-1" aria-label="Azalt">${icon('minus')}</button><input id="res-qty" type="number" inputmode="numeric" min="0" max="${j.bambu_task || j.is_component || j.is_misc ? 999 : j.quantity}" value="${j.quantity}"><button type="button" data-act="res-qty" data-d="1" aria-label="Arttır">${icon('plus')}</button></div></div>` : ''}
         ${j.spools?.length ? `<div class="res-spools"><span class="muted" style="font-size:13px">Harcanan filament (sorunlu baskıda da düşer)</span>${j.spools.map((x) => {
@@ -2312,7 +2316,7 @@ function openJobMenu(id) {
         <button class="btn" data-act="job-snooze" data-id="${id}" data-m="15">Süreyi 15 dk uzat</button>
         <button class="btn" data-act="job-snooze" data-id="${id}" data-m="60">Süreyi 1 saat uzat</button>
         <button class="btn" data-act="job-finish-now" data-id="${id}">${icon('check')} Şimdi bitti, sonucu gir</button>
-        ${j.is_order ? '' : `<button class="btn" data-act="job-change" data-id="${id}">${icon('edit')} Basılan ürünü değiştir</button>`}
+        ${j.is_order ? '' : `<button class="btn" data-act="job-change" data-id="${id}">${icon('edit')} Baskıyı düzenle (ürün, adet${j.parts?.length ? ', parçalar' : ''})</button>`}
         <button class="btn btn-bad" data-act="job-cancel" data-id="${id}">${icon('x')} ${j.is_order ? "Baskıyı iptal et (sipariş Yeni'ye döner)" : 'Baskıyı iptal et (stoğa eklenmez)'}</button>
       </div></div>`, 'narrow');
 }
@@ -2323,9 +2327,11 @@ async function openJobChange(id) {
   const j = S.jobs.find((x) => x.id === id); if (!j) return;
   await Promise.all([S.products.length ? null : loadProducts(), loadComponents()]).catch(() => {});
   const file = (j.note || '').startsWith('Bambu: ') ? j.note.slice(7).trim() : '';
-  JC = { id, file, sel: null, q: '' };
-  const sets = j.parts?.length ? null : j.quantity;
-  openModal(`<div class="modal-h"><h2>Basılan ürünü değiştir</h2><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
+  JC = { id, file, sel: j.product_id ? { k: 'p', id: j.product_id } : j.component_id ? { k: 'c', id: j.component_id } : null, q: '', parts: null };
+  const jp = productById(j.product_id);
+  const sets = j.parts?.length && jp?.parts_total ? Math.max(1, Math.round(j.quantity / jp.parts_total)) : j.quantity;
+  if (j.parts?.length) JC.parts = Object.fromEntries(j.parts.map((x) => [x.part_id, x.quantity]));
+  openModal(`<div class="modal-h"><h2>Baskıyı düzenle</h2><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
     <div class="modal-b">
       <p class="muted" style="margin:0">Şu an: <b>${esc(j.product_name)}</b> · ${j.quantity} ${j.parts?.length ? 'parça' : 'adet'}${j.printer ? ' · ' + esc(j.printer) : ''}${file ? `<br><small>Yazıcıdaki dosya: ${esc(file)}</small>` : ''}</p>
       <label class="search">${icon('search')}<input class="input" id="jc-q" placeholder="Ürün, ortak parça ya da diğer amaçlı ara" autocomplete="off"></label>
@@ -2333,13 +2339,31 @@ async function openJobChange(id) {
       <div class="row" style="align-items:end">
         <div class="field"><span id="jc-qty-l">Kaç adet?</span><div class="stepper"><button type="button" data-act="jc-qty" data-d="-1" aria-label="Azalt">${icon('minus')}</button><input id="jc-qty" type="number" inputmode="numeric" min="1" value="${sets || 1}"><button type="button" data-act="jc-qty" data-d="1" aria-label="Arttır">${icon('plus')}</button></div></div>
       </div>
+      <div id="jc-parts"></div>
       ${file ? `<label class="switch sm np-remember"><input type="checkbox" id="jc-remember" checked><span>Bu dosyayı (<b>${esc(file)}</b>) seçtiğim ürüne bağla <small class="muted">— yazıcı bir dahaki sefere doğru ürünü tanır</small></span></label>` : ''}
       <p class="faint" style="margin:0;font-size:12.5px">Stoğa henüz bir şey eklenmedi; baskı bitince seçtiğiniz ürüne eklenir. Makara önerisi yeni ürünün rengine göre yenilenir.</p>
     </div>
-    <div class="modal-f"><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" data-act="jc-save" id="jc-save" disabled>Değiştir</button></div></div>`);
+    <div class="modal-f"><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" data-act="jc-save" id="jc-save" ${JC.sel ? '' : 'disabled'}>Kaydet</button></div></div>`);
   $('#jc-q').addEventListener('input', (e) => { JC.q = e.target.value; jcRender(); });
-  jcRender(); setTimeout(() => $('#jc-q')?.focus(), 50);
+  $('#jc-qty').addEventListener('input', () => { JC.parts = null; jcParts(); });
+  $('#jc-parts').addEventListener('input', (e) => { const i = e.target.closest('[data-jc-part]'); if (i) { JC.parts ||= {}; JC.parts[+i.dataset.jcPart] = Math.max(0, parseInt(i.value) || 0); jcPartsSum(); } });
+  jcRender(); jcParts();
 }
+// Parçalı ürün seçiliyse her parçadan kaç tane basıldığı (set sayısını değiştirmek hepsini set × parça adedine çeker)
+function jcParts() {
+  const box = $('#jc-parts'); if (!box) return;
+  const p = JC.sel?.k === 'p' ? productById(JC.sel.id) : null;
+  $('#jc-qty-l').textContent = p?.parts?.length ? `Kaç set? (${p.parts_total} parça/set)` : p?.set_size > 1 ? `Kaç set? (${p.set_size}'lü)` : 'Kaç adet?';
+  if (!p?.parts?.length) { box.innerHTML = ''; return; }
+  const sets = Math.max(1, parseInt($('#jc-qty').value) || 1);
+  const val = (x) => (JC.parts && x.id in JC.parts ? JC.parts[x.id] : x.per_unit * sets);
+  box.innerHTML = `<div class="res-parts"><span class="muted" style="font-size:13px">Bu baskıda her parçadan kaç tane var? <small class="faint">(basılmayanı 0 yapın)</small></span>
+    ${p.parts.map((x) => `<div class="np-part on"><div><b>${partDot(p, x.id)}${esc(x.name)}</b><span class="s">set başına ${x.per_unit}</span></div>
+      <div class="stepper sm"><button type="button" data-act="jc-part" data-id="${x.id}" data-d="-1" aria-label="Azalt">${icon('minus')}</button><input type="number" min="0" max="999" value="${val(x)}" data-jc-part="${x.id}"><button type="button" data-act="jc-part" data-id="${x.id}" data-d="1" aria-label="Arttır">${icon('plus')}</button></div></div>`).join('')}
+    <small class="muted" id="jc-psum"></small></div>`;
+  jcPartsSum();
+}
+function jcPartsSum() { const t = $$('[data-jc-part]').reduce((a, i) => a + (parseInt(i.value) || 0), 0); const el = $('#jc-psum'); if (el) el.textContent = `Toplam ${t} parça`; }
 function jcRender() {
   const q = trLower(JC.q).trim(), j = S.jobs.find((x) => x.id === JC.id);
   const hit = (x) => !q || trLower(x.name + ' ' + (x.file_name || '')).includes(q);
@@ -2357,6 +2381,7 @@ function jcRender() {
 async function jcSave() {
   if (!JC?.sel) return;
   const body = { quantity: Math.max(1, parseInt($('#jc-qty').value) || 1), remember_file: $('#jc-remember') ? $('#jc-remember').checked : false };
+  const pin = $$('[data-jc-part]'); if (pin.length) body.parts = pin.map((i) => ({ part_id: +i.dataset.jcPart, quantity: Math.max(0, parseInt(i.value) || 0) }));
   if (JC.sel.k === 'p') body.product_id = JC.sel.id; else body.component_id = JC.sel.id;
   $('#jc-save').disabled = true;
   try {
@@ -5389,9 +5414,11 @@ const ACTIONS = {
   'jc-pick': (el) => {
     JC.sel = { k: el.dataset.k, id: +el.dataset.id }; $$('#jc-list .pick').forEach((b) => b.classList.toggle('on', b === el)); $('#jc-save').disabled = false;
     const p = JC.sel.k === 'p' ? productById(JC.sel.id) : null;
-    $('#jc-qty-l').textContent = p?.parts?.length ? `Kaç set? (${p.parts_total} parça/set)` : p?.set_size > 1 ? `Kaç set? (${p.set_size}'lü)` : 'Kaç adet?';
+    if (p?.id !== S.jobs.find((x) => x.id === JC.id)?.product_id) JC.parts = null;
+    jcParts();
   },
-  'jc-qty': (el) => { const i = $('#jc-qty'); i.value = Math.max(1, (parseInt(i.value) || 1) + +el.dataset.d); },
+  'jc-qty': (el) => { const i = $('#jc-qty'); i.value = Math.max(1, (parseInt(i.value) || 1) + +el.dataset.d); JC.parts = null; jcParts(); },
+  'jc-part': (el) => { const i = $(`[data-jc-part="${el.dataset.id}"]`); i.value = clamp((parseInt(i.value) || 0) + +el.dataset.d, 0, 999); JC.parts ||= {}; JC.parts[+el.dataset.id] = +i.value; jcPartsSum(); },
   'jc-save': () => jcSave(),
   'bb-f': (el) => { S.bbf = el.dataset.v; render(); },
   'bb-open': (el) => openBuybox(el.dataset.bc),

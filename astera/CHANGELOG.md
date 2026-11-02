@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.7.8
+- Devam eden baskıyı düzenle: ürün, adet ve parçalı üründe her parçadan kaç tane basıldığı değiştirilebilir.
+- Baskı sonucu girilirken parçalı üründe ürünün bütün parçaları sorulur; planda olmayan parça ya da planlanandan fazlası da girilebilir.
+
 ## 1.7.7
 - Özel sipariş düzenleyicisi yenilendi (geniş pencere): solda müşteri, tarih ve ödeme; sağda kalemler. Her kalemin adedi, isteğe bağlı parçaları (kol, kafa, kaide…), basılan ilerlemesi; "Parçalı", "Ayrı fiyat / gram" ve "Filament rengi" tikleri; kalemi çoğaltma; seçilen kalem/parçaları baskıya verme. Baskı bitince basılan adetler kalemlere işlenir.
 - Özel sipariş kartları sütunlar arasında sürükle-bırak ile taşınır (Baskıda'ya bırakınca baskı penceresi açılır).
