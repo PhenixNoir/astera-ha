@@ -3467,6 +3467,14 @@ function ordShort(p) {
   const vals = Object.values(by), short = vals.filter((x) => x.miss).length;
   return { state: !short ? 'none' : short >= vals.length ? 'all' : 'some', by };
 }
+// Mağazanın il/ilçesi (Ayarlar → Kargo) ile aynı yere giden sipariş: "Merkez" ile "<İl> Merkez" aynı sayılır
+const trLow = (x) => (x || '').toLocaleLowerCase('tr').replace(/\s+/g, ' ').trim();
+function isNear(p) {
+  const sc = trLow(S.settings?.store_city); if (!sc || trLow(p.city) !== sc) return false;
+  const sd = trLow(S.settings?.store_district); if (!sd) return true;
+  const nd = (d) => trLow(d).replace(sc, '').trim() || 'merkez';
+  return nd(p.district) === nd(sd);
+}
 // Son teslim günü bugün (ya da geçmiş) olan sipariş bugün kargoya verilmeli
 function dueToday(dl) { if (!dl) return false; const e = new Date(); e.setHours(23, 59, 59, 999); return dl * 1000 <= e.getTime(); }
 const tyoDet = () => { try { return localStorage.getItem('tyoDet') === '1'; } catch { return false; } };
@@ -3487,7 +3495,7 @@ function tyoRow(p, r) {
       <summary>
         <span class="tyo-no"><b>${esc(p.order_number)}</b><small class="faint">${date}</small></span>
         <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" title="${esc(l.name || '')} ×${l.quantity}${sh.by[l.product_id]?.miss ? ` · rafta ${sh.by[l.product_id].have}, baskıda ${sh.by[l.product_id].print}, ${sh.by[l.product_id].miss} eksik` : ''}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? qtyBadge(l.quantity, 'tt-qb') : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
-        <span class="tyo-who"><b>${esc(p.customer || '—')}</b><small class="muted">${esc(p.city || '')}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
+        <span class="tyo-who"><b>${esc(p.customer || '—')}</b><small class="muted">${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''}${isNear(p) ? ` <span class="near-tag" title="Mağazayla aynı yer: pakete not eklemeyi unutmayın">${icon('pin')} Yakın · not ekle</span>` : ''}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
         <span class="tyo-amt">${r ? fmtTL(r.price) : p.pkg_total != null ? fmtTL(p.pkg_total) : '–'}</span>
         <span class="tyo-pr">${r ? `<span class="mg ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)}</span><small class="faint">${fmtPct(r.margin)}${r.missing.length ? ' · <span class="warn-text">eksik</span>' : ''}</small>` : '<span class="faint">–</span>'}</span>
         <span class="tyo-dl">${showDl && p.tab !== 'shipped' ? `<span class="tyo-term${today ? ' today' : ''}" title="Son teslim ${fmtDl(dl)}">${today ? '<b>Bugün verilmeli</b>' : ''}${dlChip(dl)}</span>` : ''}${p.can_label ? `<button type="button" class="btn btn-sm ${p.label_at ? 'btn-ghost' : ''} lbl-btn" data-act="ty-label" data-id="${esc(p.package_id)}" title="${p.label_at ? `Etiket ${fmtWhen(p.label_at)} basıldı · tekrar bas` : 'Kargo etiketini bas'}">${icon(p.label_at ? 'check' : 'print')} Barkod</button>`
@@ -3515,7 +3523,7 @@ function tyoBody(p) {
     const parts = pmiss ? `<span class="oc-parts" title="Sonraki set için elde ${pr.parts_ready}/${pr.parts_total} parça">${pmiss}/${pr.parts_total} parça eksik</span>` : '';
     return `<div class="oc-item${cancel ? ' cancel' : ''}${out ? (part ? ' out part' : ' out') : ''}">
       <span class="oc-img${l.thumbnail ? '' : ' none'}" style="${thumbStyle(l.thumbnail)}" data-zoom="${esc(l.thumbnail || '')}" data-title="${esc(l.name || '')}">${qtyBadge(l.quantity)}</span>
-      <div class="oc-tx"><b>${esc(l.name || 'Bilinmeyen ürün')}${l.ty_url && /^https?:\/\//.test(l.ty_url) ? ` <a class="oc-go" href="${esc(l.ty_url)}" target="_blank" rel="noopener" title="Trendyol'daki ürün sayfası">Trendyol ↗</a>` : ''}</b>${l.ty_name && pr && l.ty_name !== l.name ? `<small class="faint">${esc(l.ty_name)}</small>` : ''}
+      <div class="oc-tx"><b>${pr || (l.ty_url && /^https?:\/\//.test(l.ty_url)) ? `<button type="button" class="oc-name" data-act="oc-pmenu" data-pid="${pr ? pr.id : ''}" data-url="${esc(l.ty_url && /^https?:\/\//.test(l.ty_url) ? l.ty_url : '')}" data-name="${esc(pr?.name || l.name || '')}">${esc(l.name || 'Bilinmeyen ürün')}<svg class="oc-caret" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></button>` : esc(l.name || 'Bilinmeyen ürün')}</b>${l.ty_name && pr && l.ty_name !== l.name ? `<small class="faint">${esc(l.ty_name)}</small>` : ''}
         <div class="oc-meta">${l.barcode ? `<span class="mono">${esc(l.barcode)}</span>` : ''}${shelf}${parts}${state}${l.unit_price != null ? `<span class="faint oc-up">${fmtTL(l.unit_price)}</span>` : ''}</div>
         ${!l.product_id && l.barcode && !cancel ? `<div class="pick-match"><select class="input" data-tyo-match="${esc(l.barcode)}"><option value="">Hangi ürününüz?</option>${S.products.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select><button class="btn btn-sm btn-ok" data-act="tyo-match" data-code="${esc(l.barcode)}">Eşleştir</button></div>` : ''}</div></div>`;
   }).join('');
@@ -3537,6 +3545,28 @@ function tyoBody(p) {
     ${r ? `<details class="oc-pf"${pfOpen ? ' open' : ''}><summary><span class="oc-pill ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)} <small>${fmtPct(r.margin)}</small></span><span>Kâr ayrıntısı</span>${r.missing.length ? '<span class="warn-text" style="font-size:12.5px">eksik bilgi var</span>' : ''}</summary>
       <div class="oc-pf-b">${breakdownHTML(r, r.grams ? { grams: r.grams, perG: r.material / (1 + S.profit.cfg.fire_pct / 100) / r.grams } : null)}${r.missing.length ? `<p class="pf-warn">Eksik bilgi: ${r.missing.join(', ')}. Kâr bu kalemler olmadan hesaplandı.</p>` : ''}</div></details>` : ''}
   </div>`;
+}
+// Sipariş satırındaki ürün adı: düzenle / istatistik / Trendyol sayfası
+function ocMenu(btn) {
+  const old = $('#oc-menu'); if (old) { old.remove(); if (old.dataset.for === btn.dataset.pid + btn.dataset.url) return; }
+  const pid = +btn.dataset.pid || null, url = btn.dataset.url;
+  const m = document.createElement('div'); m.id = 'oc-menu'; m.className = 'oc-menu'; m.dataset.for = btn.dataset.pid + url; m.setAttribute('role', 'menu');
+  m.innerHTML = `${pid ? `<button type="button" role="menuitem" data-m="edit">${icon('edit')} Ürünü düzenle</button>
+      <button type="button" role="menuitem" data-m="stats">${icon('chart')} Satış istatistikleri</button>` : ''}
+    ${url ? `<a role="menuitem" class="ty" href="${esc(url)}" target="_blank" rel="noopener">${icon('external')} Trendyol'da aç</a>` : ''}`;
+  document.body.appendChild(m);
+  const r = btn.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+  m.style.top = (r.bottom + 6 + h > innerHeight - 8 ? r.top - h - 6 : r.bottom + 6) + 'px';
+  m.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-m]'); m.remove(); if (!b) return;
+    if (b.dataset.m === 'edit') openProductEditor(pid);
+    else { S.statQ = btn.dataset.name || ''; location.hash = '#/istatistik'; }
+  });
+  const off = (e) => { if (!m.contains(e.target) && e.target !== btn) { m.remove(); document.removeEventListener('pointerdown', off, true); removeEventListener('scroll', off2, true); } };
+  const off2 = () => { m.remove(); document.removeEventListener('pointerdown', off, true); removeEventListener('scroll', off2, true); };
+  setTimeout(() => { document.addEventListener('pointerdown', off, true); addEventListener('scroll', off2, true); });
+  addEventListener('keydown', function esc1(e) { if (e.key === 'Escape') { m.remove(); removeEventListener('keydown', esc1); } });
 }
 function tyoRes() { const el = $('#tyo-res'); if (!el) return; el.innerHTML = tyoResults(); tyoBindRes(); tick(); }
 function tyoBind() {
@@ -4567,6 +4597,7 @@ function weeklySetHTML() {
   </div></section>`;
 }
 // ---------- Ayarlar → Etiket yazıcısı (Trendyol ortak etiketi, ZPL)
+const TR_CITIES = 'Adana Adıyaman Afyonkarahisar Ağrı Aksaray Amasya Ankara Antalya Ardahan Artvin Aydın Balıkesir Bartın Batman Bayburt Bilecik Bingöl Bitlis Bolu Burdur Bursa Çanakkale Çankırı Çorum Denizli Diyarbakır Düzce Edirne Elazığ Erzincan Erzurum Eskişehir Gaziantep Giresun Gümüşhane Hakkari Hatay Iğdır Isparta İstanbul İzmir Kahramanmaraş Karabük Karaman Kars Kastamonu Kayseri Kilis Kırıkkale Kırklareli Kırşehir Kocaeli Konya Kütahya Malatya Manisa Mardin Mersin Muğla Muş Nevşehir Niğde Ordu Osmaniye Rize Sakarya Samsun Şanlıurfa Siirt Sinop Şırnak Sivas Tekirdağ Tokat Trabzon Tunceli Uşak Van Yalova Yozgat Zonguldak'.split(' ');
 const APK_URL = 'https://github.com/PhenixNoir/astera-ha/releases/latest';
 function remoteSetHTML() {
   const a = S.authCfg; if (!a) return '';
@@ -4668,6 +4699,11 @@ PAGES.ayarlar = {
           <label class="field" style="max-width:160px"><span>Kargo çıkış saati</span><input class="input" type="time" id="ship-cutoff" value="${esc(S.settings.ship_cutoff || '')}" ${S.settings.ship_cutoff ? '' : 'disabled'}></label>
           <label class="switch" style="margin-top:20px"><input type="checkbox" id="ship-raw" ${S.settings.ship_cutoff ? '' : 'checked'}> Trendyol'un saatini aynen kullan</label>
         </div>
+        <p class="muted" style="margin:4px 0 0">Mağazanızın bulunduğu yer. Aynı il ve ilçeye giden siparişlerde <span class="near-tag">${icon('pin')} Yakın · not ekle</span> yazar. İlçeyi boş bırakırsanız ilin tamamı yakın sayılır.</p>
+        <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
+          <label class="field" style="max-width:200px"><span>İl</span><input class="input" id="store-city" list="tr-cities" value="${esc(S.settings.store_city || '')}" placeholder="ör. Kırklareli" autocomplete="off"><datalist id="tr-cities">${TR_CITIES.map((c) => `<option value="${c}">`).join('')}</datalist></label>
+          <label class="field" style="max-width:200px"><span>İlçe</span><input class="input" id="store-district" value="${esc(S.settings.store_district || '')}" placeholder="ör. Merkez" autocomplete="off"></label>
+          <button class="btn btn-sm" data-act="store-loc-save">Kaydet</button></div>
       </div></section>
 
       <section class="panel"><div class="panel-h"><h2>Makineler</h2></div><div class="panel-b" style="display:grid;gap:14px">
@@ -5013,6 +5049,7 @@ const ACTIONS = {
   'tyo-clear': async () => { const f = S.tyo, reload = f.rD !== 'month'; Object.assign(f, { q: '', cat: 'all', pid: null, rA: 'all', rD: 'month' }); if (reload) { try { await loadTyOrders(); } catch (e) { fail(e); } } tyoRedraw(); },
   'tyo-sync': async (el) => { el.disabled = true; try { const r = await api('POST', '/api/trendyol/sync'); await Promise.all([loadTyOrders(), loadProducts()]); toast(r.deducted ? `Eşitlendi · ${r.deducted} adet stoktan düştü` : 'Eşitlendi'); render(); } catch (e) { fail(e); el.disabled = false; } },
   'tyo-pick': (el) => tyoPick([el.dataset.id]),
+  'oc-pmenu': (el, e) => { e?.stopPropagation?.(); ocMenu(el); },
   'tyo-pick-sel': () => tyoPick(tyoFiltered().filter((p) => p.can_pick && S.tyo.sel.has(p.package_id)).map((p) => p.package_id)),
   'tyo-match': async (el) => {
     const code = el.dataset.code; const sel = $$('[data-tyo-match]').find((x) => x.dataset.tyoMatch === code);
@@ -5270,6 +5307,9 @@ const ACTIONS = {
       } catch (e) { fail(e); }
     };
     inp.click();
+  },
+  'store-loc-save': async () => {
+    try { S.settings = await api('PUT', '/api/settings', { store_city: $('#store-city').value, store_district: $('#store-district').value }); toast(S.settings.store_city ? `Mağaza konumu: ${S.settings.store_city}${S.settings.store_district ? ' · ' + S.settings.store_district : ''}` : 'Mağaza konumu kaldırıldı'); } catch (e) { fail(e); }
   },
   'ra-save': async () => {
     const cur = $('#ra-cur')?.value || '', pw = $('#ra-new')?.value || '';

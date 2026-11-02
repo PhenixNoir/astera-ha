@@ -1,5 +1,10 @@
 # Sürüm notları
 
+## 1.7.2
+- Siparişlerde şehrin yanında ilçe. Ayarlar → Kargo'ya mağaza il/ilçesi eklendi; aynı yere giden siparişte yeşil "Yakın · not ekle" etiketi.
+- Sipariş içindeki ürün adına tıklayınca menü: Ürünü düzenle, Satış istatistikleri, Trendyol'da aç (ayrı Trendyol bağlantısı kaldırıldı).
+- Sipariş kartları hafif sıralı tonla (zebra) ayrışır; filtre satırı daraltıldı.
+
 ## 1.7.1
 - Yeni sipariş, iade ve soru gelince ekranın alt ortasında kısa bir şerit çıkar ve ses çalar (siparişe yeni, neşeli bir ses); şeride tıklayınca ilgili sayfa açılır.
 - Sipariş Hazırlanıyor'a çekilince altta 2 saniyelik "Sipariş çıkarıldı" şeridi.

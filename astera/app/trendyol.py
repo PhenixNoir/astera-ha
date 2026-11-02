@@ -57,6 +57,8 @@ def public_settings():
             "app_tagline": _get("app_tagline") if _get("app_tagline") is not None else "Management",
             "app_logo": _get("app_logo") or None,
             "ship_cutoff": _get("ship_cutoff") if _get("ship_cutoff") is not None else "17:00",
+            "store_city": _get("store_city", "") or "",
+            "store_district": _get("store_district", "") or "",
             "ship_days": int(_get("ship_days", "1") or 1),
             "ship_skip_sunday": _get("ship_skip_sunday", "0") == "1",
             "plan_days": int(_get("plan_days", "14") or 14),
@@ -129,6 +131,9 @@ def save_settings(b):
                 _set("ty_since", int(time.time() * 1000))
         if "ty_since" in b and b["ty_since"]:
             _set("ty_since", int(b["ty_since"]))
+        for k in ("store_city", "store_district"):
+            if k in b:
+                _set(k, (b[k] or "").strip()[:40])
         if "ship_cutoff" in b:
             v = (b["ship_cutoff"] or "").strip()   # boş = Trendyol'un saatini aynen kullan
             if v and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v):
@@ -452,6 +457,14 @@ def sync(manual=False):
             except Exception:
                 _db().rollback()
                 raise
+        if _get("ty_backfill_v1") == "1" and _get("ty_backfill_dist") != "1":
+            try:   # ilçe bu sürümden önce saklanmıyordu: açık siparişler için doldur
+                stats["backfilled_dist"] = backfill_details(max_days=21, where="district IS NULL")
+                with _lock:
+                    _set("ty_backfill_dist", "1")
+                    _db().commit()
+            except TrendyolError:
+                pass
         if _get("ty_backfill_v1") == "1" and _get("ty_backfill_com") != "1":
             try:
                 stats["backfilled_com"] = backfill_details(where="commission IS NULL")
@@ -548,8 +561,9 @@ def pkg_info(pkg):
     if not name and isinstance(addr, dict):
         name = (addr.get("fullName") or " ".join(x for x in (addr.get("firstName"), addr.get("lastName")) if x)).strip()
     city = (addr.get("city") if isinstance(addr, dict) else None) or None
+    district = ((addr.get("district") or addr.get("countyName")) if isinstance(addr, dict) else None) or None
     cno = pkg.get("cargoTrackingNumber")
-    return {"pkg_total": total, "customer": name or None, "city": city, "deadline": pkg_deadline(pkg),
+    return {"pkg_total": total, "customer": name or None, "city": city, "district": district, "deadline": pkg_deadline(pkg),
             "cargo_no": str(cno) if cno not in (None, "", 0) else None,
             "cargo_provider": pkg.get("cargoProviderName") or None,
             "cargo_link": pkg.get("cargoTrackingLink") or None}
@@ -561,10 +575,10 @@ def _store_details(pkg, line, key, info=None):
     _db().execute("""UPDATE ty_lines SET unit_price=COALESCE(?, unit_price), pkg_total=COALESCE(?, pkg_total),
                      customer=COALESCE(?, customer), city=COALESCE(?, city), deadline=COALESCE(?, deadline),
                      line_id=COALESCE(?, line_id), cargo_no=COALESCE(?, cargo_no), cargo_provider=COALESCE(?, cargo_provider),
-                     cargo_link=COALESCE(?, cargo_link), commission=COALESCE(?, commission) WHERE line_key=?""",
+                     cargo_link=COALESCE(?, cargo_link), commission=COALESCE(?, commission), district=COALESCE(?, district) WHERE line_key=?""",
                   (line_unit_revenue(line), info["pkg_total"], info["customer"], info["city"], info["deadline"],
                    str(lid) if lid else None, info.get("cargo_no"), info.get("cargo_provider"), info.get("cargo_link"),
-                   _f(line.get("commission")), key))
+                   _f(line.get("commission")), info.get("district"), key))
 
 
 def _line_key(pkg, line):
@@ -871,10 +885,10 @@ def orders(month=None, start=None, end=None):
     for r in rows:
         k = r["package_id"] or r["order_number"] or r["line_key"]
         g = pk.setdefault(k, {"package_id": r["package_id"], "order_number": r["order_number"], "order_date": r["order_date"],
-                              "customer": r["customer"], "city": r["city"], "pkg_total": r["pkg_total"], "deadline": r["deadline"],
+                              "customer": r["customer"], "city": r["city"], "district": r["district"], "pkg_total": r["pkg_total"], "deadline": r["deadline"],
                               "packed_at": r["packed_at"], "cargo_no": r["cargo_no"], "cargo_provider": r["cargo_provider"],
                               "cargo_link": r["cargo_link"], "label_at": r["label_at"], "statuses": [], "lines": []})
-        for f in ("customer", "city", "pkg_total", "deadline", "packed_at", "cargo_no", "cargo_provider", "cargo_link", "label_at"):
+        for f in ("customer", "city", "district", "pkg_total", "deadline", "packed_at", "cargo_no", "cargo_provider", "cargo_link", "label_at"):
             g[f] = g[f] or r[f]
         g["statuses"].append(r["ty_status"] or "")
         g["lines"].append({"line_key": r["line_key"], "product_id": r["product_id"], "name": r["matched_name"] or r["product_name"] or r["barcode"],
