@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.7.6
+- Kendi bilgisayarında çalışan Astera için tek tuşla güncelleme: Ayarlar → Genel → Uygulama'da "Yeni sürüm hazır" kutusu, değişiklik listesi ve Güncelle düğmesi. Güncellemeden önce otomatik yedek alınır, eski dosyalar data/eski_surum'a saklanır, program kendiliğinden yeniden başlar. Yeni sürüm çıkınca bildirim gelir (6 saatte bir kontrol).
+
 ## 1.7.5
 - İlk kurulum sihirbazı: mağaza adı ve logo, Trendyol bağlantısı (dene düğmesiyle), makineler, stok düşme aşaması / kargo saati / mağaza konumu, kategoriler ve özet. Hiç ürün ve Trendyol bağlantısı yokken kendiliğinden açılır; Ayarlar → Genel → "Kurulum sihirbazını aç" ile yeniden açılabilir.
 

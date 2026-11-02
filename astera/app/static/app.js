@@ -4622,6 +4622,16 @@ function weeklySetHTML() {
 // ---------- Ayarlar → Etiket yazıcısı (Trendyol ortak etiketi, ZPL)
 const TR_CITIES = 'Adana Adıyaman Afyonkarahisar Ağrı Aksaray Amasya Ankara Antalya Ardahan Artvin Aydın Balıkesir Bartın Batman Bayburt Bilecik Bingöl Bitlis Bolu Burdur Bursa Çanakkale Çankırı Çorum Denizli Diyarbakır Düzce Edirne Elazığ Erzincan Erzurum Eskişehir Gaziantep Giresun Gümüşhane Hakkari Hatay Iğdır Isparta İstanbul İzmir Kahramanmaraş Karabük Karaman Kars Kastamonu Kayseri Kilis Kırıkkale Kırklareli Kırşehir Kocaeli Konya Kütahya Malatya Manisa Mardin Mersin Muğla Muş Nevşehir Niğde Ordu Osmaniye Rize Sakarya Samsun Şanlıurfa Siirt Sinop Şırnak Sivas Tekirdağ Tokat Trabzon Tunceli Uşak Van Yalova Yozgat Zonguldak'.split(' ');
 const APK_URL = 'https://github.com/PhenixNoir/astera-ha/releases/latest';
+// Kendi bilgisayarında çalışan Astera için güncelleme kutusu (Home Assistant'ta güncellemeyi HA yapar)
+function updHTML() {
+  const u = S.upd; if (!u) return '';
+  if (!u.enabled) return `<div class="upd"><span class="upd-ic">${icon('check')}</span><div><b>Sürüm ${esc(u.current || '?')}</b><small class="muted">Güncellemeler Home Assistant → Ayarlar → Eklentiler'den yapılır.</small></div></div>`;
+  if (u.available) return `<div class="upd new"><span class="upd-ic">${icon('download')}</span><div class="upd-tx"><b>Yeni sürüm hazır: ${esc(u.latest)}</b><small class="muted">Şu an ${esc(u.current || '?')} kullanılıyor. Verileriniz (ürünler, siparişler, ayarlar) korunur; güncellemeden önce otomatik yedek alınır.</small>
+      ${u.notes?.length ? `<details class="upd-notes"><summary>Neler değişti?</summary>${u.notes.map((n) => `<h4>${esc(n.version)}</h4><ul>${n.items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`).join('')}</details>` : ''}</div>
+    <button class="btn btn-primary" data-act="upd-apply" ${u.busy ? 'disabled' : ''}>${icon('download')} Güncelle</button></div>`;
+  return `<div class="upd"><span class="upd-ic">${icon('check')}</span><div class="upd-tx"><b>Sürüm ${esc(u.current || '?')}${u.check_error ? '' : ' · güncel'}</b><small class="muted">${u.check_error ? esc(u.check_error) : `Son kontrol ${fmtWhen(u.checked_at)}`}</small></div>
+    <button class="btn btn-sm btn-ghost" data-act="upd-check">${icon('refresh')} Kontrol et</button></div>`;
+}
 function remoteSetHTML() {
   const a = S.authCfg; if (!a) return '';
   const dev = a.devices || [];
@@ -4700,7 +4710,7 @@ function setGroupsBind() {
   }));
 }
 PAGES.ayarlar = {
-  async load() { await loadCategories(); await loadSettings(); if ((S.settings.printers || []).some(hasLink)) await loadBambu(); S.archived = (await api('GET', '/api/products?archived=1')).filter((p) => p.archived); S.backups = await api('GET', '/api/backups').catch(() => null); S.weekly = await api('GET', '/api/weekly').catch(() => null); S.labelCfg = await api('GET', '/api/label/settings').catch(() => null); S.version = await api('GET', '/api/version').catch(() => null); S.authCfg = await api('GET', '/api/auth/settings').catch(() => null); },
+  async load() { await loadCategories(); await loadSettings(); if ((S.settings.printers || []).some(hasLink)) await loadBambu(); S.archived = (await api('GET', '/api/products?archived=1')).filter((p) => p.archived); S.backups = await api('GET', '/api/backups').catch(() => null); S.weekly = await api('GET', '/api/weekly').catch(() => null); S.labelCfg = await api('GET', '/api/label/settings').catch(() => null); S.version = await api('GET', '/api/version').catch(() => null); S.authCfg = await api('GET', '/api/auth/settings').catch(() => null); S.upd = await api('GET', '/api/update').catch(() => null); },
   html() {
     const theme = localStorage.getItem('theme') || 'auto';
     const nsup = 'Notification' in window, secure = window.isSecureContext;
@@ -4727,6 +4737,7 @@ PAGES.ayarlar = {
             <div><button class="btn btn-sm btn-ghost" data-act="open-wizard">${icon('refresh')} Kurulum sihirbazını aç</button></div>
           </div>
         </div>
+        ${updHTML()}
       </div></section>
       <section class="panel"><div class="panel-h"><h2>Bildirimler</h2></div><div class="panel-b" style="display:grid;gap:12px">
         <p class="muted" style="margin:0">Baskı süresi dolduğunda uygulama açık olan her ekranda sonucu sorar ve sesli uyarı verir. Sistem bildirimi için tarayıcı izni gerekir.</p>
@@ -5367,6 +5378,24 @@ const ACTIONS = {
     inp.click();
   },
   'open-wizard': () => openWizard(),
+  'upd-check': async (el) => { el.disabled = true; try { S.upd = await api('GET', '/api/update?force=1'); render(); if (!S.upd.available && !S.upd.check_error) toast('En son sürümü kullanıyorsunuz'); } catch (e) { fail(e); el.disabled = false; } },
+  'upd-apply': async (el) => {
+    const u = S.upd; if (!confirm(`Astera ${u.current} → ${u.latest} sürümüne güncellenecek.\n\nÖnce veritabanının yedeği alınır, sonra program yeniden başlar (birkaç saniye). Verileriniz korunur. Devam edilsin mi?`)) return;
+    el.disabled = true;
+    const ov = document.createElement('div'); ov.className = 'upd-ov'; ov.innerHTML = `<div><span class="spin"></span><b>Güncelleniyor…</b><small>Yeni sürüm indiriliyor, ardından program yeniden başlayacak.</small></div>`; document.body.appendChild(ov);
+    try {
+      const r = await api('POST', '/api/update/apply');
+      ov.querySelector('b').textContent = `${r.version} yüklendi, yeniden başlatılıyor…`;
+      const t0 = Date.now();
+      await new Promise((res) => setTimeout(res, 2500));
+      for (;;) {
+        try { const v = await (await fetch('/api/version', { cache: 'no-store' })).json(); if (v.version === r.version) break; } catch { /* yeniden başlıyor */ }
+        if (Date.now() - t0 > 60000) { ov.querySelector('small').textContent = 'Program kendiliğinden açılmadıysa Baslat.bat ile açın, sonra bu sayfayı yenileyin.'; return; }
+        await new Promise((res) => setTimeout(res, 1000));
+      }
+      location.reload();
+    } catch (e) { ov.remove(); fail(e); el.disabled = false; }
+  },
   'go-set': (el) => { try { localStorage.setItem('setGrp', el.dataset.g); } catch { /* */ } },
   'store-loc-save': async () => {
     try { S.settings = await api('PUT', '/api/settings', { store_city: $('#store-city').value, store_district: $('#store-district').value }); toast(S.settings.store_city ? `Mağaza konumu: ${S.settings.store_city}${S.settings.store_district ? ' · ' + S.settings.store_district : ''}` : 'Mağaza konumu kaldırıldı'); } catch (e) { fail(e); }

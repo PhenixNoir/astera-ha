@@ -1,0 +1,84 @@
+﻿ASTERA MANAGEMENT — KURULUM KILAVUZU (Windows)
+==============================================
+
+Astera, bilgisayarında çalışan ve tarayıcıdan açılan bir stok / üretim / Trendyol
+yönetim paneli. Tek ihtiyacı Python. Başka hiçbir program ya da paket kurman gerekmez.
+
+
+1) PYTHON'U KUR (bir kez)
+-------------------------
+1. https://www.python.org/downloads/ adresine gir, sarı "Download Python 3.x" düğmesine bas.
+2. İnen dosyayı çalıştır.
+3. İLK EKRANDA EN ALTTAKİ "Add python.exe to PATH" KUTUSUNU İŞARETLE.  (Çok önemli!)
+4. "Install Now" de, bitince "Close".
+
+Kontrol: Başlat menüsüne "cmd" yaz, aç ve şunu yaz:
+      py --version
+"Python 3.x.x" yazıyorsa tamam. Hata verirse Python'u kaldırıp 3. adımı unutmadan tekrar kur.
+
+
+2) ASTERA'YI YERLEŞTİR
+----------------------
+1. Zip dosyasına sağ tıkla > "Tümünü ayıkla".
+2. Çıkan "Atolye" klasörünü kalıcı bir yere taşı, örneğin  C:\Atolye
+   (Masaüstü ya da İndirilenler'de bırakma; yanlışlıkla silinmesin.)
+
+
+3) ÇALIŞTIR
+-----------
+1. Atolye klasöründeki  Baslat.bat  dosyasına çift tıkla.
+2. Siyah bir pencere açılır ve tarayıcı kendiliğinden  http://localhost:8080  adresinde açılır.
+3. Windows Güvenlik Duvarı soru sorarsa "Özel ağlar" için İZİN VER.
+   (Telefondan ve diğer bilgisayarlardan erişim bununla açılır.)
+4. Siyah pencere açık kaldığı sürece panel çalışır. Pencereyi kapatırsan panel durur.
+
+Telefondan açmak: Siyah pencerede "Telefondan / ağdan: http://192.168.x.x:8080" gibi bir adres yazar.
+Telefon aynı Wi-Fi'deyken bu adresin sonuna /m ekleyip aç (örnek: http://192.168.1.25:8080/m).
+Tarayıcı menüsünden "Ana ekrana ekle" dersen uygulama gibi açılır.
+
+
+4) BİLGİSAYAR AÇILINCA KENDİLİĞİNDEN ÇALIŞSIN (isteğe bağlı)
+------------------------------------------------------------
+1. Klavyede  Win + R  > "shell:startup" yaz > Enter.
+2. Açılan klasöre, Atolye klasöründeki  Arka_planda_baslat.vbs  dosyasının KISAYOLUNU koy
+   (dosyaya sağ tık > "Kısayol oluştur", oluşan kısayolu o klasöre taşı).
+3. Artık bilgisayar açılınca pencere açmadan arka planda çalışır.
+   Durdurmak için:  Durdur.bat
+
+
+5) İLK AYARLAR (panelde)
+------------------------
+- Ayarlar > Uygulama: kendi mağaza adını ve logonu koy.
+- Ayarlar > Kargo etiketi yazıcısı > "Etiket logosu": etikete basılacak logonu yükle
+  (siyah, şeffaf arka planlı PNG en iyisi). İstemezsen "Logo kullanma".
+- Satış sayfası > Trendyol ayarları: Satıcı ID, API Key ve API Secret.
+  Bunlar Trendyol satıcı panelinde:  Hesap Bilgilerim > Entegrasyon Bilgileri.
+  Girdikten sonra "Bağlantıyı dene", sonra "Otomatik takip açık".
+- Ayarlar > Makineler: Bambu / Klipper (Moonraker) / Elegoo yazıcılarını ekle (aynı ağda olmalılar).
+- Ürünler > Ekle: ürünlerini gir. Trendyol barkodunu ürünün barkod alanına yazarsan siparişler eşleşir.
+
+Ayrıntılı anlatım:  BENIOKU.md  (Not Defteri ile açılır).
+
+
+6) GÜNCELLEME
+-------------
+Yeni sürüm zip'i geldiğinde:
+1. Durdur.bat ile Astera'yı kapat (ya da siyah pencereyi kapat).
+2. Yeni zip'teki dosyaları mevcut Atolye klasörünün ÜSTÜNE kopyala, "üzerine yaz" de.
+3. "data" KLASÖRÜNE DOKUNMA. Bütün verilerin (ürünler, siparişler, ayarlar, görseller) orada.
+4. Baslat.bat ile tekrar aç, tarayıcıda Ctrl+F5 yap.
+
+
+7) YEDEK
+--------
+Astera her gün  data\yedek  klasörüne kendiliğinden yedek alır.
+Ayarlar > Yedekleme'den ikinci bir klasör (OneDrive / Google Drive klasörü, USB disk) seçersen oraya da kopyalar.
+Bilgisayar değiştirirken: Atolye klasörünün tamamını (data dahil) yeni bilgisayara kopyalaman yeterli.
+
+
+SORUN GİDERME
+-------------
+- "Python bulunamadı": Python'u "Add python.exe to PATH" işaretli olarak yeniden kur.
+- Tarayıcı açılmadı: elle  http://localhost:8080  adresini aç.
+- Pencere hemen kapanıyor / "8080 kullanılıyor": Astera zaten arka planda çalışıyor olabilir; Durdur.bat'a bas, tekrar dene.
+- Telefondan açılmıyor: bilgisayar ve telefon aynı Wi-Fi'de mi? Güvenlik Duvarı'nda Python'a "Özel ağ" izni verildi mi?

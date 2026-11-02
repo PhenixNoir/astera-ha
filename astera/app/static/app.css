@@ -2732,3 +2732,18 @@ body.wz-open { overflow: hidden; }
   .wz-main { padding: 28px 16px 20px; }
   .wz-row3, .wz-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Güncelleme */
+.upd { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; }
+.upd.new { border-color: var(--pei); background: var(--pei-wash); }
+.upd-ic { flex: none; width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--sheet-2); color: var(--ok); }
+.upd.new .upd-ic { background: var(--pei); color: #fff; } .upd-ic svg { width: 20px; height: 20px; }
+.upd-tx { flex: 1; min-width: 220px; display: grid; gap: 3px; } .upd small { font-size: 13px; }
+.upd-notes summary { cursor: pointer; font-size: 13.5px; font-weight: 600; margin-top: 4px; }
+.upd-notes h4 { margin: 10px 0 2px; font-size: 13.5px; } .upd-notes ul { margin: 0; padding-left: 18px; font-size: 13.5px; color: var(--ink-2); display: grid; gap: 2px; }
+.upd-ov { position: fixed; inset: 0; z-index: 600; display: grid; place-items: center; background: color-mix(in srgb, var(--plate) 80%, transparent); backdrop-filter: blur(4px); }
+.upd-ov > div { display: grid; gap: 8px; justify-items: center; text-align: center; padding: 28px 34px; border-radius: 16px; background: var(--sheet); border: 1px solid var(--line); box-shadow: 0 20px 60px rgba(0,0,0,.3); max-width: 380px; }
+.upd-ov small { color: var(--ink-3); }
+.upd-ov .spin { width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--line-2); border-top-color: var(--pei); animation: upd-spin .8s linear infinite; }
+@keyframes upd-spin { to { transform: rotate(360deg); } }
+.upd.new { align-items: flex-start; } .upd.new > .btn { margin-top: 2px; }

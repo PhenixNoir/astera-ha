@@ -48,6 +48,7 @@ import finans
 import musteri
 import push
 import auth
+import updater
 
 # Windows kayıt defterindeki bozuk MIME eşlemelerine karşı
 for _ext, _type in ((".js", "application/javascript"), (".css", "text/css"), (".svg", "image/svg+xml"),
@@ -3495,6 +3496,36 @@ def api_version(req):
     return {"version": app_version(), "platform": "Home Assistant" if os.environ.get("ATOLYE_HA") else ("Windows" if sys.platform.startswith("win") else "Linux")}
 
 
+@route("GET", "/api/update", lock=False)
+def api_update_check(req):
+    return updater.check(force=req.query.get("force") == "1")
+
+
+@route("POST", "/api/update/apply", lock=False)
+def api_update_apply(req):
+    if not updater.enabled():
+        raise ApiError("Home Assistant'ta güncelleme Home Assistant'tan yapılır")
+    try:
+        yedek.make("guncelleme")   # ne olur ne olmaz: veritabanının yedeği
+    except Exception as e:  # noqa
+        print("Güncelleme öncesi yedek alınamadı:", e)
+    try:
+        res = updater.apply()
+    except ValueError as e:
+        raise ApiError(str(e))
+    except Exception as e:  # noqa
+        raise ApiError(f"Güncelleme indirilemedi: {e}", 502)
+    updater.restart()
+    return res
+
+
+def _update_notice(info):
+    with DB_LOCK:
+        notify._upsert(f"update:{info['latest']}", "report", "info", f"Astera {info['latest']} hazır",
+                       "Ayarlar → Genel → Uygulama'dan tek tuşla güncelleyebilirsiniz.", {"t": "go", "href": "#/ayarlar"})
+        db().commit()
+
+
 @route("GET", "/api/label/settings")
 def api_label_settings(req):
     return etiket.public_conf()
@@ -3812,8 +3843,17 @@ def main():
     finans.start()
     musteri.start()
     yedek.start()
+    updater.init(BASE_DIR, DATA_DIR, app_version)
+    updater.start_checker(_update_notice)
     _quiet_console()
-    srv = QuietServer((args.host, args.port), Handler)
+    for attempt in range(40):   # güncellemeden sonra yeniden başlarken eski süreç portu bırakana kadar bekle
+        try:
+            srv = QuietServer((args.host, args.port), Handler)
+            break
+        except OSError:
+            if not os.environ.get("ATOLYE_RESTART") or attempt == 39:
+                raise
+            time.sleep(0.5)
     srv.daemon_threads = True
     print("\n  Astera çalışıyor")
     print(f"  Bu bilgisayardan:  http://localhost:{args.port}")
