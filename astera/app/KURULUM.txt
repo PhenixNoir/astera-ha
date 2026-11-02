@@ -62,7 +62,12 @@ Ayrıntılı anlatım:  BENIOKU.md  (Not Defteri ile açılır).
 
 6) GÜNCELLEME
 -------------
-Yeni sürüm zip'i geldiğinde:
+Kolay yol (1.7.6 ve sonrası): Yeni sürüm çıkınca bildirim gelir. Ayarlar > Genel > Uygulama
+bölümünde "Yeni sürüm hazır" kutusundaki Güncelle düğmesine bas. Astera önce yedek alır,
+yeni sürümü indirir ve kendiliğinden yeniden açılır (siyah pencerede çalışıyorsa yeni bir
+pencere açılır, eskisini kapatabilirsin). İnternet bağlantısı gerekir.
+
+Elle güncelleme (yeni sürüm zip'i geldiğinde):
 1. Durdur.bat ile Astera'yı kapat (ya da siyah pencereyi kapat).
 2. Yeni zip'teki dosyaları mevcut Atolye klasörünün ÜSTÜNE kopyala, "üzerine yaz" de.
 3. "data" KLASÖRÜNE DOKUNMA. Bütün verilerin (ürünler, siparişler, ayarlar, görseller) orada.
