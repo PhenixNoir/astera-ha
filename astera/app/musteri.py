@@ -15,6 +15,7 @@ import trendyol
 
 _db = _lock = _get = _set = _change_stock = _codes = None
 POLL_EVERY = 300
+QNA_FAST = 60
 _busy = threading.Lock()
 
 SCHEMA = """
@@ -292,7 +293,7 @@ def _refresh_one(claim_id):
 
 # ---------------------------------------------------------------- sorular
 
-def sync_questions(days=14):
+def sync_questions(days=14, status=None):
     with _lock:
         sid = _get("ty_seller_id", "")
     end = int(time.time() * 1000)
@@ -301,7 +302,8 @@ def sync_questions(days=14):
     while True:
         data = trendyol._request("/integration/qna/sellers/{sid}/questions/filter",
                                  {"supplierId": sid, "startDate": trendyol.to_ty(start), "endDate": trendyol.to_ty(end) + 600000,
-                                  "page": page, "size": 50, "orderByField": "CreatedDate", "orderByDirection": "DESC"})
+                                  "page": page, "size": 50, "orderByField": "CreatedDate", "orderByDirection": "DESC",
+                                  **({"status": status} if status else {})})
         content = data.get("content") or []
         with _lock:
             for q in content:
@@ -395,7 +397,20 @@ def _loop():
                 sync_all()
         except Exception as e:  # noqa
             print("İade/soru eşitleme hatası:", e)
-        time.sleep(POLL_EVERY)
+        # arada her dakika yalnızca cevap bekleyen soruları kontrol et (yeni soru 5 dakika beklemesin)
+        for _ in range(POLL_EVERY // QNA_FAST - 1):
+            time.sleep(QNA_FAST)
+            try:
+                with _lock:
+                    on = _get("ty_enabled", "0") == "1" and bool(_get("ty_seller_id", "")) and _get("qna_enabled", "1") != "0"
+                if on and _busy.acquire(blocking=False):
+                    try:
+                        sync_questions(status="WAITING_FOR_ANSWER")
+                    finally:
+                        _busy.release()
+            except Exception as e:  # noqa
+                print("Soru kontrol hatası:", e)
+        time.sleep(QNA_FAST)
 
 
 def start():

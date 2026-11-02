@@ -32,6 +32,26 @@ function toast(msg, opts = {}) {
 }
 const fail = (e) => toast(e.message || String(e), { bad: true });
 
+// Alt orta şerit: yeni sipariş / iade / soru ve kısa onaylar. Aynı anda en çok 3 şerit, tıklayınca ilgili sayfa.
+const ISLAND_IC = { order: 'cart', claim: 'return', question: 'chat', ok: 'check' };
+function island(kind, text, opts = {}) {
+  let box = $('#islands');
+  if (!box) { box = document.createElement('div'); box.id = 'islands'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
+  while (box.children.length >= 3) box.firstElementChild.remove();
+  const el = document.createElement(opts.href ? 'button' : 'div');
+  if (opts.href) el.type = 'button';
+  el.className = `island k-${kind}`;
+  el.innerHTML = `<span class="is-ic">${icon(ISLAND_IC[kind] || 'bell')}</span><span class="is-t">${text}</span>`;
+  if (opts.href) el.onclick = () => { location.hash = opts.href; el.remove(); };
+  box.appendChild(el);
+  let left = opts.ms || 5000, t0 = Date.now(), tm;
+  const out = () => { el.classList.add('out'); setTimeout(() => el.remove(), 260); };
+  const run = () => { t0 = Date.now(); tm = setTimeout(out, left); };
+  el.addEventListener('mouseenter', () => { clearTimeout(tm); left = Math.max(1200, left - (Date.now() - t0)); });
+  el.addEventListener('mouseleave', run);
+  run();
+}
+
 const nowS = () => Math.floor(Date.now() / 1000) + S.offset;
 function fmtDur(min) {
   min = Math.round(min || 0);
@@ -504,14 +524,32 @@ async function loadNotifs() {
     const d = await api('GET', '/api/notifications');
     const before = new Set((S.notif?.items || []).filter((n) => !n.resolved_at).map((n) => n.id));
     const fresh = S.notif ? d.items.filter((n) => !n.resolved_at && !before.has(n.id)) : [];
+    // yeni sipariş bildirimi tek kayıtta toplanıyor: güncellendiyse de yeni sayılır
+    const oldNew = (S.notif?.items || []).find((n) => n.key === 'tynew' && !n.resolved_at);
+    const tyNew = S.notif ? d.items.find((n) => n.key === 'tynew' && !n.resolved_at && (!oldNew || n.id !== oldNew.id || n.updated_at !== oldNew.updated_at)) : null;
+    if (tyNew && !fresh.includes(tyNew)) fresh.push(tyNew);
     S.notif = d; renderNotifs(); renderNav();
+    if (fresh.length) notifIslands(fresh);
     if (fresh.length) {
       const bell = $('#notif-bell'); bell?.classList.remove('ring'); void bell?.offsetWidth; bell?.classList.add('ring');
       const hid = U('nf.hide') || [], has = (k) => fresh.some((n) => n.kind === k && !hid.includes(k));
-      if (U('nf.sound')) { if (has('claim')) soundClaim(); else if (has('question')) soundQuestion(); else if (has('printer') || has('print_done')) beepShort(); }
-      if (!window.matchMedia('(min-width: 1600px)').matches) toast(fresh.length > 1 ? `${fresh.length} yeni bildirim` : fresh[0].title, { action: 'Göster', onAction: () => notifOpen(true) });
+      if (U('nf.sound')) { if (has('claim')) soundClaim(); else if (has('question')) soundQuestion(); else if (fresh.some((n) => n.key === 'tynew')) soundOrder(); else if (has('printer') || has('print_done')) beepShort(); }
+      const rest = fresh.filter((n) => n.key !== 'tynew' && n.kind !== 'claim' && n.kind !== 'question');
+      if (rest.length && !window.matchMedia('(min-width: 1600px)').matches) toast(rest.length > 1 ? `${rest.length} yeni bildirim` : rest[0].title, { action: 'Göster', onAction: () => notifOpen(true) });
     }
   } catch { /* sunucu geçici olarak erişilemez */ }
+}
+function notifIslands(list) {
+  const hid = U('nf.hide') || [];
+  for (const n of list) {
+    if (hid.includes(n.kind)) continue;
+    const body = esc((n.body || '').split(';')[0].trim());
+    if (n.key === 'tynew') {
+      const k = n.action?.n || 1, more = (n.body || '').split(';').length - 1;
+      island('order', `<b>${k > 1 ? `${k} yeni sipariş` : 'Yeni sipariş'}</b>${body ? ` · ${body}` : ''}${more > 0 ? ` <span class="is-more">+${more}</span>` : ''}`, { href: '#/siparisler' });
+    } else if (n.kind === 'claim') island('claim', `<b>${esc(n.title || 'Yeni iade')}</b>${body ? ` · ${body}` : ''}`, { href: '#/iadeler', ms: 7000 });
+    else if (n.kind === 'question') island('question', `<b>${esc(n.title || 'Yeni soru')}</b>${body ? ` · ${body}` : ''}`, { href: '#/sorular' });
+  }
 }
 function notifItem(n) {
   const [ic, kl] = NOTIF_KIND[n.kind] || ['bell', ''];
@@ -2139,6 +2177,14 @@ function soundClaim() {
     [0, 1.1].forEach((r) => [[0, 660], [0.16, 880], [0.32, 1175]].forEach(([d, f]) => tone(t + r + d, f, 0.22, 'square', 0.09)));
   } catch { /* ses yok */ }
 }
+// Yeni sipariş: kısa, neşeli yükselen üçlü (kasa "ding"i gibi)
+function soundOrder() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); const t = audioCtx.currentTime + 0.02;
+    [[0, 1047], [0.11, 1319], [0.22, 1568]].forEach(([d, f]) => tone(t + d, f, 0.5, 'triangle', 0.16));
+    tone(t + 0.36, 2093, 0.9, 'sine', 0.1);
+  } catch { /* ses yok */ }
+}
 function soundQuestion() {
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); const t = audioCtx.currentTime + 0.02;
@@ -3662,7 +3708,7 @@ async function tyoPick(ids) {
     if (!S.labelCfg) S.labelCfg = await api('GET', '/api/label/settings').catch(() => null);
     const r = await api('POST', '/api/trendyol/picking', { package_ids: ids });
     ids.forEach((i) => S.tyo.sel.delete(i));
-    if (r.done.length) toast(`${r.done.length} sipariş Hazırlanıyor'a çekildi${r.deducted ? ` · ${r.deducted} adet stoktan düştü` : ''}`);
+    if (r.done.length) island('ok', `<b>${r.done.length > 1 ? `${r.done.length} sipariş çıkarıldı` : 'Sipariş çıkarıldı'}</b> · Hazırlanıyor'a çekildi${r.deducted ? ` · ${r.deducted} adet stoktan düştü` : ''}`, { ms: 1800 });
     if (r.errors.length) toast(`${r.errors.length} sipariş çekilemedi: ${r.errors.slice(0, 3).map((e) => `${e.order_number || e.package_id} (${e.error})`).join('; ')}`, { bad: true });
     if (r.labels) labelToast(r.labels);
     else if (r.done.length && S.labelCfg?.auto && !labelServerMode()) await browserLabels(r.done).catch(fail);

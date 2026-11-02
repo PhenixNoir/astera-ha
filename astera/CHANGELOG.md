@@ -1,5 +1,10 @@
 # Sürüm notları
 
+## 1.7.1
+- Yeni sipariş, iade ve soru gelince ekranın alt ortasında kısa bir şerit çıkar ve ses çalar (siparişe yeni, neşeli bir ses); şeride tıklayınca ilgili sayfa açılır.
+- Sipariş Hazırlanıyor'a çekilince altta 2 saniyelik "Sipariş çıkarıldı" şeridi.
+- Cevap bekleyen Trendyol soruları artık her dakika kontrol edilir (önceden 5 dakikada bir).
+
 ## 1.7.0
 - Özel siparişler parça parça basılabilir: aynı siparişe aynı anda birden çok makinede baskı açılır, kartta "Basılan 12/48 · baskıda 24" ilerlemesi ve "Kalan N adedi bas" düğmesi görünür; hepsi basılınca sipariş kendiliğinden Hazır'a geçer.
 - Altyapı: uzaktan erişim şifresi (Cloudflare Tunnel için; şifre belirlenmedikçe kapalı, ev ağını etkilemez).
