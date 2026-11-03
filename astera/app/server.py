@@ -2331,11 +2331,13 @@ def clean_items(items, old=None):
             pid = re.sub(r"[^\w-]", "", str(p.get("id") or ""))[:16] or uuid.uuid4().hex[:8]
             parts.append({"id": pid, "name": (p.get("name") or "").strip()[:60] or "Parça", "qty": _inum(p.get("qty"), 1, 999, True) or 1,
                           "grams": _inum(p.get("grams"), 0, 99999), "color_hex": _clean_color(p.get("color_hex")),
-                          "color_name": (p.get("color_name") or "").strip()[:40] or None, "printed": prev.get(pid, 0)})
+                          "color_name": (p.get("color_name") or "").strip()[:40] or None, "printed": prev.get(pid, 0),
+                          "ptype": p.get("ptype") if p.get("ptype") in ("FDM", "SLA") else None})
         out.append({"id": kid, "name": (k.get("name") or "").strip()[:80] or "Kalem", "qty": _inum(k.get("qty"), 1, 9999, True) or 1,
                     "grams": _inum(k.get("grams"), 0, 99999), "price": _inum(k.get("price"), 0, 1e7),
                     "color_hex": _clean_color(k.get("color_hex")), "color_name": (k.get("color_name") or "").strip()[:40] or None,
-                    "printed": prev.get(kid, 0), "parts": parts})
+                    "printed": prev.get(kid, 0), "parts": parts,
+                    "ptype": k.get("ptype") if k.get("ptype") in ("FDM", "SLA") else None})
     return out
 
 

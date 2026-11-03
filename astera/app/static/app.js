@@ -1525,15 +1525,18 @@ async function openNewPrint(arg) {
       <div class="np-fail hidden" id="np-fail"></div>
       <div class="ends" id="np-ends">${icon('clock')}<span></span></div>
     </div>
+    <aside class="np-side" id="np-side" aria-label="Siparişin kalemleri"></aside>
     <div class="modal-f"><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary btn-lg" data-act="np-start" id="np-start">Baskıyı başlat</button></div></div>`);
 
+  $('#np-side').addEventListener('click', npSideClick);
+  $('#np-side').addEventListener('input', (e) => { const i = e.target.closest('[data-np-leaf]'); if (!i) return; npSideSet(i.dataset.npLeaf, parseInt(i.value) || 0, false); });
   $('#np-q').addEventListener('input', (e) => { NP.q = e.target.value; npRenderList(); });
   ['#np-h', '#np-m', '#np-qty'].forEach((s) => $(s).addEventListener('input', npEnds));
   ['#np-h', '#np-m'].forEach((s) => $(s).addEventListener('input', (e) => { if (e.isTrusted) NP.timeTouched = true; }));
   $('#np-qty').addEventListener('input', npAutoTime);
   $('#np-printers')?.addEventListener('click', (e) => { const b = e.target.closest('.chip'); if (!b) return; npSetPrinter(NP.printer === b.dataset.v ? '' : b.dataset.v); });
   $('#np-mode').onclick = (e) => { const b = e.target.closest('button'); if (b) npSetMode(b.dataset.v); };
-  $('#np-type').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; NP.ptype = b.dataset.v; $$('#np-type button').forEach((x) => x.classList.toggle('on', x === b)); };
+  $('#np-type').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; NP.ptype = b.dataset.v; $$('#np-type button').forEach((x) => x.classList.toggle('on', x === b)); if (NP.oside && !NP.otouched) npSideDefault(); npSide(); };
   npSetMode(mode, true);
   npSetPrinter(NP.printer);
   if (pid) npPickProduct(pid);
@@ -1574,6 +1577,8 @@ function npGroups(list) {
     .filter(([items]) => items.length).map(([items, title]) => ({ items, title }));
 }
 // Özel siparişin basılmamış kalanı (parça parça basılabilir: 48 adedin 12'si bir makinede, 12'si başkasında)
+// kalem/parça baskı türü: parçanınki, yoksa kaleminki, yoksa siparişinki
+const leafType = (o, x) => x.t.ptype || x.k.ptype || o.print_type || 'SLA';
 const orderLeaves = (o) => (o.items || []).flatMap((k) => (o.item_opts?.parts && k.parts?.length ? k.parts.map((p) => ({ id: p.id, need: k.qty * p.qty, t: p, k })) : [{ id: k.id, need: k.qty, t: k, k }]));
 const orderLeft = (o) => Math.max(0, (o.quantity || 1) - (o.printed || 0) - (o.in_print || 0));
 const printableOrders = () => S.orders.filter((o) => ['new', 'printing', 'ready'].includes(o.status) && (!o.active_job_id || orderLeft(o) > 0));
@@ -1595,6 +1600,7 @@ function npSetMode(mode, initial) {
   $('#np-q').placeholder = mode === 'order' ? 'Müşteri adı veya istek ara' : mode === 'comp' ? 'Ortak parça ara' : mode === 'misc' ? 'Ara ya da yeni ad yazın' : 'Ürün ara';
   $('#np-q-label').textContent = mode === 'order' ? 'Hangi siparişi basıyorsunuz?' : mode === 'comp' ? 'Hangi ortak parçayı basıyorsunuz? Bitince havuza eklenir.' : mode === 'misc' ? 'Ne basıyorsunuz? Stoğa eklenmez, filament makaradan düşer.' : 'Ne basıyorsunuz?';
   $('#np-type-field').style.display = mode === 'order' ? '' : 'none';
+  npSideClose();
   npRememberUI(); npRenderList(); npEnds();
 }
 function npSetPrinter(v) {
@@ -1741,12 +1747,66 @@ function npPickOrder(id) {
   // kalemli sipariş: seçilenler (ya da basılmamış hepsi) bu baskıya yazılır
   if (NP.oitemsFor !== o.id) NP.oitems = null;
   NP.oitemsFor = o.id;
-  if (!NP.oitems && o.items?.length) NP.oitems = orderLeaves(o).map((x) => ({ leaf: x.id, qty: Math.max(0, x.need - (x.t.printed || 0) - (x.t.in_print || 0)) })).filter((x) => x.qty > 0);
+  NP.ptype = o.print_type || 'SLA';
+  if (o.items?.length) {
+    // kalemli sipariş: pencere genişler, sağda kalem/parça seçimi (türe göre önerili)
+    const lv = orderLeaves(o).filter((x) => x.need - (x.t.printed || 0) - (x.t.in_print || 0) > 0);
+    const cnt = lv.reduce((m, x) => { const t = leafType(o, x); m[t] = (m[t] || 0) + 1; return m; }, {});
+    if (!NP.oitems && (cnt.FDM || 0) > (cnt.SLA || 0)) NP.ptype = 'FDM'; else if (!NP.oitems && cnt.SLA) NP.ptype = 'SLA';
+    NP.oside = o.id; NP.otouched = !!NP.oitems;
+    if (!NP.oitems) npSideDefault();
+  } else npSideClose();
+  $$('#np-type button').forEach((x) => x.classList.toggle('on', x.dataset.v === NP.ptype));
   npFill(NP.oitems?.length ? NP.oitems.reduce((a, x) => a + x.qty, 0) : (orderLeft(o) || o.quantity), o.print_minutes);
-  NP.ptype = o.print_type || 'SLA'; $$('#np-type button').forEach((x) => x.classList.toggle('on', x.dataset.v === NP.ptype));
+  if (NP.oside) npSide();
   if (o.printer) npSetPrinter(o.printer);
   npRenderList(); npEnds();
   if (!o.print_minutes) setTimeout(() => $('#np-h')?.select(), 30);
+}
+// ---------- özel sipariş baskısı: hangi kalem/parçalar (pencerenin sağında açılan panel)
+function npSideOrder() { return NP?.oside ? S.orders.find((x) => x.id === NP.oside) : null; }
+function npSideDefault() {
+  const o = npSideOrder(); if (!o) return;
+  NP.oitems = orderLeaves(o).filter((x) => leafType(o, x) === NP.ptype)
+    .map((x) => ({ leaf: x.id, qty: Math.max(0, x.need - (x.t.printed || 0) - (x.t.in_print || 0)) })).filter((x) => x.qty > 0);
+}
+function npSideClose() { NP && (NP.oside = null); const m = $('#np-side')?.closest('.modal'); m?.classList.remove('np-wide'); $('#np-qty-field')?.classList.remove('hidden'); }
+function npSideSet(leaf, qty, redraw = true) {
+  NP.otouched = true; NP.oitems = (NP.oitems || []).filter((x) => x.leaf !== leaf);
+  if (qty > 0) NP.oitems.push({ leaf, qty });
+  const n = NP.oitems.reduce((a, x) => a + x.qty, 0); $('#np-qty').value = Math.max(1, n); npAutoTime?.(); npEnds();
+  if (redraw) npSide(); else npSideSum();
+}
+function npSideSum() {
+  const n = (NP.oitems || []).reduce((a, x) => a + x.qty, 0), el = $('#np-side-sum');
+  if (el) el.innerHTML = n ? `Bu baskıda <b>${n}</b> parça` : '<span class="warn-text">Hiçbir kalem seçilmedi</span>';
+  $('#np-start').disabled = !n;
+}
+function npSide() {
+  const o = npSideOrder(), box = $('#np-side'); if (!o || !box) return;
+  const modal = box.closest('.modal'); modal.classList.add('np-wide'); $('#np-qty-field').classList.add('hidden');
+  const sel = Object.fromEntries((NP.oitems || []).map((x) => [x.leaf, x.qty]));
+  const groups = o.items.map((k) => ({ k, lv: orderLeaves({ ...o, items: [k] }) }));
+  box.innerHTML = `<div class="nps-h"><div><b>${esc(o.first_name)} ${esc(o.last_name || '')}</b><small class="muted">${esc(o.title || '')}${o.due_date ? ` · termin ${fmtDay(o.due_date)}` : ''}</small></div>
+      <div class="nps-quick"><button type="button" class="chip" data-nps="type" data-v="${NP.ptype}">Kalan ${NP.ptype}</button><button type="button" class="chip" data-nps="all">Kalan hepsi</button><button type="button" class="chip" data-nps="none">Temizle</button></div></div>
+    <div class="nps-list">${groups.map(({ k, lv }, gi) => `<div class="nps-k" style="--i:${gi}"><div class="nps-kh"><b>${esc(k.name)}${k.qty > 1 ? ` <span class="faint">×${k.qty}</span>` : ''}</b><span class="oe-tsum t-${k.ptype || o.print_type || 'SLA'}">${k.ptype || o.print_type || 'SLA'}</span></div>
+      ${lv.map((x) => { const left = Math.max(0, x.need - (x.t.printed || 0) - (x.t.in_print || 0)), on = (sel[x.id] || 0) > 0, ty = leafType(o, x), other = ty !== NP.ptype;
+        return `<div class="nps-row${on ? ' on' : ''}${other ? ' other' : ''}${!left ? ' done' : ''}">
+          <label class="nps-cb"><input type="checkbox" data-nps="cb" data-leaf="${esc(x.id)}" data-left="${left}" ${on ? 'checked' : ''} ${!left && !on ? 'disabled' : ''}><span>${esc(x.k === x.t ? 'Tamamı' : x.t.name)}</span></label>
+          <span class="nps-st">${x.t.printed || 0}/${x.need}${x.t.in_print ? ` · ${x.t.in_print} baskıda` : ''}${!left ? ' · tamam' : ''}</span>
+          <div class="stepper sm"><button type="button" data-nps="d" data-leaf="${esc(x.id)}" data-d="-1" aria-label="Azalt">${icon('minus')}</button><input type="number" min="0" max="999" value="${sel[x.id] || 0}" data-np-leaf="${esc(x.id)}"><button type="button" data-nps="d" data-leaf="${esc(x.id)}" data-d="1" aria-label="Arttır">${icon('plus')}</button></div></div>`; }).join('')}</div>`).join('')}</div>
+    <div class="nps-f" id="np-side-sum"></div>`;
+  npSideSum();
+}
+function npSideClick(e) {
+  const b = e.target.closest('[data-nps]'); if (!b) return;
+  const a = b.dataset.nps, o = npSideOrder(); if (!o) return;
+  const cur = Object.fromEntries((NP.oitems || []).map((x) => [x.leaf, x.qty]));
+  if (a === 'cb') return npSideSet(b.dataset.leaf, b.checked ? Math.max(1, +b.dataset.left) : 0);
+  if (a === 'd') return npSideSet(b.dataset.leaf, Math.max(0, (cur[b.dataset.leaf] || 0) + +b.dataset.d));
+  if (a === 'none') { NP.oitems = []; NP.otouched = true; }
+  else { const lv = orderLeaves(o).filter((x) => a === 'all' || leafType(o, x) === NP.ptype); NP.oitems = lv.map((x) => ({ leaf: x.id, qty: Math.max(0, x.need - (x.t.printed || 0) - (x.t.in_print || 0)) })).filter((x) => x.qty > 0); NP.otouched = true; }
+  $('#np-qty').value = Math.max(1, NP.oitems.reduce((s2, x) => s2 + x.qty, 0)); npEnds(); npSide();
 }
 // ---------- baskı için makara yuvaları: her renk bir yuva; öneri renge göre, seçim serbest
 const hexRgb = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); return m ? [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16)) : null; };
@@ -1849,7 +1909,7 @@ function npEnds() {
   let extra = '';
   if (NP.mode === 'product' && picked.set_size > 1) extra += ` · ${qty * picked.set_size} parça`;
   if (NP.mode === 'product' && picked.grams) extra += ` · yaklaşık ${fmtGram(picked.grams * qty)}`;
-  if (NP.mode === 'order') extra = '. Başarılı olursa sipariş Hazır\'a geçer';
+  if (NP.mode === 'order') extra = '. Basılanlar siparişe işlenir; hepsi basılınca sipariş Hazır\'a geçer';
   if (NP.mode === 'misc') extra = `${picked.grams ? ` · yaklaşık ${fmtGram(picked.grams * qty)}` : ''}. Stoğa eklenmez`;
   if (NP.mode === 'comp') {
     const waiting = picked.used_by.filter((u) => { const pp = productById(u.id); return pp?.parts?.some((x) => !x.shared && x.stock > 0); }).length;
@@ -2546,7 +2606,7 @@ function openOrderEditor(id) {
   const o = id ? structuredClone(S.orders.find((x) => x.id === id))
     : { first_name: '', last_name: '', phone: '', title: '', details: '', quantity: 1, price: '', paid: '', order_date: localToday(), due_date: '', print_minutes: null, printer: '', status: 'new', image: null, file_name: '', resin: '', grams: null, print_type: 'SLA', items: [], item_opts: {} };
   OE = o; OE.print_type ||= 'SLA'; OE.items = OE.items || []; OE.item_opts = { parts: false, priced: false, color: false, ...(OE.item_opts || {}) };
-  OE.open = new Set(); OE.sel = new Set();
+  OE.open = new Set(); OE.sel = new Set(); OE.fresh = true;
   if (!S.profit) loadProfit().then(orderCostHint).catch(() => {});
   if (!S.spools) loadSpools().then(() => { if (OE?.item_opts.color) oeRender(); }).catch(() => {});
   const wa = waLink(o.phone);
@@ -2586,7 +2646,7 @@ function openOrderEditor(id) {
             <label class="field oe-qty-f"><span>Adet</span><input class="input" id="o-qty" type="number" inputmode="numeric" min="1" value="${o.quantity || 1}"></label>
             <label class="field oe-tg-f"><span id="o-grams-l">Malzeme (1 adet)</span><div class="input-group"><input class="input" id="o-grams" type="number" inputmode="decimal" min="0" step="0.1" value="${hasItems && !OE.item_opts.priced ? totalG : (o.grams ?? '')}" placeholder="0"><span class="suffix">gram</span></div></label>
             <div class="field"><span>Tahmini baskı süresi</span><div class="input-group"><input class="input" id="o-h" type="number" inputmode="numeric" min="0" value="${pm ? Math.floor(pm / 60) : ''}" placeholder="0" style="border-radius:8px 0 0 8px"><span class="suffix" style="border-radius:0">sa</span><input class="input" id="o-m" type="number" inputmode="numeric" min="0" max="59" value="${pm ? pm % 60 : ''}" placeholder="0" style="border-radius:0;border-left:0"><span class="suffix">dk</span></div></div>
-            <div class="field" style="flex:0 0 auto"><span>Tür</span><div class="seg type" id="o-type">${['SLA', 'FDM'].map((t) => `<button type="button" data-v="${t}" class="${OE.print_type === t ? 'on' : ''}">${t}</button>`).join('')}</div></div>
+            <div class="field" style="flex:0 0 auto"><span>Varsayılan tür</span><div class="seg type" id="o-type">${['SLA', 'FDM'].map((t) => `<button type="button" data-v="${t}" class="${OE.print_type === t ? 'on' : ''}">${t}</button>`).join('')}</div></div>
           </div>
           <div class="row">
             <label class="field"><span>Reçine / renk</span><input class="input" id="o-resin" value="${esc(o.resin || '')}" placeholder="Elegoo ABS-like gri"></label>
@@ -2610,7 +2670,7 @@ function openOrderEditor(id) {
   $('#o-printers')?.addEventListener('click', (e) => { const b = e.target.closest('.chip'); if (!b) return; OE.printer = OE.printer === b.dataset.v ? '' : b.dataset.v; $$('#o-printers .chip').forEach((c) => c.classList.toggle('on', c.dataset.v === OE.printer)); });
   ['#o-odate', '#o-due'].forEach((x) => $(x).addEventListener('input', dueHint));
   dueHint();
-  $('#o-type').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; OE.print_type = b.dataset.v; $$('#o-type button').forEach((x) => x.classList.toggle('on', x === b)); orderCostHint(); };
+  $('#o-type').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; OE.print_type = b.dataset.v; $$('#o-type button').forEach((x) => x.classList.toggle('on', x === b)); oeRender(); };
   ['#o-grams', '#o-qty', '#o-price'].forEach((x) => $(x).addEventListener('input', orderCostHint));
   ['parts', 'priced', 'color'].forEach((k) => $(`#oe-o-${k}`).addEventListener('change', (e) => { oeSync(); OE.item_opts[k] = e.target.checked; if (k === 'parts' && e.target.checked) OE.items.forEach((it) => { OE.open.add(it.id); }); oeRender(); }));
   oeBind(); oeRender();
@@ -2641,11 +2701,12 @@ function oeRender() {
     const open = parts && OE.open.has(k.id);
     const leafSel = kp ? k.parts.every((p) => OE.sel.has(p.id)) : OE.sel.has(k.id);
     const kGrams = kp ? k.parts.reduce((a, p) => a + (+p.grams || 0) * p.qty, 0) : null;
-    return `<div class="oe-it${open ? ' open' : ''}" data-k="${i}">
+    return `<div class="oe-it${open ? ' open' : ''}${OE.fresh ? ' stag' : ''}" data-k="${i}" style="--i:${i}">
       <div class="oe-ih">
         <input type="checkbox" class="oe-cb" data-oe="sel-k" data-path="${i}" ${leafSel ? 'checked' : ''} aria-label="Baskı için seç">
         ${parts ? `<button type="button" class="oe-chev" data-oe="toggle" data-path="${i}" aria-label="Parçaları aç/kapat">${icon(open ? 'chevron-down' : 'chevron-right')}</button>` : '<span></span>'}
         <div class="oe-nm"><input class="input" data-oe="name" data-path="${i}" value="${esc(k.name)}" placeholder="Kalem adı, ör. Kaptan">${kp && !open ? `<small class="muted">${k.parts.map((p) => esc(p.name) + (p.qty > 1 ? ` ×${p.qty}` : '')).join(', ')}</small>` : ''}</div>
+        <span class="oe-ty" role="group" aria-label="Baskı türü">${['FDM', 'SLA'].map((t) => `<button type="button" class="${(k.ptype || OE.print_type) === t ? 'on' : ''} t-${t}" data-oe="ptype" data-path="${i}" data-v="${t}" aria-pressed="${(k.ptype || OE.print_type) === t}">${t}</button>`).join('')}</span>
         <label class="oe-n"><input class="input" type="number" min="1" data-oe="qty" data-path="${i}" value="${k.qty}"><span>adet</span></label>
         ${parts ? `<span class="oe-pc">${kp ? `${need} parça` : '<span class="faint">parça yok</span>'}</span>` : ''}
         ${priced ? (kp ? `<span class="oe-g">${kGrams ? fmtGram(kGrams) : '—'}</span>` : `<label class="oe-n"><input class="input" type="number" min="0" step="0.1" data-oe="grams" data-path="${i}" value="${k.grams ?? ''}" placeholder="0"><span>g</span></label>`) : ''}
@@ -2674,7 +2735,9 @@ function oeRender() {
   const pr = $('#o-price'); pr.readOnly = hasItems && priced;
   if (hasItems && priced) pr.value = Math.round(OE.items.reduce((a, k) => a + (+k.price || 0) * k.qty, 0) * 100) / 100 || '';
   const done = lv.reduce((a, x) => a + Math.min(x.need, x.t.printed || 0), 0);
-  $('#oe-sum').textContent = hasItems ? `${OE.items.length} kalem · ${units} ${parts ? 'parça' : 'adet'} · basılan ${done}/${units}` : '';
+  const byT = lv.reduce((m, x) => { const t = x.k.ptype || OE.print_type; m[t] = (m[t] || 0) + x.need; return m; }, {});
+  $('#oe-sum').innerHTML = hasItems ? `${OE.items.length} kalem · ${Object.entries(byT).map(([t, n]) => `<b class="oe-tsum t-${t}">${t} ${n}</b>`).join(' ')} · basılan ${done}/${units}` : '';
+  OE.fresh = false;
   const sel = lv.filter((x) => OE.sel.has(x.id) && oeLeft(x.t, x.need) > 0), n = sel.reduce((a, x) => a + oeLeft(x.t, x.need), 0);
   const b = $('#oe-print-sel'); b.hidden = !n; b.querySelector('span').textContent = `Seçilenleri baskıya ver (${n})`;
   orderCostHint();
@@ -2704,6 +2767,7 @@ function oeBind() {
     else if (a === 'toggle') { const k = OE.items[i]; OE.open.has(k.id) ? OE.open.delete(k.id) : OE.open.add(k.id); oeRender(); }
     else if (a === 'dup') { const c = structuredClone(OE.items[i]); c.id = oeId(); c.printed = 0; c.in_print = 0; c.name = c.name ? `${c.name} (kopya)` : ''; (c.parts || []).forEach((p) => { p.id = oeId(); p.printed = 0; p.in_print = 0; }); OE.items.splice(i + 1, 0, c); oeRender(); $(`[data-oe="name"][data-path="${i + 1}"]`)?.select(); }
     else if (a === 'rm') { const k = OE.items[i]; if (((k.printed || 0) + (k.parts || []).reduce((s2, p) => s2 + (p.printed || 0), 0)) && !confirm(`"${k.name}" kaleminin basılmış parçaları var. Yine de silinsin mi?`)) return; OE.items.splice(i, 1); oeRender(); }
+    else if (a === 'ptype') { OE.items[i].ptype = b.dataset.v; OE.fresh = false; oeRender(); }
     else if (a === 'padd') { OE.items[i].parts.push({ id: oeId(), name: '', qty: 1, grams: null, printed: 0 }); oeRender(); $(`[data-oe="pname"][data-path="${i}.${OE.items[i].parts.length - 1}"]`)?.focus(); }
     else if (a === 'prm') { const j = +b.dataset.path.split('.')[1]; OE.items[i].parts.splice(j, 1); oeRender(); }
   });

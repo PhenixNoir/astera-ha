@@ -2870,3 +2870,45 @@ body.k-dragging .kanban .kcol.drop-on { outline-color: var(--pei); background: v
 .skin-prev b { font: 800 22px/1 var(--display); }
 .skin-prev.gece::after { content: ""; position: absolute; right: -30px; top: -40px; width: 120px; height: 100px; background: repeating-radial-gradient(ellipse 50% 42% at 50% 50%, transparent 0 7px, var(--pei) 7px 8px); opacity: .35; }
 .skin-prev.gece b { font-size: 28px; }
+
+/* Özel sipariş: kalem başına baskı türü */
+.oe-ty { display: inline-flex; flex: none; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.oe-ty button { all: unset; cursor: pointer; padding: 6px 9px; font-size: 12px; font-weight: 700; color: var(--ink-3); transition: background .2s, color .2s; }
+.oe-ty button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.oe-ty button.on.t-SLA { background: var(--resin-wash); color: var(--resin); }
+.oe-ty button.on.t-FDM { background: var(--pei-wash); color: var(--pei-strong); }
+.oe-tsum { font-size: 11.5px; font-weight: 800; padding: 1px 7px; border-radius: 99px; }
+.oe-tsum.t-SLA { background: var(--resin-wash); color: var(--resin); } .oe-tsum.t-FDM { background: var(--pei-wash); color: var(--pei-strong); }
+.oe-it.stag { animation: oe-row .42s cubic-bezier(.2, .8, .2, 1) backwards; animation-delay: calc(var(--i) * 45ms + 120ms); }
+@keyframes oe-row { from { opacity: 0; transform: translateY(10px) scale(.985); } }
+/* düzenleyici açılırken genişleyerek gelir */
+.modal.oe-modal { width: min(1380px, 100%); animation: oe-open .5s cubic-bezier(.2, .85, .25, 1); }
+@keyframes oe-open { 0% { opacity: 0; clip-path: inset(6% 30% 6% 30% round 22px); transform: scale(.96); } 60% { opacity: 1; } 100% { clip-path: inset(0 0 0 0 round 14px); transform: none; } }
+.oe-left { animation: oe-left .5s .1s cubic-bezier(.2, .8, .2, 1) backwards; }
+@keyframes oe-left { from { opacity: 0; transform: translateX(-16px); } }
+
+/* Yeni baskı: özel siparişte pencere genişler, sağda kalemler */
+.modal { transition: width .5s cubic-bezier(.2, .85, .25, 1); }
+.np-side { display: none; }
+.modal.np-wide { width: min(1160px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 480px); grid-template-rows: auto minmax(0, 1fr) auto; }
+.modal.np-wide > .modal-h, .modal.np-wide > .modal-f { grid-column: 1 / -1; }
+.modal.np-wide > .modal-b { grid-column: 1; grid-row: 2; min-height: 0; }
+.modal.np-wide > .np-side { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line-2); background: var(--sheet-2); animation: nps-in .55s cubic-bezier(.2, .85, .25, 1) backwards; }
+@keyframes nps-in { from { opacity: 0; transform: translateX(40px); } }
+.nps-h { display: grid; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid var(--line-2); }
+.nps-h > div:first-child { display: grid; gap: 2px; } .nps-h b { font-size: 16px; }
+.nps-quick { display: flex; gap: 6px; flex-wrap: wrap; }
+.nps-list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px; display: grid; gap: 10px; align-content: start; }
+.nps-k { background: var(--sheet); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; display: grid; gap: 4px; animation: oe-row .4s cubic-bezier(.2, .8, .2, 1) backwards; animation-delay: calc(var(--i) * 50ms + 200ms); }
+.nps-kh { display: flex; justify-content: space-between; align-items: center; padding: 2px 2px 4px; }
+.nps-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 5px 6px; border-radius: 8px; transition: background .2s, opacity .2s; }
+.nps-row.on { background: var(--pei-wash); }
+.nps-row.other:not(.on) { opacity: .6; }
+.nps-row.done:not(.on) { opacity: .45; }
+.nps-cb { display: flex; gap: 8px; align-items: center; min-width: 0; cursor: pointer; font-weight: 600; }
+.nps-cb input { width: 17px; height: 17px; accent-color: var(--pei); flex: none; }
+.nps-cb span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nps-st { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.nps-f { padding: 12px 18px; border-top: 1px solid var(--line-2); font-size: 14px; }
+@media (max-width: 900px) { .modal.np-wide { display: flex; } .modal.np-wide > .np-side { border-left: 0; border-top: 1px solid var(--line-2); max-height: 50vh; } }
+@media (prefers-reduced-motion: reduce) { .modal.oe-modal, .oe-left, .oe-it.stag, .np-side, .nps-k { animation: none !important; } .modal { transition: none; } }

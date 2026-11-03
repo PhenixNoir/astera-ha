@@ -1,5 +1,10 @@
 # Sürüm notları
 
+## 1.8.1
+- Özel sipariş kalemlerinde kalem başına FDM / SLA seçimi; üstte türlere göre parça sayısı (ör. SLA 4 · FDM 16).
+- Özel sipariş düzenleyicisi genişleyerek açılır, kalemler sırayla belirir; pencere daha geniş.
+- Yeni baskıda özel sipariş seçilince pencere genişler, sağda kalem/parça listesi açılır: hangi parçadan kaç tane basıldığı seçilir, seçilen baskı türüne göre kalanlar önerilir (Kalan FDM / Kalan hepsi / Temizle).
+
 ## 1.8.0
 - Özel sipariş baskısı bitince sonuç penceresi sorar: kalemli siparişte hangi kalem/parçadan kaç tane sağlam çıktığı, kalemsizde sağlam adet. Girilenler siparişe işlenir; hepsi basılınca sipariş Hazır'a geçer.
 - Baskıyı düzenle: yazıcının kendiliğinden açtığı (ör. Diğer amaçlı sanılan) bir baskı özel siparişe bağlanabilir; özel sipariş baskısı da başka ürüne/siparişe taşınabilir.
