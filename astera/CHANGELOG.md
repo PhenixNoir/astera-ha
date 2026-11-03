@@ -1,5 +1,22 @@
 # Sürüm notları
 
+## 1.9.0
+- Ayarlar → Tema ve görünüm: **Animasyonlar** (Tam / Sade / Kapalı). Sade'de geçişler kalır, süsler kapanır.
+- Sağ çekmece: Trendyol siparişleri, iadeler ve sorular satıra tıklayınca sağdan kayan çekmecede açılır; ↑ ↓ ile gezilir, Esc kapatır. İade ve soru listeleri kısa satırlara dönüştü. Bildirimdeki siparişe tıklayınca o siparişin çekmecesi açılır.
+- Ürün, baskı ve özel sipariş kartları tıklanınca büyüyerek sağ çekmeceye uçar, kapanınca kartına döner.
+- Termin ısısı: sipariş satırının kenarı son teslime göre yeşilden kırmızıya döner, son 2 saatte nabız atar.
+- Özet sayıları akarak değişir; Pano kartları fareye doğru hafifçe eğilir; tema değişimi tıklanan noktadan dairesel yayılır.
+- Gün sonu kutlaması (bugünün son siparişi çıkınca konfeti) ve "Rekor gün!" rozeti.
+- Sağ tık menüsü: sipariş satırı, ürün kartı ve baskı kartında hızlı işlemler.
+- Makara kadranı: filament kartlarında kalan yüzdeyi gösteren dairesel gösterge.
+- Baskı bitti sahnesi: tabla dışarı kayar, ürün rafa uçar, raf sayacı artar.
+- Boş sayfalarda hareketli küçük çizimler.
+- Makine ısısı (Bambu / Moonraker): üst bardaki makinenin üzerine gelince nozul / tabla termometreleri; baskı kartında canlı ısı rozetleri.
+- Bildirimler sağa / sola kaydırılarak kapatılır; sipariş bildirimine tıklayınca o sipariş açılır.
+- Sipariş satırında birden çok ürün rozeti süzülerek durur; görünmeyen küçük resimler düzeltildi.
+- Düzeltme: yeni baskıda sağ paneldeki her tik / sayı değişiminde liste baştan animasyonla çiziliyordu.
+- Düzeltme: istatistikte parçalı ürünlerin tahmini filament harcaması parça sayısıyla çarpılıp çok yüksek çıkıyordu.
+
 ## 1.8.5
 - İstatistik: "filament + reçine harcandı" kutusuna tıklayınca baskı baskı döküm açılır (hangi baskıda hangi makaradan kaç gram düşüldü, beklenen gram). Beklenenden çok fazla düşen kayıtlar kırmızı işaretlenir; yanlış kayıt "Geri al" ile makaraya iade edilir.
 

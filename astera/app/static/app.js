@@ -282,7 +282,7 @@ async function render() {
   try { await page.load?.(); } catch (e) { fail(e); }
   if (route() !== r) return;
   if (page.title) { $('#page-title').textContent = page.title(); document.title = page.title() + ' · ' + appName(); }
-  const swap = () => { $('#view').innerHTML = page.html(); page.after?.(); tick(); };
+  const swap = () => { $('#view').innerHTML = page.html(); page.after?.(); tick(); countUp($('#view')); };
   const isNav = S.lastRoute !== r;
   S.lastRoute = r;
   document.documentElement.dataset.vt = isNav ? 'page' : 'update';
@@ -300,7 +300,10 @@ async function render() {
   }
   if (isNav) animateIn();
 }
-const REDUCED = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+// Animasyonlar (Ayarlar → Tema ve görünüm): Tam / Sade (süs efektleri kapalı) / Kapalı. Sistemde "hareketleri azalt" açıksa kapalı sayılır.
+const MOTION = () => { try { return localStorage.getItem('motion') || 'full'; } catch { return 'full'; } };
+const REDUCED = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches || MOTION() === 'off';
+const FX = () => !REDUCED() && MOTION() === 'full';
 // Bilgisayarda uzun listeler ekran yüksekliğinde kendi içinde kayar; üstteki sekmeler ve arama yerinde kalır.
 // Telefonda iç içe kaydırma zor olduğundan liste normal akar, üst bar yapışır (CSS).
 function fitBoxes() {
@@ -480,9 +483,31 @@ function bindDashDrag() {
     });
   });
 }
+// Pano kartları fareye doğru hafifçe eğilir, üzerinde ışık gezer (yalnız Tam animasyonda, fareyle)
+(() => {
+  let cur = null, raf = 0, ev = null;
+  const reset = (el) => { el.style.removeProperty('--rx'); el.style.removeProperty('--ry'); el.classList.remove('tilt-on'); };
+  document.addEventListener('pointermove', (e) => {
+    if (e.pointerType !== 'mouse') return;
+    const el = route() === '' && FX() ? e.target.closest('#view .readout > div, #view .panel') : null;
+    if (cur && cur !== el) { reset(cur); cur = null; }
+    if (!el) return;
+    cur = el; ev = e; if (raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0; if (!cur) return;
+      const r = cur.getBoundingClientRect(), z = ZF(), px = (ev.clientX / z - r.left) / r.width, py = (ev.clientY / z - r.top) / r.height;
+      const k = cur.matches('.panel') ? 1.6 : 5;
+      cur.classList.add('tilt-on');
+      cur.style.setProperty('--rx', ((0.5 - py) * k).toFixed(2) + 'deg'); cur.style.setProperty('--ry', ((px - 0.5) * k).toFixed(2) + 'deg');
+      cur.style.setProperty('--mx', (px * 100).toFixed(1) + '%'); cur.style.setProperty('--my', (py * 100).toFixed(1) + '%');
+    });
+  }, { passive: true });
+  document.addEventListener('pointerleave', () => { if (cur) { reset(cur); cur = null; } });
+})();
 function readoutHTML() {
   const d = S.dash || {};
-  return `<div class="readout">
+  const rec = d.orders_best > 0 && d.orders_today > d.orders_best && d.orders_today >= 3;
+  return `${rec ? `<div class="rec-badge" role="status"><i>${icon('crown')}</i><b>Rekor gün!</b> Bugün ${d.orders_today} sipariş geldi · önceki en iyi gün ${d.orders_best}</div>` : ''}<div class="readout">
     <div><b>${d.stock_total ?? 0}</b><span>Stoktaki ürün adedi</span></div>
     <div><b>${d.in_production ?? 0}</b><span>Şu an üretimde</span></div>
     <div><b>${d.sold_24h ?? 0}</b><span>Son 24 saatte satılan</span></div>
@@ -535,6 +560,7 @@ function bedHTML() {
       <div><div class="job-name">${j.is_order ? '<span class="tag tag-order" style="vertical-align:1px">Özel</span> ' : ''}${esc(j.product_name)}</div>
         ${bambuLine(j)}
         <div class="job-meta">${j.parts?.length ? `${j.quantity} parça` : `${j.quantity} adet`}${j.printer ? ' · ' + esc(j.printer) : ''} · bitiş ${fmtClock(j.ends_at)}</div>
+        ${j.printer && hasLink(printerInfo(j.printer) || {}) ? `<div class="heat-chips" data-heat-pr="${esc(j.printer)}">${heatChips(j.printer)}</div>` : ''}
         ${partsLine(j)}${spoolsLine(j)}
         <div class="job-time" data-countdown="${j.id}"></div>
         <div class="job-actions" data-due-actions="${j.id}"></div>
@@ -633,6 +659,7 @@ function notifBind() {
     const ig = e.target.closest('[data-nf-ign]');
     if (ig) { ig.disabled = true; await ignoreJob(+ig.dataset.nfIgn, ig.dataset.nid); ig.disabled = false; return; }
     const b = e.target.closest('[data-nf]'); if (!b) return;
+    if (Date.now() - (S.nfSwiped || 0) < 400) return;   // kaydırma bitti, tıklama sayılmasın
     const n = S.notif?.items.find((x) => x.id === +b.dataset.nf); if (!n) return;
     if (!n.resolved_at) { n.resolved_at = Math.floor(Date.now() / 1000); n.resolved_by = 'user'; S.notif.active = Math.max(0, S.notif.active - 1); renderNotifs(); api('POST', `/api/notifications/${n.id}/resolve`).catch(() => {}); }
     const a = n.action || {};
@@ -642,8 +669,68 @@ function notifBind() {
     else if (a.t === 'product') openProductEditor(a.id);
     else if (a.t === 'plan') planStart(a);
     else if (a.t === 'spool') { location.hash = '#/filament'; setTimeout(() => openSpoolEditor(a.id), 400); }
+    else if (a.t === 'order' && (a.pkg || a.pkgs?.length)) openOrderFromNotif(a.pkg || a.pkgs[0]);
     else if (a.href) location.hash = a.href;
   });
+  nfSwipeBind();
+}
+// Bildirimi tutup sağa ya da sola kaydırınca kapanır (listeden kalkar)
+function nfSwipeBind() {
+  const panel = $('#notif-panel'); if (!panel || panel.dataset.swipe) return; panel.dataset.swipe = '1';
+  let st = null;
+  panel.addEventListener('pointerdown', (e) => {
+    const w = e.target.closest('.nf-w'); if (!w || e.button !== 0 || e.target.closest('.nf-ign')) return;
+    st = { w, x: e.clientX, y: e.clientY, dx: 0, on: false, id: e.pointerId };
+  });
+  panel.addEventListener('pointermove', (e) => {
+    if (!st || e.pointerId !== st.id) return;
+    const dx = e.clientX - st.x, dy = e.clientY - st.y;
+    if (!st.on) { if (Math.abs(dx) < 8) return; if (Math.abs(dy) > Math.abs(dx)) { st = null; return; } st.on = true; st.w.setPointerCapture(e.pointerId); st.w.classList.add('nf-drag'); }
+    st.dx = dx;
+    st.w.style.transform = `translateX(${dx}px) rotate(${dx / 40}deg)`;
+    st.w.style.opacity = String(Math.max(0.15, 1 - Math.abs(dx) / 260));
+    st.w.classList.toggle('nf-will', Math.abs(dx) > 90);
+  });
+  const end = (e) => {
+    if (!st || e.pointerId !== st.id) return;
+    const { w, dx, on } = st; st = null;
+    if (!on) return;
+    S.nfSwiped = Date.now(); w.classList.remove('nf-drag', 'nf-will');
+    if (Math.abs(dx) > 90) {
+      const id = +w.querySelector('[data-nf]')?.dataset.nf;
+      w.style.transition = 'transform .28s cubic-bezier(.3,.7,.4,1), opacity .28s'; w.style.transform = `translateX(${dx > 0 ? 130 : -130}%) rotate(${dx > 0 ? 8 : -8}deg)`; w.style.opacity = '0';
+      w.style.height = w.offsetHeight + 'px';
+      setTimeout(() => { w.style.transition = 'height .22s ease, margin .22s ease, padding .22s ease'; w.style.height = '0px'; w.style.marginTop = w.style.marginBottom = '0px'; w.style.overflow = 'hidden'; }, 260);
+      setTimeout(() => {
+        const n = S.notif?.items.find((x) => x.id === id);
+        if (n) { if (!n.resolved_at) S.notif.active = Math.max(0, S.notif.active - 1); S.notif.items = S.notif.items.filter((x) => x !== n); }
+        renderNotifs(); renderNav();
+      }, 500);
+      if (id) api('POST', `/api/notifications/${id}/dismiss`).catch(() => {});
+    } else {
+      w.style.transition = 'transform .35s cubic-bezier(.2, 1.4, .4, 1), opacity .25s'; w.style.transform = ''; w.style.opacity = '';
+      setTimeout(() => { w.style.transition = ''; }, 380);
+    }
+  };
+  panel.addEventListener('pointerup', end); panel.addEventListener('pointercancel', end);
+}
+// Bildirimdeki siparişe git: Siparişler sayfası, diğer açık siparişler kapanır, bu sipariş açılıp öne gelir
+async function openOrderFromNotif(pkg) {
+  try { if (!S.tyOrders) await loadTyOrders(); } catch { /* */ }
+  let p = S.tyOrders?.packages.find((x) => String(x.package_id) === String(pkg) || String(x.order_number) === String(pkg));
+  if (!p) { try { await loadTyOrders(); p = S.tyOrders?.packages.find((x) => String(x.package_id) === String(pkg) || String(x.order_number) === String(pkg)); } catch { /* */ } }
+  S.oSrc = 'ty'; try { localStorage.setItem('oSrc', 'ty'); } catch { /* */ }
+  if (!p) { location.hash = '#/siparisler'; return toast('Sipariş listede bulunamadı (kargoya verilmiş ya da iptal olmuş olabilir)'); }
+  Object.assign(S.tyo, { tab: p.tab, q: '', cat: 'all', pid: null, rA: 'all' });
+  S.focusPkg = p.package_id; S.drawerNext = { kind: 'ty', key: String(p.package_id) };
+  if (route() === 'siparisler') await render(); else location.hash = '#/siparisler';
+}
+function focusPkgRow() {
+  if (!S.focusPkg) return;
+  const row = $(`.tyo-row[data-pkg="${CSS.escape(String(S.focusPkg))}"]`); S.focusPkg = null; if (!row) return;
+  if (S.drawerNext) { const n = S.drawerNext; S.drawerNext = null; setTimeout(() => drawerOpen(n.kind, n.key), 350); }
+  row.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+  row.classList.remove('nf-focus'); void row.offsetWidth; row.classList.add('nf-focus');
 }
 
 // ---------- sayım farkları: stok 0'ın altına inmek istediğinde kaydedilenler
@@ -1795,7 +1882,7 @@ function npSideDefault() {
   NP.oitems = orderLeaves(o).filter((x) => leafType(o, x) === NP.ptype)
     .map((x) => ({ leaf: x.id, qty: Math.max(0, x.need - (x.t.printed || 0) - (x.t.in_print || 0)) })).filter((x) => x.qty > 0);
 }
-function npSideClose() { NP && (NP.oside = null); const m = $('#np-side')?.closest('.modal'); m?.classList.remove('np-wide'); $('#np-qty-field')?.classList.remove('hidden'); }
+function npSideClose() { NP && (NP.oside = null); const sd = $('#np-side'); if (sd) delete sd.dataset.for; const m = sd?.closest('.modal'); m?.classList.remove('np-wide'); $('#np-qty-field')?.classList.remove('hidden'); }
 function npSideSet(leaf, qty, redraw = true) {
   NP.otouched = true; NP.oitems = (NP.oitems || []).filter((x) => x.leaf !== leaf);
   if (qty > 0) NP.oitems.push({ leaf, qty });
@@ -1812,15 +1899,18 @@ function npSide() {
   const modal = box.closest('.modal'); modal.classList.add('np-wide'); $('#np-qty-field').classList.add('hidden');
   const sel = Object.fromEntries((NP.oitems || []).map((x) => [x.leaf, x.qty]));
   const groups = o.items.map((k) => ({ k, lv: orderLeaves({ ...o, items: [k] }) }));
+  // kartlar yalnız panel bu sipariş için ilk açıldığında sırayla gelir; tik / sayı değişince yerinde güncellenir, kaydırma korunur
+  const first = box.dataset.for !== String(o.id), sc = first ? 0 : box.querySelector('.nps-list')?.scrollTop || 0; box.dataset.for = o.id;
   box.innerHTML = `<div class="nps-h"><div><b>${esc(o.first_name)} ${esc(o.last_name || '')}</b><small class="muted">${esc(o.title || '')}${o.due_date ? ` · termin ${fmtDay(o.due_date)}` : ''}</small></div>
       <div class="nps-quick"><button type="button" class="chip" data-nps="type" data-v="${NP.ptype}">Kalan ${NP.ptype}</button><button type="button" class="chip" data-nps="all">Kalan hepsi</button><button type="button" class="chip" data-nps="none">Temizle</button></div></div>
-    <div class="nps-list">${groups.map(({ k, lv }, gi) => `<div class="nps-k" style="--i:${gi}"><div class="nps-kh"><b>${esc(k.name)}${k.qty > 1 ? ` <span class="faint">×${k.qty}</span>` : ''}</b><span class="oe-tsum t-${k.ptype || o.print_type || 'SLA'}">${k.ptype || o.print_type || 'SLA'}</span></div>
+    <div class="nps-list${first ? ' stag' : ''}">${groups.map(({ k, lv }, gi) => `<div class="nps-k" style="--i:${gi}"><div class="nps-kh"><b>${esc(k.name)}${k.qty > 1 ? ` <span class="faint">×${k.qty}</span>` : ''}</b><span class="oe-tsum t-${k.ptype || o.print_type || 'SLA'}">${k.ptype || o.print_type || 'SLA'}</span></div>
       ${lv.map((x) => { const left = Math.max(0, x.need - (x.t.printed || 0) - (x.t.in_print || 0)), on = (sel[x.id] || 0) > 0, ty = leafType(o, x), other = ty !== NP.ptype;
         return `<div class="nps-row${on ? ' on' : ''}${other ? ' other' : ''}${!left ? ' done' : ''}">
           <label class="nps-cb"><input type="checkbox" data-nps="cb" data-leaf="${esc(x.id)}" data-left="${left}" ${on ? 'checked' : ''} ${!left && !on ? 'disabled' : ''}><span>${esc(x.k === x.t ? 'Tamamı' : x.t.name)}</span></label>
           <span class="nps-st">${x.t.printed || 0}/${x.need}${x.t.in_print ? ` · ${x.t.in_print} baskıda` : ''}${!left ? ' · tamam' : ''}</span>
           <div class="stepper sm"><button type="button" data-nps="d" data-leaf="${esc(x.id)}" data-d="-1" aria-label="Azalt">${icon('minus')}</button><input type="number" min="0" max="999" value="${sel[x.id] || 0}" data-np-leaf="${esc(x.id)}"><button type="button" data-nps="d" data-leaf="${esc(x.id)}" data-d="1" aria-label="Arttır">${icon('plus')}</button></div></div>`; }).join('')}</div>`).join('')}</div>
     <div class="nps-f" id="np-side-sum"></div>`;
+  if (sc) box.querySelector('.nps-list').scrollTop = sc;
   npSideSum();
 }
 function npSideClick(e) {
@@ -2382,9 +2472,11 @@ async function finishJob(id, success) {
   const partsGood = leafGood.length ? [] : $$('[data-res-part]').map((i) => ({ part_id: +i.dataset.resPart, good: Math.max(0, parseInt(i.value) || 0) }));
   const spoolUsed = $$('[data-res-spool]').map((i) => ({ spool_id: +i.dataset.resSpool, grams: Math.max(0, parseFloat(i.value) || 0) }));
   $$('.result .choice').forEach((b) => { b.disabled = true; });
+  const job0 = S.jobs.find((x) => x.id === id), stock0 = productById(job0?.product_id)?.stock;
+  if (job0) job0._stock0 = stock0;
   try {
     const r = await api('POST', `/api/jobs/${id}/complete`, { success, good_quantity: isNaN(good) ? undefined : good, parts_good: partsGood.length ? partsGood : undefined, order_good: leafGood.length ? leafGood : undefined, spool_used: spoolUsed.length ? spoolUsed : undefined });
-    if (success && (r.good_quantity || r.is_order)) await celebrate(r);
+    if (success && (r.good_quantity || r.is_order)) await celebrate(r, job0);
     closeModal();
     if (r.is_misc) toast(success && r.good_quantity ? `${r.product_name} ×${r.good_quantity} tamamlandı` : `${r.product_name} başarısız olarak kaydedildi`);
     else if (r.is_component) {
@@ -2401,12 +2493,46 @@ async function finishJob(id, success) {
 }
 
 // Başarı anı: tik çizilir, katmanlar yerine oturur, sonra pencere kapanır
-function celebrate(r) {
+function celebrate(r, j) {
   const box = $('.result'); if (!box) return Promise.resolve();
+  if (FX() && j) return doneScene(box, r, j);
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const label = r.is_order ? 'Hazır' : r.is_misc ? 'Tamam' : r.is_component ? `+${r.good_quantity} havuza` : r.parts?.length ? (r.assembled ? `+${r.assembled} stoğa` : `+${r.good_quantity} parça`) : `+${r.good_quantity} stoğa`;
   box.insertAdjacentHTML('beforeend', `<div class="celebrate"><svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="23"/><path d="M15 27l7 7 15-16"/></svg><b>${label}</b>${'<i></i>'.repeat(10)}</div>`);
   return new Promise((ok) => setTimeout(ok, reduce ? 250 : 1050));
+}
+
+// Baskı bitti sahnesi: kafa yukarı kalkar, tabla dışarı kayar, ürün kavis çizerek rafa uçar, raf sayacı akar
+function doneScene(box, r, j) {
+  const p = productById(j.product_id), img = j.thumbnail || p?.thumbnail;
+  const col = p?.materials?.[0]?.color_hex || j.component_color || 'var(--pei)';
+  const add = r.is_order || r.is_misc ? 0 : r.parts?.length ? (r.assembled || 0) : r.is_component ? r.good_quantity : r.good_quantity;
+  const from = r.is_component ? null : j._stock0;
+  const label = r.is_order ? 'Siparişe işlendi' : r.is_misc ? 'Tamamlandı' : r.is_component ? `+${r.good_quantity} havuza` : r.parts?.length && !r.assembled ? `+${r.good_quantity} parça` : `+${add} stoğa`;
+  const shelf = r.is_order ? 'Sipariş' : r.is_component ? 'Parça havuzu' : r.is_misc ? 'Dükkan' : 'Raf';
+  const n = Math.min(3, Math.max(1, r.good_quantity || 1));
+  const resin = (j.print_type || p?.print_type) === 'SLA';
+  box.insertAdjacentHTML('beforeend', `<div class="done-scene${resin ? ' resin' : ''}" role="status" aria-label="${esc(label)}">
+    <div class="ds-stage">
+      <div class="ds-pr"><i class="u l"></i><i class="u r"></i><i class="top"></i><i class="gan"><b></b></i><i class="base"></i></div>
+      <div class="ds-bed">${Array.from({ length: n }, (_, i) => `<div class="ds-item${img ? '' : ' cube'}" style="--k:${i};${img ? `background-image:url('${esc(img)}')` : `--c:${col}`}"></div>`).join('')}</div>
+      <div class="ds-shelf"><i class="pl p1"></i><i class="pl p2"></i><i class="sd l"></i><i class="sd r"></i>
+        <div class="ds-cnt"><small>${shelf}</small><b>${from != null && add ? from : ''}</b></div></div>
+    </div>
+    <div class="ds-lbl">${icon('check')} ${esc(label)}</div>
+    <div class="ds-name">${esc(r.product_name || j.product_name || '')}</div>
+  </div>`);
+  const sc = box.lastElementChild, cnt = sc.querySelector('.ds-cnt b');
+  return new Promise((ok) => {
+    let done = false; const fin = () => { if (!done) { done = true; ok(); } };
+    sc.addEventListener('click', fin);
+    if (from != null && add) setTimeout(() => {
+      const t0 = performance.now(), to = from + add;
+      const st = (t) => { const k = Math.min(1, (t - t0) / 500); cnt.textContent = Math.round(from + add * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(st); else { cnt.textContent = to; cnt.classList.add('bump'); } };
+      requestAnimationFrame(st);
+    }, 1450);
+    setTimeout(fin, 2700);
+  });
 }
 
 function openJobMenu(id) {
@@ -2534,7 +2660,7 @@ PAGES.siparisler = {
     return customOrdersHTML(src);
   },
   after() {
-    if (S.oSrc === 'ty') return tyoBind();
+    if (S.oSrc === 'ty') { tyoBind(); setTimeout(focusPkgRow, 80); return; }
     $('#show-cancel').onchange = (e) => { S.showCancelled = e.target.checked; render(); };
     $('#co-sort')?.addEventListener('change', (e) => { S.coSort = e.target.value; try { localStorage.setItem('coSort', S.coSort); } catch { /* */ } render(); });
     const mq = window.matchMedia('(max-width: 760px)');
@@ -3080,15 +3206,25 @@ function spoolListHTML() {
   if (!list.length) return `<div class="empty"><h3>Eşleşen makara yok</h3><p>Aramayı veya filtreyi değiştirin.</p></div>`;
   return `<div class="spool-grid">${list.map(spoolCard).join('')}</div>`;
 }
+// Makara kadranı: makaranın çevresinde 270°'lik gösterge; açılışta sıfırdan kalan yüzdeye dolar, ibre ucu yürür
+const GAUGE_TICKS = Array.from({ length: 11 }, (_, i) => { const a = (135 + i * 27) * Math.PI / 180, r1 = i % 5 ? 47.5 : 46.5, r2 = 50.5;
+  return `<line x1="${(52 + r1 * Math.cos(a)).toFixed(2)}" y1="${(52 + r1 * Math.sin(a)).toFixed(2)}" x2="${(52 + r2 * Math.cos(a)).toFixed(2)}" y2="${(52 + r2 * Math.sin(a)).toFixed(2)}"${i % 5 ? '' : ' class="maj"'}/>`; }).join('');
+function spoolGauge(sp, pct, st) {
+  const p = clamp(pct, 0, 1), first = !(S.gaugeSeen ||= new Set()).has(sp.id); S.gaugeSeen.add(sp.id);
+  return `<div class="sc-gauge g-${st}${first ? ' g-anim' : ''}" style="--d:${(p * 75).toFixed(2)};--a:${(135 + p * 270).toFixed(1)}deg" role="img" aria-label="Kalan %${Math.round(p * 100)}">
+    <svg viewBox="0 0 104 104" aria-hidden="true"><g class="g-ticks">${GAUGE_TICKS}</g>
+      <circle class="g-track" cx="52" cy="52" r="43" pathLength="100"/><circle class="g-fill" cx="52" cy="52" r="43" pathLength="100"/>
+      <g class="g-tip"><circle cx="95" cy="52" r="4.2"/></g></svg>
+    ${spoolArt(sp, 'gz')}<b class="g-pct">%${Math.round(p * 100)}</b></div>`;
+}
 function spoolCard(sp) {
   const st = spoolState(sp), pct = spoolPct(sp);
   return `<article class="spool-card ${st}" data-act="edit-spool" data-id="${sp.id}" tabindex="0">
-    ${spoolArt(sp, 'lg')}
+    ${spoolGauge(sp, pct, st)}
     <div class="sc-body">
       <div class="sc-top"><b class="sc-id">#${esc(sp.code)}</b>${sp.material ? `<span class="tag tag-mute">${esc(sp.material)}</span>` : ''}
         ${st === 'empty' ? '<span class="tag tag-bad">Bitti</span>' : st === 'low' ? '<span class="tag tag-warn">Azaldı</span>' : ''}</div>
       <div class="sc-name"><span class="spool${swatchCls(sp.color_hex || '#ccc')}" style="${swatchStyle(sp.color_hex || '#ccc')}"></span>${esc(sp.color_name || colorName(sp.color_hex) || 'Renk yok')}<span class="faint"> · ${esc(sp.brand || 'Marka yok')}</span></div>
-      <div class="sc-meter"><i style="width:${(pct * 100).toFixed(1)}%"></i></div>
       <div class="sc-foot"><span><b>${Math.round(sp.remaining)} g</b> / ${Math.round(sp.net_weight)} g</span>
         ${sp.in_use.length ? `<span class="inprod">${esc(sp.in_use[0].printer || 'baskıda')}</span>` : ''}</div>
     </div></article>`;
@@ -3758,6 +3894,14 @@ function isNear(p) {
 // Son teslim günü bugün (ya da geçmiş) olan sipariş bugün kargoya verilmeli
 function dueToday(dl) { if (!dl) return false; const e = new Date(); e.setHours(23, 59, 59, 999); return dl * 1000 <= e.getTime(); }
 const tyoDet = () => { try { return localStorage.getItem('tyoDet') === '1'; } catch { return false; } };
+// Rozetler suda süzülür gibi: her sipariş için sabit ama farklı (rastgele görünen) yön, süre ve gecikme
+function floatVars(seed) {
+  let h = 2166136261; for (const ch of String(seed)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+  const r = () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return ((h >>> 0) % 1000) / 1000; };
+  const v = (a) => (r() * 2 - 1) * a;
+  return `--ax:${v(4).toFixed(1)}px;--ay:${v(3).toFixed(1)}px;--ar:${v(8).toFixed(1)}deg;--ad:${(3.2 + r() * 2.6).toFixed(2)}s;--ae:-${(r() * 4).toFixed(2)}s;`
+    + `--bx:${v(4).toFixed(1)}px;--by:${v(3).toFixed(1)}px;--bd:${(2.8 + r() * 2.8).toFixed(2)}s;--be:-${(r() * 4).toFixed(2)}s`;
+}
 function tyoRow(p, r) {
   const live = p.lines.filter((l) => !TY_CANCEL.has(l.status));
   const thumbs = (live.length ? live : p.lines);
@@ -3769,12 +3913,15 @@ function tyoRow(p, r) {
   const stTag = { Returned: 'İade', UnDelivered: 'Teslim edilemedi', UnSupplied: 'Tedarik edilemedi', Cancelled: 'İptal', Invoiced: 'Faturalandı', AtCollectionPoint: 'Teslim noktasında' }[p.status];
   const cbCol = p.tab === 'new';
   const sh = ordShort(p), today = TYO_ACTIVE.has(p.tab) && p.tab !== 'shipped' && dueToday(dl);
-  return `<div class="tyo-row${S.tyo.sel.has(p.package_id) ? ' sel' : ''}${cbCol ? '' : ' nocb'}${sh.state !== 'none' ? ` short-${sh.state}` : ''}${today ? ' due-today' : ''}" data-pkg="${esc(p.package_id)}">
+  // termin ısısı: kenar çizgisi son teslime 48 saatten çok varken yeşil, yaklaştıkça sarı → turuncu → kırmızı; son 2 saatte nabız atar
+  const hl = dl && TYO_ACTIVE.has(p.tab) && p.tab !== 'shipped' ? (dl - nowS()) / 3600 : null;
+  const heat = hl == null ? '' : ` heat${hl < 2 ? ' heat-hot' : ''}" style="--heat:hsl(${Math.round(Math.sqrt(clamp((hl - 1) / 47, 0, 1)) * 130)} 75% 46%)`;
+  return `<div class="tyo-row${S.tyo.sel.has(p.package_id) ? ' sel' : ''}${cbCol ? '' : ' nocb'}${sh.state !== 'none' ? ` short-${sh.state}` : ''}${today ? ' due-today' : ''}${heat}" data-pkg="${esc(p.package_id)}">
     ${sel ? `<input type="checkbox" class="tyo-cb" data-tyo-sel="${esc(p.package_id)}" ${S.tyo.sel.has(p.package_id) ? 'checked' : ''} aria-label="Siparişi seç">` : cbCol ? '<span class="tyo-cb-sp"></span>' : ''}
     <details class="tyo" ${S.tyo.open.has(p.package_id) ? 'open' : ''} data-tyo-open="${esc(p.package_id)}">
       <summary>
         <span class="tyo-no"><b>${esc(p.order_number)}</b><small class="faint">${date}</small></span>
-        <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" title="${esc(l.name || '')} ×${l.quantity}${sh.by[l.product_id]?.miss ? ` · rafta ${sh.by[l.product_id].have}, baskıda ${sh.by[l.product_id].print}, ${sh.by[l.product_id].miss} eksik` : ''}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? qtyBadge(l.quantity, 'tt-qb') : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
+        <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l, ti) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" style="${floatVars(p.package_id + ':' + ti)}" title="${esc(l.name || '')} ×${l.quantity}${sh.by[l.product_id]?.miss ? ` · rafta ${sh.by[l.product_id].have}, baskıda ${sh.by[l.product_id].print}, ${sh.by[l.product_id].miss} eksik` : ''}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? qtyBadge(l.quantity, 'tt-qb') : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
         <span class="tyo-who"><b>${esc(p.customer || '—')}</b><small class="muted">${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''}${orderRuleHits(p).map((h) => ` <span class="rule-tag t-${h.tone}" title="${esc(h.text)}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? ` <span class="near-tag" title="Mağazayla aynı yer: pakete not eklemeyi unutmayın">${icon('pin')} Yakın · not ekle</span>` : ''}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
         <span class="tyo-amt">${r ? fmtTL(r.price) : p.pkg_total != null ? fmtTL(p.pkg_total) : '–'}</span>
         <span class="tyo-pr">${r ? `<span class="mg ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)}</span><small class="faint">${fmtPct(r.margin)}${r.missing.length ? ' · <span class="warn-text">eksik</span>' : ''}</small>` : '<span class="faint">–</span>'}</span>
@@ -3828,6 +3975,264 @@ function tyoBody(p) {
       <div class="oc-pf-b">${breakdownHTML(r, r.grams ? { grams: r.grams, perG: r.material / (1 + S.profit.cfg.fire_pct / 100) / r.grams } : null)}${r.missing.length ? `<p class="pf-warn">Eksik bilgi: ${r.missing.join(', ')}. Kâr bu kalemler olmadan hesaplandı.</p>` : ''}</div></details>` : ''}
   </div>`;
 }
+// ================================================================== sağ çekmece (siparişler, iadeler, sorular)
+// Satıra tıklayınca ayrıntı sağdan kayan çekmecede açılır; liste yerinde kalır, diğer satırlar soluklaşır.
+// ↑ ↓ önceki / sonraki, Esc ya da boş yere tıklama kapatır. Başka satıra tıklamak çekmeceyi o satıra geçirir.
+const DRW = { kind: null, key: null };
+const DRAWER_KINDS = {
+  ty: {
+    rows: () => $$('.tyo-row[data-pkg]'), keyOf: (r) => r.dataset.pkg,
+    item: (k) => S.tyOrders?.packages.find((p) => String(p.package_id) === k),
+    label: 'Sipariş ayrıntısı',
+    head(p) {
+      const dl = effDeadline(p.deadline), act = TYO_ACTIVE.has(p.tab) && p.tab !== 'shipped', today = act && dueToday(dl);
+      const date = new Date(p.order_date).toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      return `<div class="drw-t"><span class="drw-no">${esc(p.order_number)}</span>${act && dl ? `${today ? '<span class="tag tag-warn">Bugün verilmeli</span>' : ''}${dlChip(dl)}` : ''}</div>
+        <div class="drw-who"><b>${esc(p.customer || '—')}</b><small>${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''} · ${date}</small>
+          <span class="drw-tags">${orderRuleHits(p).map((h) => `<span class="rule-tag t-${h.tone}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? `<span class="near-tag">${icon('pin')} Yakın · not ekle</span>` : ''}</span></div>`;
+    },
+    body: (p) => tyoBody(p),
+    foot(p) {
+      return `<button type="button" class="btn btn-ghost btn-sm" data-drw-copy="${esc(p.order_number)}">${icon('copy')} Sipariş no</button>${p.customer ? `<button type="button" class="btn btn-ghost btn-sm" data-drw-copy="${esc(p.customer)}" data-what="Müşteri adı">${icon('copy')} Müşteri</button>` : ''}
+        <span class="spacer"></span><span class="faint drw-keys"><kbd>↑</kbd><kbd>↓</kbd> gez · <kbd>Esc</kbd></span>`;
+    },
+    bind(root) { root.querySelector('.oc-pf')?.addEventListener('toggle', (e) => { try { localStorage.setItem('tyoPf', e.target.open ? '1' : '0'); } catch { /* */ } }); },
+  },
+  claim: {
+    rows: () => $$('.cl-row[data-key]'), keyOf: (r) => r.dataset.key,
+    item: (k) => S.claims?.items.find((c) => String(c.claim_id) === k), label: 'İade ayrıntısı',
+    head: (c) => `<div class="drw-t"><span class="drw-no">${esc(c.order_number)}</span><span class="cl-st">${esc(c.status_tr)}</span></div>
+      <div class="drw-who"><b>${esc(c.customer || '—')}</b><small>${c.claim_date ? `iade ${fmtWhen(c.claim_date)}` : ''}</small></div>`,
+    body: (c) => claimCard(c), foot: () => '',
+  },
+  q: {
+    rows: () => $$('.q-row[data-key]'), keyOf: (r) => r.dataset.key,
+    item: (k) => S.qs?.items.find((q) => String(q.id) === k), label: 'Soru ayrıntısı',
+    head: (q) => `<div class="drw-t"><span class="drw-no">${esc(q.product_name || 'Ürün')}</span></div>
+      <div class="drw-who"><b>${esc(q.user_name || 'Müşteri')}</b><small>${q.created ? fmtWhen(q.created) : ''} · ${esc(q.status_tr || '')}</small></div>`,
+    body: (q) => qCard(q), foot: () => '', bind: (root) => { qBind(root); setTimeout(() => root.querySelector('.q-ans textarea')?.focus({ preventScroll: true }), 420); },
+  },
+};
+function drawerHTML(K, it) {
+  return `<header class="drw-h"><div class="drw-hm">${K.head(it)}</div>
+      <div class="drw-nav"><button type="button" class="icon-btn" data-drw="-1" title="Önceki (↑)" aria-label="Önceki">${icon('chevron-down')}</button><button type="button" class="icon-btn" data-drw="1" title="Sonraki (↓)" aria-label="Sonraki">${icon('chevron-down')}</button><button type="button" class="icon-btn" data-drw="x" title="Kapat (Esc)" aria-label="Kapat">${icon('x')}</button></div></header>
+    <div class="drw-b">${K.body(it)}</div>${(() => { const f = K.foot(it); return f.trim() ? `<footer class="drw-f">${f}</footer>` : ''; })()}`;
+}
+function drawerOpen(kind, key, dir = 0) {
+  const K = DRAWER_KINDS[kind], it = K?.item(String(key)); if (!it) return;
+  key = String(key);
+  let root = $('#drw');
+  const swap = root && !root.classList.contains('out') && DRW.kind === kind;
+  if (!root || root.classList.contains('out')) {
+    root?.remove();
+    root = document.createElement('aside'); root.id = 'drw'; root.className = 'drw'; root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', K.label);
+    document.body.appendChild(root);
+    root.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-drw]'); if (b) { b.dataset.drw === 'x' ? drawerClose() : drawerStep(+b.dataset.drw); return; }
+      const c = e.target.closest('[data-drw-copy]'); if (c) copyText(c.dataset.drwCopy, c.dataset.what || 'Sipariş no');
+    });
+  }
+  if (swap && DRW.key !== key) { root.classList.remove('drw-swap'); void root.offsetWidth; root.classList.add('drw-swap'); root.style.setProperty('--dir', `${dir < 0 ? -1 : 1}`); }
+  DRW.kind = kind; DRW.key = key;
+  root.innerHTML = drawerHTML(K, it); root.dataset.sig = root.innerHTML.length;
+  K.bind?.(root);
+  document.body.classList.add('drw-on');
+  drawerMark(true);
+  if (!swap) root.querySelector('[data-drw="x"]')?.focus({ preventScroll: true });
+}
+function drawerMark(scroll) {
+  const K = DRAWER_KINDS[DRW.kind]; if (!K) return;
+  K.rows().forEach((r) => {
+    const on = K.keyOf(r) === DRW.key; r.classList.toggle('dr-cur', on);
+    if (on && scroll) r.scrollIntoView({ block: 'nearest', behavior: REDUCED() ? 'auto' : 'smooth' });
+  });
+}
+function drawerStep(d) {
+  const K = DRAWER_KINDS[DRW.kind]; if (!K) return;
+  const keys = K.rows().map(K.keyOf), i = keys.indexOf(DRW.key), n = keys[i + d];
+  if (n != null) drawerOpen(DRW.kind, n, d);
+  else { const r = $('#drw'); r?.classList.remove('drw-bump'); void r?.offsetWidth; r?.classList.add('drw-bump'); }
+}
+function drawerClose() {
+  const root = $('#drw'); DRW.kind = null; DRW.key = null;
+  document.body.classList.remove('drw-on'); $$('.dr-cur').forEach((r) => r.classList.remove('dr-cur'));
+  if (!root) return;
+  root.classList.add('out'); setTimeout(() => { if (root.classList.contains('out')) root.remove(); }, REDUCED() ? 0 : 320);
+}
+// liste yeniden çizilince: seçili satırı yeniden işaretle; çekmecedeki bilgi değiştiyse (ve içinde yazı yazılmıyorsa) tazele
+function drawerSync() {
+  if (!DRW.key) return;
+  const K = DRAWER_KINDS[DRW.kind], it = K.item(DRW.key), root = $('#drw');
+  if (!it || !root) return drawerClose();
+  drawerMark(false);
+  if (root.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+  const html = drawerHTML(K, it);
+  if (html.length !== +root.dataset.sig) { const sc = root.querySelector('.drw-b')?.scrollTop || 0; root.classList.remove('drw-swap'); root.innerHTML = html; root.dataset.sig = html.length; K.bind?.(root); root.querySelector('.drw-b').scrollTop = sc; }
+}
+document.addEventListener('click', (e) => { const r = e.target.closest('[data-drk]'); if (!r) return; const k = r.dataset.key; DRW.kind === r.dataset.drk && DRW.key === k ? drawerClose() : drawerOpen(r.dataset.drk, k); });
+document.addEventListener('pointerdown', (e) => {
+  if (!DRW.key || e.button !== 0) return;
+  if (e.target.closest('#drw, .tyo-row, .dr-row, #modal-root, .modal-back, .ctx-menu, .oc-menu, .toast, .island, .lightbox, .lb, .pal, #pal, .heat-pop, .topbar, .rail, .tabbar')) return;
+  drawerClose();
+}, true);
+document.addEventListener('keydown', (e) => {
+  if (!DRW.key || $('#modal-root').children.length || e.defaultPrevented) return;
+  if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) && e.key !== 'Escape') return;
+  if (e.key === 'Escape') { e.preventDefault(); drawerClose(); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); drawerStep(e.key === 'ArrowDown' ? 1 : -1); }
+});
+addEventListener('hashchange', () => { if (DRW.key) drawerClose(); });
+
+// ================================================================== kart → çekmece uçuşu
+// Ürün / baskı / özel sipariş kartından açılan pencere, kart büyüyerek sağ çekmeceye uçar; kapanınca kartına geri döner.
+const FLY_ACTS = new Set(['edit-product', 'job-menu', 'job-result', 'edit-order']);
+function flyCardSel(c) {
+  if (c.matches('.pcard[data-gid]')) return `.pcard[data-gid="${CSS.escape(c.dataset.gid)}"]`;
+  if (c.matches('.pcard[data-pid]')) return `.pcard[data-pid="${c.dataset.pid}"]`;
+  if (c.matches('article.job[data-job]')) return `article.job[data-job="${c.dataset.job}"]`;
+  if (c.matches('.ocard[data-id]')) return `.ocard[data-id="${c.dataset.id}"]`;
+  return null;
+}
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]'); if (!el || !FLY_ACTS.has(el.dataset.act)) return;
+  const card = el.closest('.pcard, article.job, .ocard'), sel = card && flyCardSel(card);
+  S.fly = sel ? { t: Date.now(), sel } : null;
+}, true);
+function flyLook(card) {
+  const im = card.querySelector('.thumb, .stack .fill, .img, .oc-img, .job-visual');
+  const cs = im ? getComputedStyle(im) : null, bg = cs && cs.backgroundImage !== 'none' ? cs.backgroundImage : '';
+  return { r: card.getBoundingClientRect(), ir: im?.getBoundingClientRect(), bg, bc: cs?.backgroundColor || '' };
+}
+function flyMorph(from, to, look, back) {
+  const z = ZF(), m = document.createElement('div'); m.className = 'fly-morph' + (back ? ' back' : '');
+  const ih = look.ir ? look.ir.height / z : 0;
+  m.innerHTML = `<i style="${look.bg ? `background-image:${look.bg};` : ''}${look.bc ? `background-color:${look.bc};` : ''}"></i>`;
+  document.body.appendChild(m);
+  const R = (r) => ({ left: r.left / z + 'px', top: r.top / z + 'px', width: r.width / z + 'px', height: r.height / z + 'px' });
+  const dur = back ? 420 : 560, ease = 'cubic-bezier(.2, .9, .25, 1)';
+  m.animate([{ ...R(from), borderRadius: back ? '18px' : '14px' }, { ...R(to), borderRadius: back ? '14px' : '18px' }], { duration: dur, easing: ease, fill: 'forwards' });
+  m.firstChild.animate(back ? [{ height: '0px', opacity: 0 }, { height: ih + 'px', opacity: 1 }] : [{ height: ih + 'px', opacity: 1 }, { height: Math.min(180, ih * 1.6) + 'px', opacity: 1, offset: .5 }, { height: '0px', opacity: 0 }], { duration: dur, easing: ease, fill: 'forwards' });
+  return new Promise((ok) => setTimeout(() => ok(m), dur));
+}
+function flyIn(back) {
+  const f = S.fly; S.fly = null;
+  if (!f || Date.now() - f.t > 2500 || REDUCED() || innerWidth < 760) return;
+  const card = $(f.sel); if (!card) return;
+  const look = flyLook(card), modal = back.querySelector('.modal');
+  back.classList.add('as-drawer'); back.dataset.flySel = f.sel;
+  modal.classList.add('fly-hide'); card.classList.add('fly-src');
+  requestAnimationFrame(() => flyMorph(look.r, modal.getBoundingClientRect(), look).then((m) => {
+    card.classList.remove('fly-src'); modal.classList.remove('fly-hide'); modal.classList.add('fly-reveal'); m.remove();
+  }));
+}
+function flyOut(back) {
+  const sel = back?.dataset.flySel, card = sel && $(sel), modal = back?.querySelector('.modal');
+  if (!card || !modal || REDUCED()) return false;
+  const cr = card.getBoundingClientRect(); if (cr.bottom < 0 || cr.top > innerHeight) return false;
+  const look = flyLook(card), mr = modal.getBoundingClientRect();
+  card.classList.add('fly-src'); back.classList.add('fly-gone');
+  flyMorph(mr, cr, look, true).then((m) => { card.classList.remove('fly-src'); m.remove(); });
+  return true;
+}
+
+// Boş durum çizimleri: her boş kutuya başlığına göre küçük, hareketli bir çizim eklenir
+const EMPTY_ART = {
+  box: `<svg viewBox="0 0 120 100"><ellipse class="ea-sh" cx="60" cy="92" rx="34" ry="5"/><g class="ea-float"><path class="ea-b" d="M28 40 L60 26 L92 40 L92 74 L60 88 L28 74Z"/><path class="ea-l" d="M28 40 L60 54 L92 40 M60 54 V88"/><path class="ea-a" d="M44 33 L76 47 V58"/><g class="ea-flap"><path class="ea-b2" d="M28 40 L60 26 L48 16 L16 30Z"/></g></g><g class="ea-spark"><path d="M98 18v8M94 22h8"/><path d="M18 58v6M15 61h6"/></g></svg>`,
+  printer: `<svg viewBox="0 0 120 100"><rect class="ea-b" x="20" y="10" width="80" height="80" rx="8"/><rect class="ea-in" x="28" y="18" width="64" height="58" rx="4"/><g class="ea-head"><rect class="ea-a" x="40" y="24" width="16" height="10" rx="2"/><path class="ea-a" d="M48 34v6"/></g><path class="ea-l" d="M30 30h60"/><rect class="ea-bed" x="34" y="66" width="52" height="5" rx="2"/><g class="ea-zz"><text x="80" y="54">z</text><text x="86" y="46">z</text></g></svg>`,
+  spool: `<svg viewBox="0 0 120 100"><ellipse class="ea-sh" cx="60" cy="93" rx="30" ry="4"/><g class="ea-spin"><circle class="ea-b" cx="60" cy="50" r="38"/><circle class="ea-in" cx="60" cy="50" r="27"/><circle class="ea-b2" cx="60" cy="50" r="11"/><circle class="ea-hole" cx="60" cy="50" r="4"/><path class="ea-l" d="M60 12v10M60 78v10M22 50h10M88 50h10"/></g><path class="ea-a ea-thread" d="M87 30 C102 36 104 60 112 74"/></svg>`,
+  ret: `<svg viewBox="0 0 120 100"><ellipse class="ea-sh" cx="56" cy="92" rx="30" ry="5"/><g class="ea-float"><rect class="ea-b" x="26" y="38" width="60" height="46" rx="5"/><path class="ea-l" d="M26 52h60M48 38v14M64 38v14"/></g><g class="ea-swing"><path class="ea-a" d="M78 18 C100 18 104 44 88 50"/><path class="ea-a" d="M92 42 L88 50 L97 52"/></g></svg>`,
+  chat: `<svg viewBox="0 0 120 100"><g class="ea-float"><path class="ea-b" d="M14 22a10 10 0 0 1 10-10h50a10 10 0 0 1 10 10v26a10 10 0 0 1-10 10H40l-14 12v-12h-2a10 10 0 0 1-10-10Z"/><g class="ea-dots"><circle cx="36" cy="35" r="4"/><circle cx="50" cy="35" r="4"/><circle cx="64" cy="35" r="4"/></g></g><g class="ea-float2"><path class="ea-b2" d="M70 52a8 8 0 0 1 8-8h22a8 8 0 0 1 8 8v16a8 8 0 0 1-8 8h-2v9l-10-9H78a8 8 0 0 1-8-8Z"/><path class="ea-a" d="M84 60l5 5 9-10"/></g></svg>`,
+  cube: `<svg viewBox="0 0 120 100"><ellipse class="ea-sh" cx="60" cy="92" rx="32" ry="5"/><g class="ea-stack"><path class="ea-b ea-s1" d="M32 74 L60 62 L88 74 L60 86Z"/><path class="ea-b ea-s2" d="M32 62 L60 50 L88 62 L60 74Z"/><path class="ea-b ea-s3" d="M32 50 L60 38 L88 50 L60 62Z"/><path class="ea-b2 ea-s4" d="M32 38 L60 26 L88 38 L60 50Z"/></g><g class="ea-spark"><path d="M98 20v8M94 24h8"/><path d="M20 26v6M17 29h6"/></g></svg>`,
+  chart: `<svg viewBox="0 0 120 100"><path class="ea-l" d="M16 86h88M16 14v72"/><rect class="ea-bar b1" x="26" y="58" width="12" height="28" rx="3"/><rect class="ea-bar b2" x="46" y="44" width="12" height="42" rx="3"/><rect class="ea-bar b3" x="66" y="64" width="12" height="22" rx="3"/><rect class="ea-bar b4" x="86" y="30" width="12" height="56" rx="3"/><path class="ea-a ea-trend" d="M24 50 L48 36 L70 52 L96 20"/></svg>`,
+  plug: `<svg viewBox="0 0 120 100"><path class="ea-l" d="M6 70 C24 70 30 52 46 52"/><g class="ea-plug"><rect class="ea-b" x="44" y="42" width="20" height="20" rx="4"/><path class="ea-a" d="M64 47h8M64 57h8"/></g><g class="ea-sock"><rect class="ea-b2" x="86" y="36" width="24" height="32" rx="5"/><circle class="ea-hole" cx="98" cy="46" r="2.5"/><circle class="ea-hole" cx="98" cy="58" r="2.5"/></g><g class="ea-spark ea-zap"><path d="M78 30l-4 8h6l-4 8"/></g><path class="ea-l" d="M110 52h8"/></svg>`,
+  look: `<svg viewBox="0 0 120 100"><g class="ea-look"><circle class="ea-b2" cx="52" cy="44" r="24"/><circle class="ea-in" cx="52" cy="44" r="16"/><path class="ea-a" d="M70 62 L90 82"/></g><g class="ea-spark"><path d="M96 20v8M92 24h8"/><path d="M20 70v6M17 73h6"/></g></svg>`,
+};
+function emptyKind(t) {
+  t = trLower(t || '');
+  if (/bağlı değil|bağlantı/.test(t)) return 'plug';
+  if (/iade/.test(t)) return 'ret';
+  if (/soru/.test(t)) return 'chat';
+  if (/makara|filament|şekl/.test(t)) return 'spool';
+  if (/baskı|basılması|yazıcı|makine/.test(t)) return 'printer';
+  if (/sipariş|hazırlanacak|kargo|rafta/.test(t)) return 'box';
+  if (/satış|veri|buybox|kâr|rapor/.test(t)) return 'chart';
+  if (/eşleşen|filtre|bulunamadı|sonuç/.test(t)) return 'look';
+  if (/ürün|parça|kayıt/.test(t)) return 'cube';
+  return 'look';
+}
+function decorateEmpty(root) {
+  (root.matches?.('.empty') ? [root] : [...(root.querySelectorAll?.('.empty') || [])]).forEach((el) => {
+    if (el.querySelector(':scope > .empty-art') || el.closest('.no-art')) return;
+    const k = emptyKind(el.querySelector('h3')?.textContent);
+    el.insertAdjacentHTML('afterbegin', `<div class="empty-art ea-${k}" aria-hidden="true">${EMPTY_ART[k]}</div>`);
+  });
+}
+new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) decorateEmpty(n); })
+  .observe(document.documentElement, { childList: true, subtree: true });
+// Sağ tık menüsü: sipariş satırı, ürün kartı, baskı kartı. Shift + sağ tık tarayıcının kendi menüsünü açar.
+function ctxMenu(x, y, items) {
+  $('#ctx-menu')?.remove();
+  const m = document.createElement('div'); m.id = 'ctx-menu'; m.className = 'oc-menu ctx-menu'; m.setAttribute('role', 'menu');
+  m.innerHTML = items.filter(Boolean).map((it, i) => it === '-' ? '<hr>' : `<button type="button" role="menuitem" data-i="${i}" class="${it.bad ? 'bad' : ''}"${it.off ? ' disabled' : ''}>${icon(it.ic || 'chevron-right')} ${it.t}${it.k ? `<kbd>${it.k}</kbd>` : ''}</button>`).join('');
+  document.body.appendChild(m);
+  const z = ZF(), w = m.offsetWidth, h = m.offsetHeight, vw = innerWidth / z, vh = innerHeight / z;
+  x /= z; y /= z;
+  const left = x + w > vw - 8 ? x - w : x, top = y + h > vh - 8 ? Math.max(8, y - h) : y;
+  m.style.left = Math.max(8, left) + 'px'; m.style.top = top + 'px';
+  m.style.transformOrigin = `${left < x ? 'right' : 'left'} ${top < y ? 'bottom' : 'top'}`;
+  m.querySelector('button:not([disabled])')?.focus({ preventScroll: true });
+  const close = () => { m.classList.add('out'); setTimeout(() => m.remove(), REDUCED() ? 0 : 120); document.removeEventListener('pointerdown', off, true); removeEventListener('scroll', close, true); removeEventListener('keydown', key, true); removeEventListener('blur', close); };
+  const off = (e) => { if (!m.contains(e.target)) close(); };
+  const key = (e) => {
+    const bs = [...m.querySelectorAll('button:not([disabled])')], i = bs.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); bs[(i + (e.key === 'ArrowDown' ? 1 : -1) + bs.length) % bs.length]?.focus(); }
+  };
+  m.addEventListener('click', (e) => { const b = e.target.closest('[data-i]'); if (!b) return; close(); items[+b.dataset.i].fn?.(); });
+  setTimeout(() => { document.addEventListener('pointerdown', off, true); addEventListener('scroll', close, true); addEventListener('keydown', key, true); addEventListener('blur', close); });
+}
+const fakeEl = (d) => ({ dataset: d, disabled: false, closest: () => null });
+const copyText = (t, what) => navigator.clipboard?.writeText(t).then(() => toast(`${what} kopyalandı`), () => toast('Kopyalanamadı', { bad: true }));
+document.addEventListener('contextmenu', (e) => {
+  if (e.shiftKey || e.target.closest('input, textarea, select, [contenteditable], .modal, #modal-root > *')) return;
+  const row = e.target.closest('.tyo-row[data-pkg]'), pc = e.target.closest('.pcard[data-pid]'), job = e.target.closest('article.job[data-job]');
+  let items = null;
+  if (row) {
+    const p = S.tyOrders?.packages?.find((x) => String(x.package_id) === row.dataset.pkg); if (!p) return;
+    const d = row.querySelector('details.tyo');
+    items = [
+      { t: d?.open ? 'Kapat' : 'Ayrıntıyı aç', ic: 'chevron-down', fn: () => { if (d) d.open = !d.open; } },
+      p.tab === 'new' ? { t: "Hazırlanıyor'a çek", ic: 'check', off: !p.can_pick, fn: () => tyoPick([p.package_id]) } : null,
+      TYO_ACTIVE.has(p.tab) ? { t: 'Kargo etiketini bas', ic: 'print', fn: () => tyLabel([p.package_id], row.querySelector('[data-act="ty-label"]')) } : null,
+      '-',
+      { t: 'Sipariş no kopyala', ic: 'copy', k: p.order_number, fn: () => copyText(String(p.order_number), 'Sipariş no') },
+      p.customer ? { t: 'Müşteri adını kopyala', ic: 'copy', fn: () => copyText(p.customer, 'Müşteri adı') } : null,
+    ];
+  } else if (pc) {
+    const p = productById(+pc.dataset.pid); if (!p) return;
+    items = [
+      { t: 'Düzenle', ic: 'edit', fn: () => openProductEditor(p.id) },
+      { t: 'Baskı başlat', ic: 'print', fn: () => openNewPrint(p.id) },
+      p.thumbnail ? { t: 'Görseli büyüt', ic: 'expand', fn: () => openLightbox([{ url: p.thumbnail, title: p.name }], 0) } : null,
+      '-',
+      { t: 'Ürün sayfası', ic: 'external', fn: () => { location.hash = `#/urun?id=${p.id}`; } },
+      { t: 'Satış istatistikleri', ic: 'chart', fn: () => { S.statQ = p.name; location.hash = '#/istatistik'; } },
+    ];
+  } else if (job) {
+    const j = S.jobs.find((x) => x.id === +job.dataset.job); if (!j) return;
+    const live = j.status === 'printing', id = String(j.id);
+    items = [
+      live ? { t: 'Sonucu gir', ic: 'check', fn: () => openResult(j.id) } : null,
+      { t: 'Düzenle', ic: 'edit', fn: () => ACTIONS['job-menu'](fakeEl({ id })) },
+      live ? { t: '15 dk uzat', ic: 'clock', fn: () => ACTIONS['job-snooze'](fakeEl({ id, m: '15' })) } : null,
+      '-',
+      live ? { t: 'İptal et', ic: 'x', bad: true, fn: () => ACTIONS['job-cancel'](fakeEl({ id })) } : null,
+    ];
+  }
+  if (!items) return;
+  while (items.length && (!items.at(-1) || items.at(-1) === '-')) items.pop();
+  e.preventDefault(); ctxMenu(e.clientX, e.clientY, items);
+});
 // Sipariş satırındaki ürün adı: düzenle / istatistik / Trendyol sayfası
 function ocMenu(btn) {
   const old = $('#oc-menu'); if (old) { old.remove(); if (old.dataset.for === btn.dataset.pid + btn.dataset.url) return; }
@@ -3850,7 +4255,7 @@ function ocMenu(btn) {
   setTimeout(() => { document.addEventListener('pointerdown', off, true); addEventListener('scroll', off2, true); });
   addEventListener('keydown', function esc1(e) { if (e.key === 'Escape') { m.remove(); removeEventListener('keydown', esc1); } });
 }
-function tyoRes() { const el = $('#tyo-res'); if (!el) return; el.innerHTML = tyoResults(); tyoBindRes(); tick(); }
+function tyoRes() { const el = $('#tyo-res'); if (!el) return; el.innerHTML = tyoResults(); tyoBindRes(); tick(); countUp(el); setTimeout(focusPkgRow, 60); }
 function tyoBind() {
   const q = $('#tyo-q'), f = S.tyo;
   if (q) q.addEventListener('input', () => { f.q = q.value; tyoRes(); tyoCounts(); });
@@ -3874,12 +4279,16 @@ function tyoCounts() {
 function tyoBindRes() {
   $('#tyo-all')?.addEventListener('change', (e) => { tyoFiltered().filter((p) => p.can_pick).forEach((p) => (e.target.checked ? S.tyo.sel.add(p.package_id) : S.tyo.sel.delete(p.package_id))); tyoRes(); });
   $$('[data-tyo-sel]').forEach((cb) => cb.addEventListener('change', () => { cb.checked ? S.tyo.sel.add(cb.dataset.tyoSel) : S.tyo.sel.delete(cb.dataset.tyoSel); tyoRes(); }));
+  // satıra tıklayınca ayrıntı satırın altında açılmaz, sağdan çekmece kayar
   $$('details.tyo').forEach((d) => {
-    const fill = () => { const p = S.tyOrders.packages.find((x) => x.package_id === d.dataset.tyoOpen); if (!p) return; d.querySelector('.tyo-body').innerHTML = tyoBody(p);
-      d.querySelector('.oc-pf')?.addEventListener('toggle', (e) => { try { localStorage.setItem('tyoPf', e.target.open ? '1' : '0'); } catch { /* */ } }); };
-    if (d.open) fill();
-    d.addEventListener('toggle', () => { d.open ? (S.tyo.open.add(d.dataset.tyoOpen), fill()) : S.tyo.open.delete(d.dataset.tyoOpen); });
+    d.open = false;
+    d.querySelector('summary').addEventListener('click', (e) => {
+      e.preventDefault();
+      if (e.target.closest('a, button, input, select, [data-zoom]')) return;
+      const k = d.dataset.tyoOpen; DRW.kind === 'ty' && DRW.key === k ? drawerClose() : drawerOpen('ty', k);
+    });
   });
+  drawerSync();
 }
 // ================================================================== kendi kargo etiketimiz (100×80, yazdırma penceresi)
 const C128 = ['212222','222122','222221','121223','121322','131222','122213','122312','132212','221213','221312','231212','112232','122132','122231','113222','123122','123221','223211','221132','221231','213212','223112','312131','311222','321122','321221','312212','322112','322211','212123','212321','232121','111323','131123','131321','112313','132113','132311','211313','231113','231311','112133','112331','132131','113123','113321','133121','313121','211331','231131','213113','213311','213131','311123','311321','331121','312113','312311','332111','314111','221411','431111','111224','111422','121124','121421','141122','141221','112214','112412','122114','122411','142112','142211','241211','221114','413111','241112','134111','111242','121142','121241','114212','124112','124211','411212','421112','421211','212141','214121','412121','111143','111341','131141','114113','114311','411113','411311','113141','114131','311141','411131','211412','211214','211232','2331112'];
@@ -4007,8 +4416,11 @@ async function tyLabel(ids, btn) {
   }
   catch (e) { fail(e); } finally { if (btn) btn.disabled = false; }
 }
+// bugün kargoya verilmesi gereken, henüz çıkarılmamış sipariş sayısı
+const dueTodayLeft = () => (S.tyOrders?.packages || []).filter((p) => p.tab === 'new' && dueToday(effDeadline(p.deadline))).length;
 async function tyoPick(ids) {
   const pk = S.tyOrders.packages.filter((p) => ids.includes(p.package_id));
+  const dueBefore = dueTodayLeft();
   const unm = pk.filter((p) => p.lines.some((l) => !l.product_id && !TY_CANCEL.has(l.status))).length;
   // rafta görünenden fazlası paketleniyorsa uyar (baskı kaydı eksik olabilir)
   const needBy = {};
@@ -4025,7 +4437,43 @@ async function tyoPick(ids) {
     if (r.labels) labelToast(r.labels);
     else if (r.done.length && S.labelCfg?.auto && !labelServerMode()) await browserLabels(r.done).catch(fail);
     await Promise.all([loadTyOrders(), loadProducts()]); render();
+    if (dueBefore > 0 && dueTodayLeft() === 0) dayDone();
   } catch (e) { fail(e); }
+}
+// Günün son siparişi çıkınca: filament şeritlerinden konfeti + ada bildirimi (günde bir kez)
+function dayDone() {
+  const day = new Date().toISOString().slice(0, 10);
+  try { if (localStorage.getItem('dayDone') === day) return; localStorage.setItem('dayDone', day); } catch { /* */ }
+  setTimeout(() => island('ok', '<b>Bugünün kargosu tamam</b> · bugün verilmesi gereken tüm siparişler çıkarıldı', { ms: 4200 }), 900);
+  if (FX()) confetti();
+}
+function confetti() {
+  const cv = document.createElement('canvas'); cv.className = 'fx-confetti'; cv.setAttribute('aria-hidden', 'true');
+  const dpr = devicePixelRatio || 1, W = innerWidth, H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; document.body.appendChild(cv);
+  const g = cv.getContext('2d'); g.scale(dpr, dpr);
+  const cs = getComputedStyle(document.documentElement);
+  const cols = ['--accent', '--ok', '--warn', '--info', '--bad'].map((v) => cs.getPropertyValue(v).trim()).filter(Boolean).concat(['#F27A1A', '#22B07D', '#7C5CFA', '#E8B21C', '#1FC8C0']);
+  const P = Array.from({ length: 140 }, (_, i) => {
+    const left = i % 2 === 0, a = (left ? -1 : 1) * (Math.PI / 4 + Math.random() * 0.5);
+    const v = 11 + Math.random() * 9;
+    return { x: left ? -10 : W + 10, y: H * (0.55 + Math.random() * 0.3), vx: -Math.sin(a) * v * (left ? -1 : 1) * (left ? 1 : -1), vy: -Math.cos(a) * v,
+      w: 5 + Math.random() * 5, l: 12 + Math.random() * 22, r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.35, wob: Math.random() * 6, c: cols[i % cols.length], curl: Math.random() < 0.45 };
+  });
+  P.forEach((q, i) => { q.vx = (i % 2 === 0 ? 1 : -1) * (5 + Math.random() * 9); });
+  const t0 = performance.now();
+  const frame = (t) => {
+    const el = (t - t0) / 1000; g.clearRect(0, 0, W, H);
+    P.forEach((q) => {
+      q.vy += 0.32; q.vx *= 0.985; q.vy *= 0.985; q.x += q.vx + Math.sin(el * 4 + q.wob) * 0.8; q.y += q.vy; q.r += q.vr;
+      g.save(); g.translate(q.x, q.y); g.rotate(q.r); g.globalAlpha = Math.max(0, 1 - Math.max(0, el - 2.6) / 1.2);
+      g.strokeStyle = q.c; g.fillStyle = q.c; g.lineCap = 'round';
+      if (q.curl) { g.lineWidth = 3; g.beginPath(); for (let k = 0; k <= 12; k++) { const u = k / 12; g[k ? 'lineTo' : 'moveTo'](u * q.l - q.l / 2, Math.sin(u * 7 + el * 6) * 4); } g.stroke(); }   // filament şeridi
+      else { g.fillRect(-q.w / 2, -q.w * 0.35, q.w, q.w * 0.7); }
+      g.restore();
+    });
+    if (el < 3.8) requestAnimationFrame(frame); else cv.remove();
+  };
+  requestAnimationFrame(frame);
 }
 
 // ================================================================== İADELER
@@ -4046,9 +4494,24 @@ PAGES.iadeler = {
     return `<div class="toolbar"><div class="seg">${CLAIM_TABS.map(([k, l]) => `<button type="button" data-act="cl-tab" data-v="${k}" class="${t === k ? 'on' : ''}">${l}${d.counts[k] ? ` <span class="faint">${d.counts[k]}</span>` : ''}</button>`).join('')}</div>
       <span class="spacer"></span>${syncLine(d.sync, 'Son kontrol')}<button class="btn btn-sm" data-act="mu-sync">${icon('refresh')} Yenile</button></div>
       ${t === 'action' ? '<p class="muted cl-hint">İade paketi elinize ulaştı; ürünü kontrol edip onaylayın ya da gerekçesiyle reddedin. Trendyol belirli bir süre içinde işlem yapılmazsa iadeyi kendiliğinden onaylar.</p>' : ''}
-      <div class="cl-list">${d.items.length ? d.items.map(claimCard).join('') : `<div class="empty panel"><h3>${t === 'action' ? 'İşlem bekleyen iade yok' : t === 'transit' ? 'Yolda iade yok' : 'Son 30 günde sonuçlanan iade yok'}</h3></div>`}</div>`;
+      <div class="cl-list dr-list">${d.items.length ? d.items.map(claimRow).join('') : `<div class="empty panel"><h3>${t === 'action' ? 'İşlem bekleyen iade yok' : t === 'transit' ? 'Yolda iade yok' : 'Son 30 günde sonuçlanan iade yok'}</h3></div>`}</div>`;
   },
+  after() { drawerSync(); },
 };
+// iade / soru listesi: kısa satır; tıklayınca ayrıntı ve işlemler çekmecede
+function claimRow(c) {
+  const act = c.items.filter((i) => i.status === 'WaitingInAction').length, i0 = c.items[0] || {};
+  return `<button type="button" class="dr-row cl-row st-${esc(c.status)}" data-drk="claim" data-key="${esc(c.claim_id)}">${miniThumb(i0.thumbnail)}
+    <span class="grow"><b>${esc(c.customer || '—')}</b><small class="muted">${esc(c.order_number)} · ${esc(i0.our_name || i0.product || 'Ürün')}${c.items.length > 1 ? ` +${c.items.length - 1}` : ''}</small></span>
+    <span class="cl-reason">${icon('return')} ${esc(i0.reason || 'Gerekçe yok')}</span>
+    <span class="dr-row-end">${act ? `<span class="tag tag-warn">${act} işlem bekliyor</span>` : `<span class="cl-st">${esc(c.status_tr)}</span>`}<small class="faint">${c.claim_date ? fmtWhen(c.claim_date) : ''}</small></span></button>`;
+}
+function qRow(q) {
+  const wait = q.status === 'WAITING_FOR_ANSWER';
+  return `<button type="button" class="dr-row q-row${wait ? ' wait' : ''}" data-drk="q" data-key="${q.id}">${q.image_url ? `<span class="mini-thumb" style="--img:url('${esc(q.image_url)}')"></span>` : miniThumb('')}
+    <span class="grow"><b class="q-row-t">${esc(q.text || '')}</b><small class="muted">${esc(q.product_name || 'Ürün')} · ${esc(q.user_name || 'Müşteri')}</small></span>
+    <span class="dr-row-end">${wait ? '<span class="tag tag-warn">Cevap bekliyor</span>' : `<span class="q-st">${esc(q.status_tr)}</span>`}<small class="faint">${q.created ? fmtWhen(q.created) : ''}</small></span></button>`;
+}
 function claimCard(c) {
   const act = c.items.filter((i) => i.status === 'WaitingInAction');
   return `<article class="cl-card st-${esc(c.status)}" data-cid="${esc(c.claim_id)}">
@@ -4116,12 +4579,13 @@ PAGES.sorular = {
     const d = S.qs, t = S.qTab;
     return `<div class="toolbar"><div class="seg">${Q_TABS.map(([k, l]) => `<button type="button" data-act="q-tab" data-v="${k}" class="${t === k ? 'on' : ''}">${l}${d.counts[k] ? ` <span class="faint">${d.counts[k]}</span>` : ''}</button>`).join('')}</div>
       <span class="spacer"></span>${syncLine(d.sync, 'Son kontrol')}<button class="btn btn-sm" data-act="mu-sync">${icon('refresh')} Yenile</button></div>
-      <div class="q-list">${d.items.length ? d.items.map(qCard).join('') : `<div class="empty panel"><h3>${t === 'wait' ? 'Cevap bekleyen soru yok' : 'Burada soru yok'}</h3><p>Son 2 haftanın soruları görünür.</p></div>`}</div>`;
+      <div class="q-list dr-list">${d.items.length ? d.items.map(qRow).join('') : `<div class="empty panel"><h3>${t === 'wait' ? 'Cevap bekleyen soru yok' : 'Burada soru yok'}</h3><p>Son 2 haftanın soruları görünür.</p></div>`}</div>`;
   },
-  after() {
-    $$('.q-ans textarea').forEach((ta) => ta.addEventListener('input', () => { const n = ta.value.trim().length, c = ta.closest('.q-ans').querySelector('.q-n'); c.textContent = `${n} / 2000`; c.classList.toggle('warn-text', n > 0 && n < 10); }));
-  },
+  after() { drawerSync(); },
 };
+function qBind(root) {
+    $$('.q-ans textarea', root).forEach((ta) => ta.addEventListener('input', () => { const n = ta.value.trim().length, c = ta.closest('.q-ans').querySelector('.q-n'); c.textContent = `${n} / 2000`; c.classList.toggle('warn-text', n > 0 && n < 10); }));
+}
 function qCard(q) {
   const wait = q.status === 'WAITING_FOR_ANSWER';
   return `<article class="q-card${wait ? ' wait' : ''}" data-qid="${q.id}">
@@ -4337,7 +4801,7 @@ PAGES.istatistik = {
         <div><b>${t.trendyol}</b><span>Trendyol · ${t.manual} elden / barkod</span></div>
         <div><b>${t.printed}</b><span>sağlam basıldı · ${t.jobs} baskı</span></div>
         <div class="${failRate >= 10 ? 'neg' : ''}"><b>%${failRate}</b><span>fire (${t.failed} başarısız baskı)</span></div>
-        <button type="button" class="stat-tile-btn" data-act="fil-detail" title="Hangi baskıda ne kadar harcandı?"><b>${t.filament_g >= 1000 ? (Math.round(t.filament_g / 100) / 10).toLocaleString('tr-TR') + '<small style="font-size:18px"> kg</small>' : t.filament_g + '<small style="font-size:18px"> g</small>'}</b><span>filament + reçine harcandı · <u>dökümü gör</u></span></button>
+        <button type="button" class="stat-tile-btn" data-act="fil-detail" title="Hangi baskıda ne kadar harcandı?"><b>${t.filament_g >= 1000 ? (Math.round(t.filament_g / 100) / 10).toLocaleString('tr-TR') + '<small style="font-size:18px"> kg</small>' : t.filament_g + '<small style="font-size:18px"> g</small>'}</b><span>filament + reçine ${t.filament_est ? 'tahmini' : 'harcandı'} · <u>dökümü gör</u></span></button>
         <div><b>${t.orders_delivered}</b><span>özel sipariş teslim${t.orders_revenue ? ` · ${fmtMoney(t.orders_revenue)}` : ''}</span></div>
       </div>
       ${statProfitHTML()}
@@ -4444,18 +4908,21 @@ async function openFilDetail() {
   const row = (x, i) => `<tr class="${x.suspect ? 'fd-sus' : ''}" style="--i:${Math.min(i, 25)}">
       <td>${miniThumb(x.thumbnail)}</td>
       <td><b>${esc(x.name || '—')}</b>${x.qty ? ` <span class="faint">×${x.qty}</span>` : ''}<br><small class="faint">${x.job_id ? `baskı #${x.job_id}` : ''}${x.printer ? ` · ${esc(x.printer)}` : ''} · ${fmtWhen(x.at)}${x.status === 'failed' ? ' · <span class="bad-text">başarısız</span>' : ''}</small></td>
-      <td><span class="fd-sp"><i style="background:${esc(x.spool.color_hex || '#888')}"></i>${esc([x.spool.code, x.spool.color_name, x.spool.material].filter(Boolean).join(' · ') || 'makara')}</span></td>
-      <td class="num"><b>${fmtGram(x.used)}</b>${x.job_used !== x.used ? `<br><small class="faint">baskıda toplam ${fmtGram(x.job_used)}</small>` : ''}</td>
+      <td>${x.estimated ? '<span class="faint">makara yok</span>' : `<span class="fd-sp"><i style="background:${esc(x.spool.color_hex || '#888')}"></i>${esc([x.spool.code, x.spool.color_name, x.spool.material].filter(Boolean).join(' · ') || 'makara')}</span>`}</td>
+      <td class="num">${x.no_grams ? '<span class="warn-text">gram yok</span>' : `<b>${fmtGram(x.used)}</b>`}${x.job_used !== x.used ? `<br><small class="faint">baskıda toplam ${fmtGram(x.job_used)}</small>` : ''}</td>
       <td class="num">${x.expected ? fmtGram(x.expected) : '<span class="faint">—</span>'}${x.suspect ? `<br><small class="bad-text">${x.expected ? `${(x.job_used / x.expected).toLocaleString('tr-TR', { maximumFractionDigits: 1 })} kat fazla` : 'çok yüksek'}</small>` : ''}</td>
-      <td><button type="button" class="btn btn-sm btn-ghost" data-fd-undo="${x.log_id}" title="Bu gramı makaraya geri ekle">Geri al</button></td></tr>`;
+      <td>${x.log_id ? `<button type="button" class="btn btn-sm btn-ghost" data-fd-undo="${x.log_id}" title="Bu gramı makaraya geri ekle">Geri al</button>` : x.product_id || x.order_id ? `<button type="button" class="btn btn-sm btn-ghost" data-fd-p="${x.product_id || ''}" data-fd-o="${x.order_id || ''}" title="Gramını kontrol et">${x.order_id ? 'Siparişe git' : 'Ürüne git'}</button>` : ''}</td></tr>`;
   openModal(`<div class="modal-h"><h2>Filament ve reçine harcaması</h2><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
     <div class="modal-b">
-      <p class="muted" style="margin:0">Bu ay makaralardan düşülen toplam <b>${fmtKg(d.total)}</b>, ${d.items.length} kayıt. Başarısız baskılar ve diğer amaçlı baskılar da dahil. "Beklenen", ürünün gramı × adet (ya da dilimleyici dosyası) üzerinden hesaplanan miktar.</p>
+      ${d.estimated ? `<div class="notice">${icon('alert')}<div>Bu ay baskılarda makara seçilmemiş, yani makaralardan hiç gram düşülmedi. Toplam <b>${fmtKg(d.total)}</b>, ${d.items.length} baskının <b>tahmini</b> gramı: ürünün (ya da parçanın, siparişin) gramı × adet. Gerçek harcamayı görmek için baskı başlatırken makara seçin.</div></div>`
+        : `<p class="muted" style="margin:0">Bu ay makaralardan düşülen toplam <b>${fmtKg(d.total)}</b>, ${d.items.length} kayıt. Başarısız baskılar ve diğer amaçlı baskılar da dahil. "Beklenen", ürünün gramı × adet (ya da dilimleyici dosyası) üzerinden hesaplanan miktar.</p>`}
       ${sus.length ? `<div class="notice" style="background:var(--bad-wash)">${icon('alert')}<div><b>${sus.length} kayıt beklenenden çok fazla</b> (toplam ${fmtKg(sus.reduce((a, x) => a + x.used, 0))}). Büyük ihtimalle yanlış gram girilmiş ya da adet iki kez sayılmış. Yanlışsa "Geri al" ile gramı makaraya iade edebilirsiniz.</div></div>` : ''}
       <div class="tbl-wrap"><table class="tbl fd-tbl"><thead><tr><th></th><th>Baskı</th><th>Makara</th><th class="num">Düşülen</th><th class="num">Beklenen</th><th></th></tr></thead>
         <tbody>${d.items.map(row).join('') || '<tr><td colspan="6" class="muted">Bu ay kayıt yok.</td></tr>'}</tbody></table></div>
     </div>`, 'wide xwide');
   $('.fd-tbl').addEventListener('click', async (e) => {
+    const jb = e.target.closest('[data-fd-p]');
+    if (jb) { closeModal(true); if (+jb.dataset.fdP) openProductEditor(+jb.dataset.fdP); else { await loadOrders(); openOrderEditor(+jb.dataset.fdO); } return; }
     const b = e.target.closest('[data-fd-undo]'); if (!b) return;
     if (!confirm('Bu kayıttaki gram makaraya geri eklensin mi? (Stok ve baskı sonucu değişmez, sadece makara gramı düzelir.)')) return;
     try { await api('POST', `/api/stats/filament/${b.dataset.fdUndo}/undo`); toast('Gram makaraya geri eklendi'); closeModal(true); openFilDetail(); S.stats = await api('GET', `/api/stats?month=${S.statMonth}`); } catch (err) { fail(err); }
@@ -5201,6 +5668,8 @@ PAGES.ayarlar = {
       <section class="panel"><div class="panel-h"><h2>Tema ve görünüm</h2><span class="muted" style="font-size:13px">bu cihaza kaydedilir</span></div><div class="panel-b theme-box">
         <div class="field"><span>Tema</span><div class="skin-pick" id="skin-pick">${THEME_SKINS.map(([v, l, d]) => `<button type="button" data-v="${v}" class="${uiOpt('skin', 'classic') === v ? 'on' : ''}" aria-pressed="${uiOpt('skin', 'classic') === v}"><span class="skin-prev ${v}"><b>Pano</b></span><b>${l}</b><small>${d}</small></button>`).join('')}</div></div>
         <div class="field"><span>Renk paleti <span class="faint">(seçince aşağıdaki mod, ton ve vurgu ona göre ayarlanır; sonra tek tek değiştirebilirsiniz)</span></span><div class="pal-pick" id="pal-pick">${THEME_PALETTES.map(([v, l, d, , c]) => `<button type="button" data-v="${v}" class="${uiOpt('palette', '') === v ? 'on' : ''}"><span class="pal-prev" style="--p1:${c[0]};--p2:${c[1]};--p3:${c[2]};--p4:${c[3]}"><i></i><span><em></em><em></em><em></em></span></span><b>${l}</b><small>${d}</small></button>`).join('')}</div></div>
+        <div class="field"><span>Animasyonlar</span><div class="seg" id="motion-seg">${[['full', 'Tam'], ['calm', 'Sade'], ['off', 'Kapalı']].map(([v, l]) => `<button type="button" data-v="${v}" class="${MOTION() === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+          <small class="muted">Sade: geçişler kalır; süzülen rozetler, kart eğilmesi, konfeti gibi süsler kapanır. Zayıf bilgisayarda Sade ya da Kapalı önerilir.</small></div>
         <div class="field"><span>Mod</span><div class="seg" id="theme-seg">${[['auto', 'Sistem'], ['light', 'Açık'], ['dark', 'Koyu']].map(([v, l]) => `<button data-v="${v}" class="${theme === v ? 'on' : ''}">${l}</button>`).join('')}</div></div>
         <div class="field"><span>Koyu tema tonu</span><div class="swatches" id="tone-pick">${THEME_TONES.map(([v, l, c]) => `<button type="button" class="tone-sw${themeOpt('tone') === v ? ' on' : ''}" data-v="${v}" style="--c1:${c[0]};--c2:${c[1]};--c3:${c[2]}"><i></i><span>${l}</span></button>`).join('')}</div></div>
         <div class="row">
@@ -5229,19 +5698,20 @@ PAGES.ayarlar = {
     $('#lp-host')?.addEventListener('input', lpPath); $('#lp-share')?.addEventListener('input', lpPath);
     $('#lp-mode')?.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; $$('#lp-mode button').forEach((x) => x.classList.toggle('on', x === b)); $$('.lp-f').forEach((f) => { f.hidden = !f.dataset.m.split(' ').includes(b.dataset.v); }); });
     $('#wk-on')?.addEventListener('change', (e) => { const on = e.target.checked; ['#wk-day', '#wk-time'].forEach((q) => { $(q).disabled = !on; }); $('.wk-when')?.classList.toggle('dim', !on); });
-    $('#skin-pick').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('skin', b.dataset.v); applyTheme(); $$('#skin-pick button').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); }); };
+    $('#motion-seg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; try { localStorage.setItem('motion', b.dataset.v); } catch { /* */ } applyTheme(); $$('#motion-seg button').forEach((x) => x.classList.toggle('on', x === b)); };
+    $('#skin-pick').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('skin', b.dataset.v); themeSwitch(e, applyTheme); $$('#skin-pick button').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); }); };
     $('#pal-pick').onclick = (e) => {
       const b = e.target.closest('button'); if (!b) return;
       const [, l, , cfg] = THEME_PALETTES.find((x) => x[0] === b.dataset.v);
       try { localStorage.setItem('palette', b.dataset.v); Object.entries(cfg).forEach(([k, v]) => (v ? localStorage.setItem(k, v) : localStorage.removeItem(k))); } catch { /* */ }
-      applyTheme(); render(); toast(`Renk paleti: ${l}`);
+      themeSwitch(e, () => { applyTheme(); render(); }); toast(`Renk paleti: ${l}`);
     };
-    $('#theme-seg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('theme', b.dataset.v); applyTheme(); $$('#theme-seg button').forEach((x) => x.classList.toggle('on', x === b)); };
+    $('#theme-seg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('theme', b.dataset.v); themeSwitch(e, applyTheme); $$('#theme-seg button').forEach((x) => x.classList.toggle('on', x === b)); };
     $$('[data-conn-type]').forEach((sel) => sel.addEventListener('change', () => { (S.connEdit ||= {})[+sel.dataset.connType] = sel.value; render(); }));
-    $('#tone-pick').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('tone', b.dataset.v); applyTheme(); $$('#tone-pick button').forEach((x) => x.classList.toggle('on', x === b)); if (!document.documentElement.dataset.theme && !matchMedia('(prefers-color-scheme: dark)').matches) toast('Ton koyu modda görünür'); };
+    $('#tone-pick').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('tone', b.dataset.v); themeSwitch(e, applyTheme); $$('#tone-pick button').forEach((x) => x.classList.toggle('on', x === b)); if (!document.documentElement.dataset.theme && !matchMedia('(prefers-color-scheme: dark)').matches) toast('Ton koyu modda görünür'); };
     $('#density-seg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('density', b.dataset.v); applyTheme(); $$('#density-seg button').forEach((x) => x.classList.toggle('on', x === b)); };
     $('#uisize-seg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('uisize', b.dataset.v); applyTheme(); $$('#uisize-seg button').forEach((x) => x.classList.toggle('on', x === b)); };
-    $('#accent-pick').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('accent', b.dataset.v); applyTheme(); $$('#accent-pick button').forEach((x) => x.classList.toggle('on', x === b)); };
+    $('#accent-pick').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('accent', b.dataset.v); themeSwitch(e, applyTheme); $$('#accent-pick button').forEach((x) => x.classList.toggle('on', x === b)); };
     $('#new-printer').addEventListener('keydown', (e) => { if (e.key === 'Enter') ACTIONS['add-printer'](); });
     $('#logo-in').onchange = (e) => e.target.files[0] && uploadLogo(e.target.files[0]);
     const saveCut = async (v) => { try { S.settings = await api('PUT', '/api/settings', { ship_cutoff: v }); toast(v ? `Kargo çıkış saati ${v}` : "Trendyol'un saati kullanılacak"); } catch (e) { fail(e); } };
@@ -5355,10 +5825,41 @@ const THEME_PALETTES = [
 const themeOpt = (k) => { try { return localStorage.getItem(k) || (k === 'tone' ? 'cool' : k === 'accent' ? 'copper' : 'auto'); } catch { return k === 'tone' ? 'cool' : k === 'accent' ? 'copper' : 'auto'; } };
 const UI_SIZES = [['90', 'Küçük'], ['100', 'Normal'], ['110', 'Büyük'], ['120', 'Çok büyük']];
 const uiOpt = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
+// Tema / palet değişimi tıklanan noktadan daire olarak yayılır
+function themeSwitch(e, fn) {
+  if (!document.startViewTransition || REDUCED()) return fn();
+  const z = ZF(), x = (e?.clientX ?? innerWidth / 2) * z, y = (e?.clientY ?? innerHeight / 2) * z;
+  const r = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+  const de = document.documentElement; de.dataset.vt = 'theme';
+  const t = document.startViewTransition(fn);
+  t.ready.then(() => de.animate({ clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${r}px at ${x}px ${y}px)`] },
+    { duration: 700, easing: 'cubic-bezier(.4, 0, .2, 1)', pseudoElement: '::view-transition-new(root)' })).catch(() => {});
+  t.finished.finally(() => { delete de.dataset.vt; });
+}
+// Özet sayıları eski değerden yenisine akarak değişir; sayfa ilk açıldığında sıfırdan sayar
+S.cnt = {};
+function countUp(root) {
+  if (!root) return;
+  root.querySelectorAll('.readout > div > b, .readout > button > b, .tyo-sum b, .st-big b').forEach((b, i) => {
+    const tn = [...b.childNodes].find((n) => n.nodeType === 3 && /\d/.test(n.textContent)); if (!tn) return;
+    const m = /^(\D*?)(-?\d[\d.]*(?:,\d+)?)([\s\S]*)$/.exec(tn.textContent); if (!m) return;
+    const dec = (m[2].split(',')[1] || '').length, to = parseFloat(m[2].replace(/\./g, '').replace(',', '.'));
+    const key = route() + ':' + i + ':' + (b.parentElement?.textContent || '').replace(/[\d.,\s]/g, '').slice(0, 30);
+    const from = S.cnt[key] ?? 0; S.cnt[key] = to;
+    if (REDUCED() || from === to || !isFinite(to)) return;
+    const grp = /\d\.\d{3}/.test(m[2]) || Math.abs(to) >= 10000;
+    const fmt = (v) => m[1] + v.toLocaleString('tr-TR', { minimumFractionDigits: dec, maximumFractionDigits: dec, useGrouping: grp }) + m[3];
+    const t0 = performance.now(), dur = 900;
+    tn.textContent = fmt(from); b.classList.add('cnt-run');
+    const step = (t) => { const k = Math.min(1, (t - t0) / dur), ez = 1 - Math.pow(1 - k, 3); tn.textContent = fmt(from + (to - from) * ez); if (k < 1) requestAnimationFrame(step); else { tn.textContent = fmt(to); b.classList.remove('cnt-run'); } };
+    requestAnimationFrame(step);
+  });
+}
 function applyTheme() {
   const t = themeOpt('theme'), de = document.documentElement;
   if (t === 'auto') de.removeAttribute('data-theme'); else de.dataset.theme = t;
   de.dataset.tone = themeOpt('tone'); de.dataset.accent = themeOpt('accent');
+  de.dataset.motion = MOTION();
   const sk = uiOpt('skin', 'classic'), lt = uiOpt('ltone', '');
   if (sk === 'classic') de.removeAttribute('data-skin'); else de.dataset.skin = sk;
   if (lt) de.dataset.ltone = lt; else de.removeAttribute('data-ltone');
@@ -5418,6 +5919,7 @@ function openModal(inner, size = '', onClose) {
   back.addEventListener('pointerdown', (e) => { back.dataset.down = e.target === back ? '1' : ''; });
   back.addEventListener('click', (e) => { if (e.target === back && back.dataset.down === '1') closeModal(); });
   document.body.style.overflow = 'hidden';
+  flyIn(back);
 }
 function closeModal(silent) {
   closePalette();
@@ -5425,8 +5927,9 @@ function closeModal(silent) {
   const back = $('#modal-root .modal-back');
   if (!silent && back && !REDUCED()) {
     // Pencereyi kökten hemen ayır (mantık için kapanmış sayılır), çıkış animasyonu bitince sil
-    document.body.appendChild(back); back.classList.add('closing'); back.style.pointerEvents = 'none';
-    setTimeout(() => back.remove(), 200);
+    document.body.appendChild(back); back.style.pointerEvents = 'none';
+    const flew = back.classList.contains('as-drawer') && flyOut(back);
+    back.classList.add('closing'); setTimeout(() => back.remove(), flew ? 260 : 200);
   }
   $('#modal-root').innerHTML = '';
   document.body.style.overflow = '';
@@ -6590,8 +7093,88 @@ document.addEventListener('click', (e) => {
 // ================================================================== polling
 async function loadBambu() {
   try { S.bambu = await api('GET', '/api/bambu'); } catch { S.bambu = null; }
-  renderBambuEvents(); renderPBar();
+  renderBambuEvents(); renderPBar(); fillHeat();
 }
+// ================================================================== makine ısı göstergesi (Bambu / Moonraker)
+// Isı rengi: soğukken mavi, 60°'den sonra sarı → turuncu → kırmızı (nozul 260°, tabla 110° üst sınır)
+const HEAT_MAX = { nozzle: 260, bed: 110, chamber: 60 };
+const heatHue = (t, max) => t == null ? 210 : t < 40 ? 205 : Math.round(Math.max(0, 52 - ((t - 40) / (max - 40)) * 52));
+const heatCol = (t, max) => t == null || t < 40 ? 'hsl(205 70% 52%)' : `hsl(${heatHue(t, max)} 90% ${t > max * 0.8 ? 50 : 52}%)`;
+const heatLive = (name) => { const st = (S.bambu?.printers || []).find((x) => x.name === name); return st && st.online !== false && st.temps ? st : null; };
+function heatLevel(t) {
+  if (!t) return '';
+  const up = (t.nozzle_t > 0 && t.nozzle_t - (t.nozzle || 0) > 6) || (t.bed_t > 0 && t.bed_t - (t.bed || 0) > 4);
+  if (up) return 'up';
+  if ((t.nozzle || 0) >= 150) return 'hot';
+  if ((t.nozzle || 0) >= 50 || (t.bed || 0) >= 45) return t.nozzle_t || t.bed_t ? 'warm' : 'cool';
+  return '';
+}
+const heatText = (t) => [t.nozzle != null ? `Nozul ${Math.round(t.nozzle)}°${t.nozzle_t ? `/${Math.round(t.nozzle_t)}°` : ''}` : '', t.bed != null ? `Tabla ${Math.round(t.bed)}°${t.bed_t ? `/${Math.round(t.bed_t)}°` : ''}` : ''].filter(Boolean).join(' · ');
+function heatChips(name) {
+  const t = heatLive(name)?.temps; if (!t) return '';
+  const chip = (k, ic, lbl) => t[k] == null ? '' : `<span class="hc${t[k + '_t'] > 0 && t[k + '_t'] - t[k] > 4 ? ' up' : ''}" style="--hc:${heatCol(t[k], HEAT_MAX[k])}" title="${lbl}${t[k + '_t'] ? ` · hedef ${Math.round(t[k + '_t'])}°` : ' · ısıtıcı kapalı'}">${ic}<b>${Math.round(t[k])}°</b>${t[k + '_t'] ? `<small>/${Math.round(t[k + '_t'])}</small>` : ''}</span>`;
+  return chip('nozzle', HEAT_IC.nozzle, 'Nozul') + chip('bed', HEAT_IC.bed, 'Tabla') + (t.chamber != null ? chip('chamber', HEAT_IC.chamber, 'Hazne') : '');
+}
+const HEAT_IC = {
+  nozzle: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2h8v5H4z M6 7h4v3l-2 3-2-3z"/></svg>',
+  bed: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 10h12v2.5H2z"/><path class="w" d="M5 8c-1-1.4 1-2.4 0-4M8 8c-1-1.4 1-2.4 0-4M11 8c-1-1.4 1-2.4 0-4"/></svg>',
+  chamber: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2h10v12H3z M5 4h6v6H5z"/></svg>',
+};
+// sayfadaki ısı çiplerini ve açık ısı kartını yoklamada yerinde günceller
+function fillHeat() {
+  $$('[data-heat-pr]').forEach((el) => { const h = heatChips(el.dataset.heatPr); if (el.dataset.sig !== h) { el.dataset.sig = h; el.innerHTML = h; } });
+  if (HP.name) heatPop(HP.name, null, true);
+}
+// Üst bardaki makinenin üzerine gelince: canlı ısı kartı (nozul, tabla, hazne termometreleri)
+const HP = { name: null, el: null, hide: 0, show: 0 };
+function heatRow(k, lbl, t) {
+  const v = t[k], tg = t[k + '_t'] || 0, max = HEAT_MAX[k]; if (v == null) return '';
+  const up = tg > 0 && tg - v > (k === 'nozzle' ? 6 : 4), down = !tg && v > 45;
+  const st = k === 'chamber' ? '' : up ? `<em class="hp-st up">ısınıyor</em>` : down ? `<em class="hp-st down">soğuyor</em>` : tg ? `<em class="hp-st ok">hedefte</em>` : '<em class="hp-st">ısıtıcı kapalı</em>';
+  return `<div class="hp-row${up ? ' up' : ''}${down ? ' down' : ''}" data-k="${k}" style="--v:${clamp(v / max, 0, 1).toFixed(3)};--g:${clamp(tg / max, 0, 1).toFixed(3)};--hc:${heatCol(v, max)}">
+    <span class="hp-ic">${HEAT_IC[k]}</span><span class="hp-l">${lbl}</span>
+    <div class="hp-bar"><i class="hp-fill"><span class="hp-haze"></span></i>${tg ? '<i class="hp-tg"></i>' : ''}</div>
+    <span class="hp-n"><b data-tv="${v}">${Math.round(v)}°</b><small>${tg ? `/ ${Math.round(tg)}°` : ''}</small></span>${st}</div>`;
+}
+function heatPop(name, anchor, refresh) {
+  const st = heatLive(name);
+  if (!st) { if (!refresh) return; heatHide(true); return; }
+  const t = st.temps, el = HP.el && document.body.contains(HP.el) ? HP.el : null;
+  const STATE = { RUNNING: 'baskıda', PREPARE: 'hazırlanıyor', PAUSE: 'duraklatıldı', FINISH: 'bitti', FAILED: 'hata', IDLE: 'boşta', SLICING: 'hazırlanıyor' };
+  const body = `<div class="hp-h">${printerThumb(name, 'xs')}<b>${esc(name)}</b><span class="muted">${STATE[st.state] || 'boşta'}${st.state === 'RUNNING' && st.percent != null ? ` · %${st.percent}` : ''}</span></div>
+    ${heatRow('nozzle', 'Nozul', t)}${heatRow('bed', 'Tabla', t)}${t.chamber != null ? heatRow('chamber', 'Hazne', t) : ''}`;
+  if (el && refresh) {
+    const old = new Map([...el.querySelectorAll('.hp-n b')].map((b) => [b.closest('.hp-row').dataset.k, +b.dataset.tv]));
+    el.innerHTML = body;
+    el.querySelectorAll('.hp-n b').forEach((b) => {   // sıcaklık rakamı eski değerden akarak değişir
+      const from = old.get(b.closest('.hp-row').dataset.k), to = +b.dataset.tv; if (from == null || from === to || REDUCED()) return;
+      const t0 = performance.now(); const f = (n) => { const k = Math.min(1, (n - t0) / 700); b.textContent = Math.round(from + (to - from) * (1 - Math.pow(1 - k, 3))) + '°'; if (k < 1) requestAnimationFrame(f); }; requestAnimationFrame(f);
+    });
+    return;
+  }
+  heatHide(true);
+  const m = document.createElement('div'); m.className = 'heat-pop'; m.setAttribute('role', 'tooltip'); m.innerHTML = body;
+  document.body.appendChild(m); HP.el = m; HP.name = name;
+  const z = ZF(), r = anchor.getBoundingClientRect(), w = m.offsetWidth;
+  m.style.left = clamp(r.left + r.width / 2 - w / 2, 8, innerWidth / z - w - 8) + 'px'; m.style.top = (r.bottom + 8) + 'px';
+  m.style.setProperty('--ax', (r.left + r.width / 2 - parseFloat(m.style.left)) + 'px');
+  m.addEventListener('pointerenter', () => clearTimeout(HP.hide)); m.addEventListener('pointerleave', () => heatHide());
+}
+function heatHide(now) {
+  clearTimeout(HP.hide);
+  const go = () => { const el = HP.el; HP.el = null; HP.name = null; if (!el) return; el.classList.add('out'); setTimeout(() => el.remove(), REDUCED() ? 0 : 140); };
+  if (now) go(); else HP.hide = setTimeout(go, 180);
+}
+document.addEventListener('pointerover', (e) => {
+  if (e.pointerType !== 'mouse') return;
+  const b = e.target.closest?.('.pbar .pb[data-name]'); if (!b) return;
+  clearTimeout(HP.hide); if (HP.name === b.dataset.name && HP.el) return;
+  clearTimeout(HP.show); HP.show = setTimeout(() => heatPop(b.dataset.name, b), HP.el ? 0 : 260);
+});
+document.addEventListener('pointerout', (e) => {
+  const b = e.target.closest?.('.pbar .pb[data-name]'); if (!b || b.contains(e.relatedTarget)) return;
+  clearTimeout(HP.show); heatHide();
+});
 const BB_ACTIVE = new Set(['RUNNING', 'PREPARE', 'PAUSE', 'SLICING']);
 const bambuLive = (printer) => { const st = (S.bambu?.printers || []).find((x) => x.name === printer); return st && BB_ACTIVE.has(st.state) ? st : null; };
 // Tanınmayan / parçası seçilecek baskılar: sayfanın üstünde, işlem yapılana kadar duran turuncu bant
@@ -6633,6 +7216,7 @@ function printerStates() {
       if (st.error_code || st.state === 'FAILED') { o.s = 'err'; o.ack = !!st.err_ack; o.nid = st.err_nid || null; }
       else if (st.state === 'PAUSE') o.s = 'paused';
       else if (BB_ACTIVE.has(st.state)) { o.s = 'run'; o.pct = st.percent ?? null; o.rem = st.remaining_min ?? null; o.prep = st.state === 'PREPARE' || st.state === 'SLICING'; }
+      o.heat = heatLevel(st.temps); o.temps = st.temps || null;
       return o;
     }
     // bağlantısı olmayan makine: Astera'daki açık baskıya göre
@@ -6649,7 +7233,7 @@ function renderPBar() {
   const hide = U('top.pbarHidden') || [];
   window.pbarRender(el, printerStates().filter((o) => !hide.includes(o.name)).map((o) => ({ ...o,
     info: o.prep ? 'hazırlanıyor' : o.s === 'run' ? `${o.pct != null ? `%${o.pct}` : 'baskıda'}${o.rem ? `<span class="pb-rem"> · ${fmtDur(o.rem)}</span>` : ''}` : PB_LABEL[o.s],
-    tip: [o.name, o.s === 'run' ? 'baskıda' : PB_LABEL[o.s], o.file, o.note, o.s === 'err' && !o.ack && o.nid ? 'tıklayınca yanıp sönmeyi durdurur' : ''].filter(Boolean).join(' · ') })));
+    tip: [o.name, o.s === 'run' ? 'baskıda' : PB_LABEL[o.s], o.file, o.note, o.temps ? heatText(o.temps) : '', o.s === 'err' && !o.ack && o.nid ? 'tıklayınca yanıp sönmeyi durdurur' : ''].filter(Boolean).join(' · ') })));
 }
 async function poll() {
   loadNotifs();

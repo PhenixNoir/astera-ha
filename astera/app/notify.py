@@ -62,7 +62,7 @@ def _upsert(key, kind, level, title, body, action):
     row, t = _latest(key), _now()
     act = json.dumps(action, ensure_ascii=False) if action else None
     if row and row["resolved_at"] is None:
-        if (row["title"], row["body"], row["level"]) != (title, body, level):
+        if (row["title"], row["body"], row["level"], row["action"]) != (title, body, level, act):
             _db().execute("UPDATE notifications SET title=?, body=?, level=?, action=?, updated_at=? WHERE id=?",
                           (title, body, level, act, t, row["id"]))
         return
@@ -176,21 +176,25 @@ def _trendyol():
     if not seen:
         seen = int(time.time() * 1000)
         _set("nf_ty_seen", seen)
+    for k_, g in pk.items():
+        g["key"] = k_
     new = [g for g in pk.values() if g["date"] > seen]
     if new:
         cur = _latest("tynew")
-        prev = json.loads(cur["action"] or "{}").get("n", 0) if cur and cur["resolved_at"] is None else 0
+        prev_act = json.loads(cur["action"] or "{}") if cur and cur["resolved_at"] is None else {}
+        prev = prev_act.get("n", 0)
+        pkgs = ([g["key"] for g in sorted(new, key=lambda g: -g["date"])] + (prev_act.get("pkgs") or []))[:30]
         n = prev + len(new)
         names = "; ".join(x for g in new for x in g["names"])[:160]
         t = _now()
         if cur and cur["resolved_at"] is None:
             _db().execute("UPDATE notifications SET title=?, body=?, action=?, updated_at=?, created_at=? WHERE id=?",
-                          (f"{n} yeni Trendyol siparişi", names, json.dumps({"t": "go", "href": "#/siparisler", "n": n}), t, t, cur["id"]))
+                          (f"{n} yeni Trendyol siparişi", names, json.dumps({"t": "order", "href": "#/siparisler", "n": n, "pkgs": pkgs}), t, t, cur["id"]))
             nid = cur["id"]
         else:
             nid = _db().execute("""INSERT INTO notifications(key,kind,level,title,body,action,created_at,updated_at,cleared)
                              VALUES('tynew','trendyol','info',?,?,?,?,?,1)""",
-                          (f"{n} yeni Trendyol siparişi", names, json.dumps({"t": "go", "href": "#/siparisler", "n": n}), t, t)).lastrowid
+                          (f"{n} yeni Trendyol siparişi", names, json.dumps({"t": "order", "href": "#/siparisler", "n": n, "pkgs": pkgs}), t, t)).lastrowid
         _set("nf_ty_seen", max(g["date"] for g in new))
         global _push
         _push = True
@@ -202,9 +206,9 @@ def _trendyol():
         if not dl:
             continue
         if dl < now:
-            late[f"tylate:{key}"] = ("trendyol", "bad", f"Gecikmiş sipariş {g['no']}", "; ".join(g["names"])[:140], {"t": "go", "href": "#/siparisler"})
+            late[f"tylate:{key}"] = ("trendyol", "bad", f"Gecikmiş sipariş {g['no']}", "; ".join(g["names"])[:140], {"t": "order", "href": "#/siparisler", "pkg": key})
         elif dl - now < 3 * 3600:
-            soon[f"tysoon:{key}"] = ("trendyol", "warn", f"Son teslime {_fmt_min((dl - now) // 60)}: {g['no']}", "; ".join(g["names"])[:140], {"t": "go", "href": "#/hazirla"})
+            soon[f"tysoon:{key}"] = ("trendyol", "warn", f"Son teslime {_fmt_min((dl - now) // 60)}: {g['no']}", "; ".join(g["names"])[:140], {"t": "order", "href": "#/siparisler", "pkg": key})
     _sync_group("tylate:", late)
     _sync_group("tysoon:", soon)
     um = {}
@@ -436,7 +440,7 @@ def tick(force=False):
 
 
 def items():
-    rows = _db().execute("""SELECT * FROM notifications WHERE resolved_at IS NULL OR resolved_at>=?
+    rows = _db().execute("""SELECT * FROM notifications WHERE (resolved_at IS NULL OR resolved_at>=?) AND COALESCE(resolved_by,'')<>'dismissed'
                             ORDER BY resolved_at IS NOT NULL, COALESCE(updated_at, created_at) DESC LIMIT 200""", (_now() - 7 * 86400,)).fetchall()
     out = []
     for r in rows:
@@ -444,6 +448,11 @@ def items():
         d["action"] = json.loads(d["action"]) if d["action"] else None
         out.append(d)
     return {"items": out, "active": sum(1 for d in out if d["resolved_at"] is None)}
+
+
+def dismiss(nid):
+    """Kenara kaydırılarak kapatıldı: listeden de kalkar (şart sürse de yeniden açılmaz)."""
+    _db().execute("UPDATE notifications SET resolved_at=COALESCE(resolved_at, ?), resolved_by='dismissed' WHERE id=?", (_now(), nid))
 
 
 def resolve(nid=None):

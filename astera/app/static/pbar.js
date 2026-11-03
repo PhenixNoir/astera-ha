@@ -5,7 +5,7 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const SPEED = 38;   // px / saniye
   const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const cls = (o) => `pb s-${o.s}${o.ack ? ' ack' : ''}`;
+  const cls = (o) => `pb s-${o.s}${o.ack ? ' ack' : ''}${o.heat ? ` heat-${o.heat}` : ''}`;
   const pill = (o) => `<button type="button" class="${cls(o)}" data-act="pb" data-name="${esc(o.name)}"${o.nid ? ` data-nid="${o.nid}"` : ''} title="${esc(o.tip || o.name)}"><i></i><b>${esc(o.name)}</b><small>${o.info}</small></button>`;
 
   function fit(el) {

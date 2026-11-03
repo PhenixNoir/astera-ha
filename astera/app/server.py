@@ -2575,6 +2575,27 @@ def month_weeks(y, m):
     return weeks
 
 
+def job_est_grams(raw):
+    """Bir baskının tahmini malzeme gramı: dilimleyici dosyası, yoksa ürünün/parçanın/siparişin gramı × adet.
+    Parçalı üründe baskı adedi parça sayısıdır, ürün gramı ise bir set içindir."""
+    if raw["file_grams"]:
+        return raw["file_grams"]
+    q = raw["quantity"] or 0
+    if raw["product_id"]:
+        p = db().execute("SELECT grams FROM products WHERE id=?", (raw["product_id"],)).fetchone()
+        if not p or not p["grams"]:
+            return None
+        per_set = sum(x["per_unit"] for x in load_parts(raw["product_id"]).get(raw["product_id"], [])) or 1
+        return p["grams"] * q / per_set
+    if raw["component_id"]:
+        c = db().execute("SELECT grams FROM components WHERE id=?", (raw["component_id"],)).fetchone()
+        return (c["grams"] or 0) * q if c and c["grams"] else None
+    if raw["order_id"]:
+        o = db().execute("SELECT grams FROM custom_orders WHERE id=?", (raw["order_id"],)).fetchone()
+        return (o["grams"] or 0) * q if o and o["grams"] else None
+    return None
+
+
 @route("GET", "/api/stats/filament")
 def api_stats_filament(req):
     """Ayın filament/reçine harcamasının baskı baskı dökümü: her makaradan düşülen gram ve beklenen gram
@@ -2594,23 +2615,12 @@ def api_stats_filament(req):
             j = jr[0] if jr else None
             exp = None
             if j:
-                raw = db().execute("SELECT * FROM print_jobs WHERE id=?", (jid,)).fetchone()
-                if raw["file_grams"]:
-                    exp = raw["file_grams"]
-                elif raw["product_id"]:
-                    p = db().execute("SELECT grams FROM products WHERE id=?", (raw["product_id"],)).fetchone()
-                    per_set = sum(x["per_unit"] for x in load_parts(raw["product_id"]).get(raw["product_id"], [])) or 1
-                    exp = (p["grams"] or 0) * raw["quantity"] / per_set if p and p["grams"] else None
-                elif raw["component_id"]:
-                    c = db().execute("SELECT grams FROM components WHERE id=?", (raw["component_id"],)).fetchone()
-                    exp = (c["grams"] or 0) * raw["quantity"] if c and c["grams"] else None
-                elif raw["order_id"]:
-                    o = db().execute("SELECT grams FROM custom_orders WHERE id=?", (raw["order_id"],)).fetchone()
-                    exp = (o["grams"] or 0) * raw["quantity"] if o and o["grams"] else None
+                exp = job_est_grams(db().execute("SELECT * FROM print_jobs WHERE id=?", (jid,)).fetchone())
             jobs[jid] = {"job": j, "expected": round(exp, 1) if exp else None}
         jj = jobs.get(jid) or {}
         j = jj.get("job")
         out.append({"log_id": r["log_id"], "used": round(r["used"], 1), "at": r["created_at"], "job_id": jid,
+                    "product_id": j["product_id"] if j else None, "order_id": j["order_id"] if j else None,
                     "name": j["product_name"] if j else (r["ref"] or "—"), "qty": j["quantity"] if j else None,
                     "status": j["status"] if j else None, "printer": j["printer"] if j else None, "thumbnail": j["thumbnail"] if j else None,
                     "expected": jj.get("expected"), "spool": {"id": r["spool_id"], "code": r["code"], "material": r["material"],
@@ -2624,6 +2634,19 @@ def api_stats_filament(req):
         e = x["expected"]
         x["job_used"] = round(per_job.get(x["job_id"], x["used"]), 1)
         x["suspect"] = bool(e and x["job_used"] > e * 1.8 + 20) or (not e and x["used"] >= 500)
+    if not out:   # makaralar hiç kullanılmamış: tutar baskıların tahmini gramından geliyor, dökümü de öyle göster
+        for raw in db().execute("""SELECT * FROM print_jobs WHERE finished_at>=? AND finished_at<? AND status<>'cancelled'
+                                   ORDER BY finished_at DESC""", (start, end)).fetchall():
+            g = job_est_grams(raw)
+            jr = job_rows("j.id=?", (raw["id"],))
+            j = jr[0] if jr else {}
+            out.append({"log_id": None, "used": round(g or 0, 1), "at": raw["finished_at"], "job_id": raw["id"], "name": j.get("product_name"),
+                        "product_id": raw["product_id"], "order_id": raw["order_id"],
+                        "qty": raw["quantity"], "status": raw["status"], "printer": raw["printer"], "thumbnail": j.get("thumbnail"),
+                        "expected": None, "estimated": True, "spool": {}, "job_used": round(g or 0, 1), "suspect": False,
+                        "no_grams": g is None})
+        out.sort(key=lambda x: -x["used"])
+        return {"items": out, "total": round(sum(x["used"] for x in out), 1), "estimated": True}
     return {"items": out, "total": round(sum(x["used"] for x in out), 1)}
 
 
@@ -2726,9 +2749,9 @@ def api_stats(req):
                                                FROM spool_log l JOIN spools s ON s.id=l.spool_id
                                                WHERE l.reason='print' AND l.created_at>=? AND l.created_at<?
                                                GROUP BY s.material, UPPER(s.color_hex), s.brand ORDER BY grams DESC LIMIT 8""", (start, end))]
-    if not fil:   # makara kaydı yoksa ürün gramajından tahmin
-        fil = db().execute("""SELECT COALESCE(SUM(p.grams * j.quantity),0) FROM print_jobs j JOIN products p ON p.id=j.product_id
-                              WHERE j.finished_at>=? AND j.finished_at<? AND j.status<>'cancelled'""", (start, end)).fetchone()[0]
+    if not fil:   # makara kaydı yoksa baskıların tahmini gramı (parçalı üründe set gramı parça sayısına bölünür)
+        fil = sum(job_est_grams(r) or 0 for r in db().execute(
+            "SELECT * FROM print_jobs WHERE finished_at>=? AND finished_at<? AND status<>'cancelled'", (start, end)).fetchall())
     od = db().execute("""SELECT COUNT(*) n, COALESCE(SUM(price),0) rev FROM custom_orders WHERE status='delivered'
                          AND updated_at>=? AND updated_at<?""", (start, end)).fetchone()
 
@@ -2764,7 +2787,7 @@ def api_stats(req):
         "totals": {"sales": total, "prev_sales": max(0, sum(r["prev_total"] for r in products)),
                    "by_week": [max(0, v) for v in by_week], "printed_by_week": printed_week,
                    "trendyol": max(0, ch["trendyol"]), "manual": max(0, ch["manual"]),
-                   "printed": printed, "failed": failed, "jobs": jobs, "filament_g": round(fil or 0), "filament_by": fil_by,
+                   "printed": printed, "failed": failed, "jobs": jobs, "filament_g": round(fil or 0), "filament_est": not fil_by, "filament_by": fil_by,
                    "orders_delivered": od["n"], "orders_revenue": od["rev"],
                    "trend": [sum(r["trend"][k] for r in products) for k in range(6)]},
     }
@@ -2835,7 +2858,13 @@ def api_dashboard(req):
     c = db()
     day0 = now() - 24 * 3600
     week0 = now() - 7 * 24 * 3600
+    # Trendyol: bugün gelen sipariş ve son 90 günün en yoğun günü (rekor rozeti için)
+    per_day = {r[0]: r[1] for r in c.execute("""SELECT date(order_date/1000,'unixepoch','localtime') d, COUNT(DISTINCT COALESCE(package_id, order_number))
+                                                 FROM ty_lines WHERE order_date >= ? GROUP BY d""", ((now() - 91 * 86400) * 1000,))}
+    today = time.strftime("%Y-%m-%d")
+    orders_today = per_day.pop(today, 0)
     return {
+        "orders_today": orders_today, "orders_best": max(per_day.values()) if per_day else 0,
         "products": c.execute("SELECT COUNT(*) FROM products WHERE archived=0").fetchone()[0],
         "stock_total": c.execute("SELECT COALESCE(SUM(stock),0) FROM products WHERE archived=0").fetchone()[0],
         "in_production": c.execute("SELECT COALESCE(SUM(quantity),0) FROM print_jobs WHERE status='printing'").fetchone()[0],
@@ -3322,6 +3351,12 @@ def api_notifications(req):
         "hb": [],
     }
     return d
+
+
+@route("POST", "/api/notifications/{nid}/dismiss")
+def api_notification_dismiss(req, nid):
+    notify.dismiss(int(nid))
+    return {"ok": True}
 
 
 @route("POST", "/api/notifications/{nid}/resolve")

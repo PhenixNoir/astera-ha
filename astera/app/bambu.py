@@ -265,7 +265,7 @@ class Worker(threading.Thread):
             state=gstate, file=s.get("subtask_name") or s.get("gcode_file") or "",
             percent=s.get("mc_percent"), remaining_min=s.get("mc_remaining_time"),
             layer=s.get("layer_num"), total_layers=s.get("total_layer_num"),
-            error_code=s.get("print_error") or 0,
+            error_code=s.get("print_error") or 0, temps=_bambu_temps(s),
         )
         try:
             with _lock:
@@ -292,6 +292,23 @@ class Worker(threading.Thread):
 
 
 # ---------------------------------------------------------------- olaylar → Astera baskıları
+
+def _t(v):
+    try:
+        return round(float(v), 1)
+    except (TypeError, ValueError):
+        return None
+
+
+def _bambu_temps(s):
+    """Bambu raporundaki sıcaklıklar: nozul, tabla, (varsa) hazne. Hedef 0 ise ısıtıcı kapalı."""
+    t = {"nozzle": _t(s.get("nozzle_temper")), "nozzle_t": _t(s.get("nozzle_target_temper")),
+         "bed": _t(s.get("bed_temper")), "bed_t": _t(s.get("bed_target_temper"))}
+    ch = _t(s.get("chamber_temper"))
+    if ch is not None and ch > 0:
+        t["chamber"] = ch
+    return t if t["nozzle"] is not None or t["bed"] is not None else None
+
 
 def _job_for(printer, task_key):
     return _db().execute("""SELECT * FROM print_jobs WHERE status='printing' AND printer=?
@@ -626,8 +643,12 @@ class MoonrakerWorker(_LinkBase):
             print("Moonraker eşleştirme hatası:", e)
 
     def poll_once(self):
-        st = self._get("/printer/objects/query?print_stats&virtual_sdcard&display_status&exclude_object").get("result", {}).get("status", {})
+        st = self._get("/printer/objects/query?print_stats&virtual_sdcard&display_status&exclude_object&extruder&heater_bed").get("result", {}).get("status", {})
         ps, vs, ds = st.get("print_stats") or {}, st.get("virtual_sdcard") or {}, st.get("display_status") or {}
+        ex, hb = st.get("extruder") or {}, st.get("heater_bed") or {}
+        if ex or hb:
+            self._set_status(temps={"nozzle": _t(ex.get("temperature")), "nozzle_t": _t(ex.get("target")),
+                                    "bed": _t(hb.get("temperature")), "bed_t": _t(hb.get("target"))})
         raw_state = ps.get("state") or ""
         gstate = MR_STATE.get(raw_state, "IDLE")
         fn = ps.get("filename") or ""
