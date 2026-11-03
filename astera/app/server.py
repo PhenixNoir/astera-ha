@@ -1931,9 +1931,13 @@ def _complete_job(req, jid):
         res = job_rows("j.id=?", (jid,))[0]
         res["assembled_products"] = assembled
         return res
+    og = [{"leaf": str(a.get("leaf"))[:16], "qty": max(0, min(999, int(a.get("qty") or 0)))}
+          for a in (b.get("order_good") or []) if isinstance(a, dict) and a.get("leaf")] if j["order_id"] and success else []
+    if og:   # özel siparişte hangi kalem/parçadan kaç tane sağlam çıktığı tek tek girildi
+        b = {**b, "good_quantity": sum(a["qty"] for a in og)}
     good = int(b.get("good_quantity") if b.get("good_quantity") is not None else j["quantity"]) if success else 0
     good = max(0, min(good, 999))
-    if good > j["quantity"] and not j["order_id"]:
+    if good > j["quantity"]:
         # Yazıcıdan otomatik açılan baskıda adet tahminiydi; gerçekte daha fazla çıktıysa adedi düzelt
         db().execute("UPDATE print_jobs SET quantity=? WHERE id=?", (good, jid))
         j = db().execute("SELECT * FROM print_jobs WHERE id=?", (jid,)).fetchone()
@@ -1943,7 +1947,7 @@ def _complete_job(req, jid):
     if j["order_id"]:
         # Özel sipariş: stok değişmez; parça parça basılabilir, hepsi basılınca Hazır'a geçer
         try:
-            alloc = json.loads(j["order_items"] or "[]")
+            alloc = og or json.loads(j["order_items"] or "[]")
         except (ValueError, TypeError, IndexError, KeyError):
             alloc = []
         order_items_add_printed(j["order_id"], good, alloc)
@@ -2039,9 +2043,26 @@ def api_job_change(req, jid):
         raise ApiError("Baskı bulunamadı", 404)
     if j["status"] != "printing":
         raise ApiError("Sonuçlanmış baskının ürünü değiştirilemez")
-    if j["order_id"]:
-        raise ApiError("Özel sipariş baskısının ürünü değiştirilemez; baskıyı iptal edip yeniden açın")
     qty = max(1, int(b.get("quantity") or j["quantity"] or 1))
+    if b.get("order_id"):
+        # yazıcının açtığı baskı aslında bir özel siparişin: siparişe bağla
+        oid = int(b["order_id"])
+        o = db().execute("SELECT * FROM custom_orders WHERE id=?", (oid,)).fetchone()
+        if not o or o["status"] in ("delivered", "cancelled"):
+            raise ApiError("Sipariş bulunamadı ya da kapanmış")
+        db().execute("DELETE FROM job_parts WHERE job_id=?", (jid,))
+        db().execute("DELETE FROM job_spools WHERE job_id=?", (jid,))
+        db().execute("UPDATE print_jobs SET order_id=?, product_id=NULL, component_id=NULL, quantity=?, note=?, order_items=NULL WHERE id=?",
+                     (oid, qty, _order_label(o), jid))
+        old = j["order_id"]
+        db().execute("UPDATE custom_orders SET status='printing', updated_at=? WHERE id=? AND status IN ('new','ready')", (now(), oid))
+        if old and old != oid:
+            order_after_job(old)
+        return job_rows("j.id=?", (jid,))[0]
+    if j["order_id"]:
+        old_order = j["order_id"]
+        db().execute("UPDATE print_jobs SET order_id=NULL, order_items=NULL WHERE id=?", (jid,))
+        order_after_job(old_order)
     db().execute("DELETE FROM job_parts WHERE job_id=?", (jid,))
     if b.get("component_id"):
         cid = int(b["component_id"])

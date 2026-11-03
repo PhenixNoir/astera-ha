@@ -2216,9 +2216,10 @@ function askNotifyOnce() {
   }
 }
 
-function openResult(id) {
+function openResult(id, again) {
   const j = S.jobs.find((x) => x.id === id);
   if (!j) return;
+  if (j.is_order && !again && !(S.orders || []).some((o) => o.id === j.order_id)) { loadOrders().catch(() => {}).then(() => openResult(id, true)); return; }
   S.promptOpen = true;
   hideDueBanner();
   const p = productById(j.product_id);
@@ -2237,7 +2238,22 @@ function openResult(id) {
         <div><h3>${esc(j.product_name)}</h3>
           <p class="muted" style="margin:6px 0 0">${j.parts?.length ? `${j.quantity} parça` : p?.set_size > 1 ? `${j.quantity} set (${j.quantity * p.set_size} adet)` : `${j.quantity} adet`}${j.printer ? ' · ' + esc(j.printer) : ''}</p>
           ${j.is_order ? '<span class="tag tag-order" style="margin-top:6px">Özel sipariş</span>' : ''}${j.is_component ? '<span class="tag tag-pool" style="margin-top:6px">Ortak parça · havuza</span>' : ''}${j.is_misc ? '<span class="tag tag-misc" style="margin-top:6px">Diğer amaçlı · stoğa eklenmez</span>' : ''}</div>
-        ${j.is_order ? `<p class="muted" style="margin:0;font-size:14px">Sağlam derseniz sipariş Hazır'a geçer; sorunlu derseniz tekrar basılmak üzere Yeni'ye döner.</p>`
+        ${j.is_order ? (() => {
+            const o = (S.orders || []).find((x) => x.id === j.order_id);
+            let al = []; try { al = JSON.parse(j.order_items || '[]'); } catch { /* */ }
+            const alq = Object.fromEntries(al.map((a) => [a.leaf, a.qty]));
+            const lv = o?.items?.length ? orderLeaves(o) : [];
+            let budget = j.quantity;   // seçim yoksa baskı adedi sırayla eksik kalemlere dağıtılır
+            if (lv.length) return `<div class="res-parts"><span class="muted" style="font-size:13px">Hangi kalem / parçadan kaç tane sağlam çıktı? (basılmayanı 0 yapın)</span>${lv.map((x) => {
+              const left = Math.max(0, x.need - (x.t.printed || 0)), def = al.length ? (alq[x.id] || 0) : Math.min(left, budget);
+              if (!al.length) budget -= def;
+              return `<div class="np-part on"><div><b>${esc(x.k === x.t ? x.k.name : `${x.k.name} · ${x.t.name}`)}</b><span class="s">${x.t.printed || 0}/${x.need} basılmış${alq[x.id] ? ` · bu baskıda ${alq[x.id]}` : ''}</span></div>
+              <div class="stepper sm"><button type="button" data-act="res-part" data-id="${esc(x.id)}" data-d="-1" aria-label="Azalt">${icon('minus')}</button><input type="number" min="0" max="999" value="${def}" data-res-leaf="${esc(x.id)}" data-res-part="${esc(x.id)}"><button type="button" data-act="res-part" data-id="${esc(x.id)}" data-d="1" aria-label="Arttır">${icon('plus')}</button></div></div>`; }).join('')}
+              <small class="muted">Sağlam: girilen adetler siparişe işlenir, hepsi basılınca sipariş Hazır'a geçer. Sorunlu: hiçbiri işlenmez.</small></div>`;
+            return `<div class="field" style="justify-items:center"><span>Sağlam çıkan adet</span>
+              <div class="stepper"><button type="button" data-act="res-qty" data-d="-1" aria-label="Azalt">${icon('minus')}</button><input id="res-qty" type="number" inputmode="numeric" min="0" max="999" value="${j.quantity}"><button type="button" data-act="res-qty" data-d="1" aria-label="Arttır">${icon('plus')}</button></div>
+              <small class="muted" style="text-align:center">${o ? `Sipariş ${o.quantity} adet · ${o.printed || 0} basılmış. ` : ''}Hepsi basılınca sipariş Hazır'a geçer; sorunlu derseniz hiçbiri işlenmez.</small></div>`;
+          })()
         : j.parts?.length || p?.parts?.length ? (() => {
             // ürünün bütün parçaları: planda olmayan da basılmış olabilir, fazlası da girilebilir
             const planned = Object.fromEntries((j.parts || []).map((x) => [x.part_id, x.quantity]));
@@ -2252,7 +2268,7 @@ function openResult(id) {
             <div class="input-group np-slot-g"><input class="input" type="number" min="0" data-res-spool="${x.id}" value="${planned}"><span class="suffix">g</span></div></div>`; }).join('')}</div>` : ''}
         ${j.bambu_state === 'FAILED' ? `<div class="notice" style="background:var(--bad-wash);width:100%">${icon('bell')}<div><b>${esc(j.printer)}</b> baskının yarıda kaldığını ya da başarısız olduğunu bildirdi.</div></div>` : ''}
         ${j.bambu_task && !j.is_order && !j.parts?.length ? `<p class="faint" style="margin:-4px 0 0;font-size:12.5px">Yazıcıdan otomatik açıldı; adet bir önceki baskıdan tahmin edildi, gerekirse düzeltin.</p>` : ''}
-        ${j.is_order ? '' : `<button type="button" class="linkish" data-act="job-change" data-id="${j.id}">${icon('edit')} Yanlış ürün mü? Basılan ürünü değiştir</button>`}
+        <button type="button" class="linkish" data-act="job-change" data-id="${j.id}">${icon('edit')} ${j.is_order ? 'Yanlış mı? Başka ürüne ya da siparişe bağla' : 'Yanlış mı? Ürünü, adedi ya da siparişi değiştir'}</button>
         <div class="choices ${j.bambu_task ? 'two' : 'three'}">
           <button class="choice ok" data-act="res-ok" data-id="${j.id}">${icon('check')}<b>Sağlam</b><span>${okLabel}</span></button>
           <button class="choice bad" data-act="res-fail" data-id="${j.id}">${icon('x')}<b>Sorunlu</b><span>${j.is_order ? "Yeni'ye dön" : j.is_misc ? 'Başarısız kaydet' : 'Stoğa eklenmez'}</span></button>
@@ -2277,11 +2293,12 @@ function hideDueBanner() { $('#due-banner')?.classList.remove('show'); }
 
 async function finishJob(id, success) {
   const good = parseInt($('#res-qty')?.value);
-  const partsGood = $$('[data-res-part]').map((i) => ({ part_id: +i.dataset.resPart, good: Math.max(0, parseInt(i.value) || 0) }));
+  const leafGood = $$('[data-res-leaf]').map((i) => ({ leaf: i.dataset.resLeaf, qty: Math.max(0, parseInt(i.value) || 0) }));
+  const partsGood = leafGood.length ? [] : $$('[data-res-part]').map((i) => ({ part_id: +i.dataset.resPart, good: Math.max(0, parseInt(i.value) || 0) }));
   const spoolUsed = $$('[data-res-spool]').map((i) => ({ spool_id: +i.dataset.resSpool, grams: Math.max(0, parseFloat(i.value) || 0) }));
   $$('.result .choice').forEach((b) => { b.disabled = true; });
   try {
-    const r = await api('POST', `/api/jobs/${id}/complete`, { success, good_quantity: isNaN(good) ? undefined : good, parts_good: partsGood.length ? partsGood : undefined, spool_used: spoolUsed.length ? spoolUsed : undefined });
+    const r = await api('POST', `/api/jobs/${id}/complete`, { success, good_quantity: isNaN(good) ? undefined : good, parts_good: partsGood.length ? partsGood : undefined, order_good: leafGood.length ? leafGood : undefined, spool_used: spoolUsed.length ? spoolUsed : undefined });
     if (success && (r.good_quantity || r.is_order)) await celebrate(r);
     closeModal();
     if (r.is_misc) toast(success && r.good_quantity ? `${r.product_name} ×${r.good_quantity} tamamlandı` : `${r.product_name} başarısız olarak kaydedildi`);
@@ -2316,7 +2333,7 @@ function openJobMenu(id) {
         <button class="btn" data-act="job-snooze" data-id="${id}" data-m="15">Süreyi 15 dk uzat</button>
         <button class="btn" data-act="job-snooze" data-id="${id}" data-m="60">Süreyi 1 saat uzat</button>
         <button class="btn" data-act="job-finish-now" data-id="${id}">${icon('check')} Şimdi bitti, sonucu gir</button>
-        ${j.is_order ? '' : `<button class="btn" data-act="job-change" data-id="${id}">${icon('edit')} Baskıyı düzenle (ürün, adet${j.parts?.length ? ', parçalar' : ''})</button>`}
+        <button class="btn" data-act="job-change" data-id="${id}">${icon('edit')} Baskıyı düzenle (ürün, sipariş, adet${j.parts?.length ? ', parçalar' : ''})</button>
         <button class="btn btn-bad" data-act="job-cancel" data-id="${id}">${icon('x')} ${j.is_order ? "Baskıyı iptal et (sipariş Yeni'ye döner)" : 'Baskıyı iptal et (stoğa eklenmez)'}</button>
       </div></div>`, 'narrow');
 }
@@ -2325,16 +2342,16 @@ function openJobMenu(id) {
 let JC = null;
 async function openJobChange(id) {
   const j = S.jobs.find((x) => x.id === id); if (!j) return;
-  await Promise.all([S.products.length ? null : loadProducts(), loadComponents()]).catch(() => {});
+  await Promise.all([S.products.length ? null : loadProducts(), loadComponents(), loadOrders()]).catch(() => {});
   const file = (j.note || '').startsWith('Bambu: ') ? j.note.slice(7).trim() : '';
-  JC = { id, file, sel: j.product_id ? { k: 'p', id: j.product_id } : j.component_id ? { k: 'c', id: j.component_id } : null, q: '', parts: null };
+  JC = { id, file, sel: j.order_id ? { k: 'o', id: j.order_id } : j.product_id ? { k: 'p', id: j.product_id } : j.component_id ? { k: 'c', id: j.component_id } : null, q: '', parts: null };
   const jp = productById(j.product_id);
   const sets = j.parts?.length && jp?.parts_total ? Math.max(1, Math.round(j.quantity / jp.parts_total)) : j.quantity;
   if (j.parts?.length) JC.parts = Object.fromEntries(j.parts.map((x) => [x.part_id, x.quantity]));
   openModal(`<div class="modal-h"><h2>Baskıyı düzenle</h2><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
     <div class="modal-b">
       <p class="muted" style="margin:0">Şu an: <b>${esc(j.product_name)}</b> · ${j.quantity} ${j.parts?.length ? 'parça' : 'adet'}${j.printer ? ' · ' + esc(j.printer) : ''}${file ? `<br><small>Yazıcıdaki dosya: ${esc(file)}</small>` : ''}</p>
-      <label class="search">${icon('search')}<input class="input" id="jc-q" placeholder="Ürün, ortak parça ya da diğer amaçlı ara" autocomplete="off"></label>
+      <label class="search">${icon('search')}<input class="input" id="jc-q" placeholder="Ürün, özel sipariş, ortak parça ya da diğer amaçlı ara" autocomplete="off"></label>
       <div class="picker" id="jc-list"></div>
       <div class="row" style="align-items:end">
         <div class="field"><span id="jc-qty-l">Kaç adet?</span><div class="stepper"><button type="button" data-act="jc-qty" data-d="-1" aria-label="Azalt">${icon('minus')}</button><input id="jc-qty" type="number" inputmode="numeric" min="1" value="${sets || 1}"><button type="button" data-act="jc-qty" data-d="1" aria-label="Arttır">${icon('plus')}</button></div></div>
@@ -2369,11 +2386,12 @@ function jcRender() {
   const hit = (x) => !q || trLower(x.name + ' ' + (x.file_name || '')).includes(q);
   const prods = S.products.filter(hit).map((p) => ({ p, sc: JC.file ? npFileScore(JC.file, p) : 0 }))
     .sort((a, b) => b.sc - a.sc || (b.p.printed_90 || 0) - (a.p.printed_90 || 0) || a.p.name.localeCompare(b.p.name, 'tr')).map((x) => x.p);
-  const cur = (k, id) => (k === 'p' ? j?.product_id === id : j?.component_id === id) ? ' <span class="tag tag-mute">şu anki</span>' : '';
+  const cur = (k, id) => (k === 'p' ? j?.product_id === id : k === 'o' ? j?.order_id === id : j?.component_id === id) ? ' <span class="tag tag-mute">şu anki</span>' : '';
   const item = (k, x, sub) => `<button type="button" class="pick${JC.sel?.k === k && JC.sel.id === x.id ? ' on' : ''}" data-act="jc-pick" data-k="${k}" data-id="${x.id}">
     ${miniThumb(x.thumbnail)}<span><span class="t">${esc(x.name)}</span>${cur(k, x.id)}<br><span class="s">${sub}</span></span></button>`;
   const g = (title, html) => html ? `<div class="pick-group">${title}</div>${html}` : '';
   $('#jc-list').innerHTML = g('Ürünler', prods.slice(0, 60).map((p) => item('p', p, `${p.category ? esc(p.category) + ' · ' : ''}stok ${p.stock}${p.parts?.length ? ` · ${p.parts_total} parçalı set` : ''}`)).join(''))
+    + g('Özel siparişler', (S.orders || []).filter((o) => ['new', 'printing', 'ready'].includes(o.status)).map((o) => ({ ...o, name: `${o.first_name} ${o.last_name || ''}${o.title ? ' — ' + o.title : ''}`.trim(), thumbnail: o.image })).filter(hit).map((o) => item('o', o, `${OST[o.status].l} · ${o.printed || 0}/${o.quantity} basılmış`)).join(''))
     + g('Ortak parçalar', (S.components || []).filter(hit).map((c) => item('c', c, `havuzda ${c.stock}`)).join(''))
     + g('Diğer amaçlı', (S.misc || []).filter(hit).map((c) => item('c', c, 'stoğa eklenmez')).join(''))
     || '<p class="muted">Eşleşen yok.</p>';
@@ -2382,7 +2400,7 @@ async function jcSave() {
   if (!JC?.sel) return;
   const body = { quantity: Math.max(1, parseInt($('#jc-qty').value) || 1), remember_file: $('#jc-remember') ? $('#jc-remember').checked : false };
   const pin = $$('[data-jc-part]'); if (pin.length) body.parts = pin.map((i) => ({ part_id: +i.dataset.jcPart, quantity: Math.max(0, parseInt(i.value) || 0) }));
-  if (JC.sel.k === 'p') body.product_id = JC.sel.id; else body.component_id = JC.sel.id;
+  if (JC.sel.k === 'p') body.product_id = JC.sel.id; else if (JC.sel.k === 'o') body.order_id = JC.sel.id; else body.component_id = JC.sel.id;
   $('#jc-save').disabled = true;
   try {
     const r = await api('POST', `/api/jobs/${JC.id}/change`, body);

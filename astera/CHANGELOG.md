@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.8.0
+- Özel sipariş baskısı bitince sonuç penceresi sorar: kalemli siparişte hangi kalem/parçadan kaç tane sağlam çıktığı, kalemsizde sağlam adet. Girilenler siparişe işlenir; hepsi basılınca sipariş Hazır'a geçer.
+- Baskıyı düzenle: yazıcının kendiliğinden açtığı (ör. Diğer amaçlı sanılan) bir baskı özel siparişe bağlanabilir; özel sipariş baskısı da başka ürüne/siparişe taşınabilir.
+
 ## 1.7.9
 - Tema ve renk paleti ayrıldı (Ayarlar → Genel → Tema ve görünüm). Tema: Güncel ya da Atölye Gece (büyük başlıklar, kontur filigranı, belirgin menü). Palet: Güncel, Atölye Gece (kömür + kor), Dolgu (derin lacivert + limon), Pazar Yeri (beyaz + turuncu), Pazar Yeri Koyu. Her palet her temayla kullanılabilir.
 - Yeni koyu tonlar (Gece kömürü, Derin lacivert) ve vurgu renkleri (Kor, Turuncu, Limon).
