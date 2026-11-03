@@ -2938,3 +2938,11 @@ body.k-dragging .kanban .kcol.drop-on { outline-color: var(--pei); background: v
 .count.mp-ty.pop, .count.mp-hb.pop { animation: mp-pop .4s cubic-bezier(.2, 1.4, .4, 1); }
 @keyframes mp-pop { from { transform: scale(.4); opacity: 0; } }
 .tabbar .count.mp-hb { left: calc(50% + 22px); }
+
+.stat-tile-btn { all: unset; box-sizing: border-box; cursor: pointer; display: grid; border-radius: 10px; transition: background .2s; }
+.stat-tile-btn:hover { background: var(--sheet-2); } .stat-tile-btn:focus-visible { outline: 2px solid var(--focus); }
+.stat-tile-btn u { text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); }
+.fd-tbl tbody tr { animation: oe-row .35s cubic-bezier(.2, .8, .2, 1) backwards; animation-delay: calc(var(--i, 0) * 18ms); }
+.fd-tbl tr.fd-sus td { background: var(--bad-wash); }
+.fd-sp { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.fd-sp i { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--line-2); flex: none; }

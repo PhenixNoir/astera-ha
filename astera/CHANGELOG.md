@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.8.5
+- İstatistik: "filament + reçine harcandı" kutusuna tıklayınca baskı baskı döküm açılır (hangi baskıda hangi makaradan kaç gram düşüldü, beklenen gram). Beklenenden çok fazla düşen kayıtlar kırmızı işaretlenir; yanlış kayıt "Geri al" ile makaraya iade edilir.
+
 ## 1.8.4
 - Siparişler rozeti artık yalnızca Siparişler sayfası son açıldıktan sonra gelen yeni siparişleri sayar; sayfa açılınca sıfırlanır (bu cihaza göre).
 

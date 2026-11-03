@@ -4337,7 +4337,7 @@ PAGES.istatistik = {
         <div><b>${t.trendyol}</b><span>Trendyol · ${t.manual} elden / barkod</span></div>
         <div><b>${t.printed}</b><span>sağlam basıldı · ${t.jobs} baskı</span></div>
         <div class="${failRate >= 10 ? 'neg' : ''}"><b>%${failRate}</b><span>fire (${t.failed} başarısız baskı)</span></div>
-        <div><b>${t.filament_g >= 1000 ? (Math.round(t.filament_g / 100) / 10).toLocaleString('tr-TR') + '<small style="font-size:18px"> kg</small>' : t.filament_g + '<small style="font-size:18px"> g</small>'}</b><span>filament harcandı</span></div>
+        <button type="button" class="stat-tile-btn" data-act="fil-detail" title="Hangi baskıda ne kadar harcandı?"><b>${t.filament_g >= 1000 ? (Math.round(t.filament_g / 100) / 10).toLocaleString('tr-TR') + '<small style="font-size:18px"> kg</small>' : t.filament_g + '<small style="font-size:18px"> g</small>'}</b><span>filament + reçine harcandı · <u>dökümü gör</u></span></button>
         <div><b>${t.orders_delivered}</b><span>özel sipariş teslim${t.orders_revenue ? ` · ${fmtMoney(t.orders_revenue)}` : ''}</span></div>
       </div>
       ${statProfitHTML()}
@@ -4436,6 +4436,30 @@ function statProfitHTML() {
         <td class="num faint">${x.last ? new Date(x.last).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) : ''}</td></tr>`).join('')}
     </tbody></table></div>
     <p class="muted" style="font-size:12.5px;margin:8px 0 0">Kargo ve hizmet bedeli çok ürünlü siparişlerde ürünlere ciroları oranında paylaştırılır. Trendyol'a bağlanmadan önceki aylarda veri olmayabilir.</p></div></section>`;
+}
+// Ayın filament/reçine harcaması: baskı baskı döküm, beklenenden çok düşenler işaretli, yanlış kayıt geri alınabilir
+async function openFilDetail() {
+  let d; try { d = await api('GET', `/api/stats/filament?month=${S.statMonth}`); } catch (e) { return fail(e); }
+  const sus = d.items.filter((x) => x.suspect);
+  const row = (x, i) => `<tr class="${x.suspect ? 'fd-sus' : ''}" style="--i:${Math.min(i, 25)}">
+      <td>${miniThumb(x.thumbnail)}</td>
+      <td><b>${esc(x.name || '—')}</b>${x.qty ? ` <span class="faint">×${x.qty}</span>` : ''}<br><small class="faint">${x.job_id ? `baskı #${x.job_id}` : ''}${x.printer ? ` · ${esc(x.printer)}` : ''} · ${fmtWhen(x.at)}${x.status === 'failed' ? ' · <span class="bad-text">başarısız</span>' : ''}</small></td>
+      <td><span class="fd-sp"><i style="background:${esc(x.spool.color_hex || '#888')}"></i>${esc([x.spool.code, x.spool.color_name, x.spool.material].filter(Boolean).join(' · ') || 'makara')}</span></td>
+      <td class="num"><b>${fmtGram(x.used)}</b>${x.job_used !== x.used ? `<br><small class="faint">baskıda toplam ${fmtGram(x.job_used)}</small>` : ''}</td>
+      <td class="num">${x.expected ? fmtGram(x.expected) : '<span class="faint">—</span>'}${x.suspect ? `<br><small class="bad-text">${x.expected ? `${(x.job_used / x.expected).toLocaleString('tr-TR', { maximumFractionDigits: 1 })} kat fazla` : 'çok yüksek'}</small>` : ''}</td>
+      <td><button type="button" class="btn btn-sm btn-ghost" data-fd-undo="${x.log_id}" title="Bu gramı makaraya geri ekle">Geri al</button></td></tr>`;
+  openModal(`<div class="modal-h"><h2>Filament ve reçine harcaması</h2><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
+    <div class="modal-b">
+      <p class="muted" style="margin:0">Bu ay makaralardan düşülen toplam <b>${fmtKg(d.total)}</b>, ${d.items.length} kayıt. Başarısız baskılar ve diğer amaçlı baskılar da dahil. "Beklenen", ürünün gramı × adet (ya da dilimleyici dosyası) üzerinden hesaplanan miktar.</p>
+      ${sus.length ? `<div class="notice" style="background:var(--bad-wash)">${icon('alert')}<div><b>${sus.length} kayıt beklenenden çok fazla</b> (toplam ${fmtKg(sus.reduce((a, x) => a + x.used, 0))}). Büyük ihtimalle yanlış gram girilmiş ya da adet iki kez sayılmış. Yanlışsa "Geri al" ile gramı makaraya iade edebilirsiniz.</div></div>` : ''}
+      <div class="tbl-wrap"><table class="tbl fd-tbl"><thead><tr><th></th><th>Baskı</th><th>Makara</th><th class="num">Düşülen</th><th class="num">Beklenen</th><th></th></tr></thead>
+        <tbody>${d.items.map(row).join('') || '<tr><td colspan="6" class="muted">Bu ay kayıt yok.</td></tr>'}</tbody></table></div>
+    </div>`, 'wide xwide');
+  $('.fd-tbl').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-fd-undo]'); if (!b) return;
+    if (!confirm('Bu kayıttaki gram makaraya geri eklensin mi? (Stok ve baskı sonucu değişmez, sadece makara gramı düzelir.)')) return;
+    try { await api('POST', `/api/stats/filament/${b.dataset.fdUndo}/undo`); toast('Gram makaraya geri eklendi'); closeModal(true); openFilDetail(); S.stats = await api('GET', `/api/stats?month=${S.statMonth}`); } catch (err) { fail(err); }
+  });
 }
 // Sıralanabilir tablolar: başlığa tıklayınca o sütuna göre, tekrar tıklayınca ters; seçim bu cihazda hatırlanır
 const TSORT = (() => { try { return JSON.parse(localStorage.getItem('tsort') || '{}'); } catch { return {}; } })();
@@ -5804,6 +5828,7 @@ const ACTIONS = {
       location.reload();
     } catch (e) { ov.remove(); fail(e); el.disabled = false; }
   },
+  'fil-detail': () => openFilDetail(),
   'tsort': (el) => tsortSet(el.dataset.t, el.dataset.k),
   'kt-dir': () => { const st = TSORT.kt || { k: 'pr', dir: 'desc' }; tsortSet('kt', st.k, st.dir === 'desc' ? 'asc' : 'desc'); },
   'go-set': (el) => { try { localStorage.setItem('setGrp', el.dataset.g); } catch { /* */ } },

@@ -2575,6 +2575,72 @@ def month_weeks(y, m):
     return weeks
 
 
+@route("GET", "/api/stats/filament")
+def api_stats_filament(req):
+    """Ayın filament/reçine harcamasının baskı baskı dökümü: her makaradan düşülen gram ve beklenen gram
+    (ürünün/parçanın/siparişin gramı × adet ya da dilimleyici dosyası). Beklenenden çok fazla düşenler işaretlenir."""
+    y, m = (int(x) for x in (req.query.get("month") or time.strftime("%Y-%m")).split("-"))
+    start, end = _month_start(y, m), _month_start(*_add_month(y, m, 1))
+    rows = db().execute("""SELECT l.id log_id, l.spool_id, -l.delta used, l.ref, l.created_at, s.material, s.color_hex, s.color_name, s.brand, s.code
+                           FROM spool_log l LEFT JOIN spools s ON s.id=l.spool_id
+                           WHERE l.reason='print' AND l.created_at>=? AND l.created_at<? ORDER BY -l.delta DESC""", (start, end)).fetchall()
+    jobs = {}
+    out = []
+    for r in rows:
+        mt = re.match(r"baskı #(\d+)", r["ref"] or "")
+        jid = int(mt.group(1)) if mt else None
+        if jid and jid not in jobs:
+            jr = job_rows("j.id=?", (jid,))
+            j = jr[0] if jr else None
+            exp = None
+            if j:
+                raw = db().execute("SELECT * FROM print_jobs WHERE id=?", (jid,)).fetchone()
+                if raw["file_grams"]:
+                    exp = raw["file_grams"]
+                elif raw["product_id"]:
+                    p = db().execute("SELECT grams FROM products WHERE id=?", (raw["product_id"],)).fetchone()
+                    per_set = sum(x["per_unit"] for x in load_parts(raw["product_id"]).get(raw["product_id"], [])) or 1
+                    exp = (p["grams"] or 0) * raw["quantity"] / per_set if p and p["grams"] else None
+                elif raw["component_id"]:
+                    c = db().execute("SELECT grams FROM components WHERE id=?", (raw["component_id"],)).fetchone()
+                    exp = (c["grams"] or 0) * raw["quantity"] if c and c["grams"] else None
+                elif raw["order_id"]:
+                    o = db().execute("SELECT grams FROM custom_orders WHERE id=?", (raw["order_id"],)).fetchone()
+                    exp = (o["grams"] or 0) * raw["quantity"] if o and o["grams"] else None
+            jobs[jid] = {"job": j, "expected": round(exp, 1) if exp else None}
+        jj = jobs.get(jid) or {}
+        j = jj.get("job")
+        out.append({"log_id": r["log_id"], "used": round(r["used"], 1), "at": r["created_at"], "job_id": jid,
+                    "name": j["product_name"] if j else (r["ref"] or "—"), "qty": j["quantity"] if j else None,
+                    "status": j["status"] if j else None, "printer": j["printer"] if j else None, "thumbnail": j["thumbnail"] if j else None,
+                    "expected": jj.get("expected"), "spool": {"id": r["spool_id"], "code": r["code"], "material": r["material"],
+                    "color_hex": r["color_hex"], "color_name": r["color_name"], "brand": r["brand"]}})
+    # aynı baskının birden çok makarası: beklenen gram baskı başına, bu yüzden baskı toplamıyla karşılaştır
+    per_job = {}
+    for x in out:
+        if x["job_id"]:
+            per_job[x["job_id"]] = per_job.get(x["job_id"], 0) + x["used"]
+    for x in out:
+        e = x["expected"]
+        x["job_used"] = round(per_job.get(x["job_id"], x["used"]), 1)
+        x["suspect"] = bool(e and x["job_used"] > e * 1.8 + 20) or (not e and x["used"] >= 500)
+    return {"items": out, "total": round(sum(x["used"] for x in out), 1)}
+
+
+@route("POST", "/api/stats/filament/{lid}/undo")
+def api_stats_filament_undo(req, lid):
+    """Yanlış düşülen bir makara kaydını geri al: gram makaraya iade edilir, kayıt düzeltme olarak işaretlenir."""
+    r = db().execute("SELECT * FROM spool_log WHERE id=? AND reason='print'", (int(lid),)).fetchone()
+    if not r:
+        raise ApiError("Kayıt bulunamadı ya da zaten geri alınmış", 404)
+    spool_change(r["spool_id"], -r["delta"], "undo", ref=f"geri alındı: {r['ref'] or ''}")
+    db().execute("UPDATE spool_log SET reason='print_undone' WHERE id=?", (r["id"],))
+    m = re.match(r"baskı #(\d+)", r["ref"] or "")
+    if m:
+        db().execute("UPDATE job_spools SET used=0 WHERE job_id=? AND spool_id=?", (int(m.group(1)), r["spool_id"]))
+    return {"ok": True}
+
+
 @route("GET", "/api/stats")
 def api_stats(req):
     lt = time.localtime()
