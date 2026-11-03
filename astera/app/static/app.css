@@ -2912,3 +2912,29 @@ body.k-dragging .kanban .kcol.drop-on { outline-color: var(--pei); background: v
 .nps-f { padding: 12px 18px; border-top: 1px solid var(--line-2); font-size: 14px; }
 @media (max-width: 900px) { .modal.np-wide { display: flex; } .modal.np-wide > .np-side { border-left: 0; border-top: 1px solid var(--line-2); max-height: 50vh; } }
 @media (prefers-reduced-motion: reduce) { .modal.oe-modal, .oe-left, .oe-it.stag, .np-side, .nps-k { animation: none !important; } .modal { transition: none; } }
+
+/* Sıralanabilir tablo başlıkları */
+.ts-th button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; font: inherit; color: inherit; border-radius: 6px; padding: 2px 4px; margin: -2px -4px; white-space: nowrap; }
+.ts-th button:hover { color: var(--ink); background: var(--sheet-2); }
+.ts-th button:focus-visible { outline: 2px solid var(--focus); }
+.ts-th i { font-style: normal; font-size: 10px; opacity: .45; transition: transform .25s; }
+.ts-th.on { color: var(--pei-strong); } .ts-th.on i { opacity: 1; }
+.kt-rank { width: 32px; text-align: right; font-variant-numeric: tabular-nums; }
+.kt-name span { display: grid; gap: 1px; } .kt-name small { font-size: 11.5px; }
+.kt-pr { position: relative; }
+.kt-pr b { position: relative; }
+.kt-bar { position: absolute; right: 8px; top: 50%; height: 22px; width: var(--w); max-width: calc(100% - 16px); transform: translateY(-50%); border-radius: 6px; background: color-mix(in srgb, var(--ok) 16%, transparent); transform-origin: right; animation: kt-bar .6s cubic-bezier(.2, .8, .2, 1) backwards; animation-delay: calc(var(--i, 0) * 25ms); }
+.kt-bar.neg { background: var(--bad-wash); }
+@keyframes kt-bar { from { transform: translateY(-50%) scaleX(0); } }
+.kt-tbl tbody tr.ts-in { animation: oe-row .35s cubic-bezier(.2, .8, .2, 1) backwards; animation-delay: calc(var(--i, 0) * 18ms); }
+.kt-sort select { width: auto; min-width: 170px; height: 34px; }
+.kt-dir { white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .kt-bar, .kt-tbl tbody tr.ts-in { animation: none; } }
+
+/* Menüde pazar yeri başına yeni sipariş rozeti */
+.count.mp-ty { background: #F27A1A; color: #1A1206; }
+.count.mp-hb { background: #2F7BEA; color: #fff; }
+.nav-item .count.mp-ty + .count.mp-hb { margin-left: 4px; }
+.count.mp-ty.pop, .count.mp-hb.pop { animation: mp-pop .4s cubic-bezier(.2, 1.4, .4, 1); }
+@keyframes mp-pop { from { transform: scale(.4); opacity: 0; } }
+.tabbar .count.mp-hb { left: calc(50% + 22px); }

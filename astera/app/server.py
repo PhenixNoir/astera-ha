@@ -3247,7 +3247,14 @@ def api_app_feed(req):
 @route("GET", "/api/notifications")
 def api_notifications(req):
     notify.tick()
-    return notify.items()
+    d = notify.items()
+    # menüdeki sipariş rozeti: pazar yeri başına "Yeni" durumundaki paket sayısı (hb: Hepsiburada bağlanınca dolacak)
+    d["orders_new"] = {
+        "ty": db().execute("""SELECT COUNT(DISTINCT COALESCE(package_id, order_number)) FROM ty_lines
+                              WHERE ty_status IN ('Created','Awaiting')""").fetchone()[0],
+        "hb": 0,
+    }
+    return d
 
 
 @route("POST", "/api/notifications/{nid}/resolve")

@@ -205,6 +205,11 @@ function renderNav() {
     if (n.r === 'satis' && S.dash?.ty_unmatched) return `<span class="count">${S.dash.ty_unmatched}</span>`;
     if (n.r === 'baskilar') { const d = dueJobs().length; return d ? `<span class="count">${d}</span>` : ''; }
     if (n.r === 'iadeler' || n.r === 'sorular') { const pre = n.r === 'iadeler' ? 'claim:' : 'qna:', d = (S.notif?.items || []).filter((x) => !x.resolved_at && String(x.key).startsWith(pre)).length; return d ? `<span class="count${n.r === 'iadeler' ? ' bad' : ''}">${d}</span>` : ''; }
+    if (n.r === 'siparisler') {
+      // pazar yeri başına yeni sipariş: Trendyol turuncu, Hepsiburada mavi
+      const on = S.notif?.orders_new || {};
+      return [['ty', 'Trendyol'], ['hb', 'Hepsiburada']].filter(([k]) => on[k] > 0).map(([k, l]) => `<span class="count mp-${k}${on[k] > (S.mpPrev?.[k] ?? on[k]) ? ' pop' : ''}" title="${l}: ${on[k]} yeni sipariş">${on[k]}</span>`).join('');
+    }
     if (n.r === 'buybox') { const d = (S.notif?.items || []).filter((x) => !x.resolved_at && String(x.key).startsWith('bb:')).length; return d ? `<span class="count bad">${d}</span>` : ''; }
     return '';
   };
@@ -217,6 +222,7 @@ function renderNav() {
     + `<a href="#" class="${inMore ? 'active' : ''}" data-act="more-menu">${icon('more')}<span>${inMore ? esc(more.find((n) => n.r === r).label) : 'Daha'}</span>${moreBadge ? '<span class="count">!</span>' : ''}</a>`;
   S.moreItems = more.map((n) => ({ ...n, badge: badge(n) }));
   $('.settings-link').classList.toggle('active', r === 'ayarlar');
+  if (S.notif?.orders_new) S.mpPrev = { ...S.notif.orders_new };
 }
 
 // ------------------------------------------------------------------ marka (Ayarlar'dan ad / logo)
@@ -4297,6 +4303,7 @@ PAGES.istatistik = {
       });
       rows = Object.values(g).sort((a, b) => b.total - a.total || b.prev_total - a.prev_total);
     }
+    rows = tsort('st', rows, { name: (r) => r.name || '', total: (r) => r.total, prev: (r) => r.prev_total, chg: (r) => (r.prev_total ? (r.total - r.prev_total) / r.prev_total : r.total ? 9 : 0), printed: (r) => r.printed || 0 }, { k: 'total', dir: 'desc' });
     const cats = [...new Set(d.products.map((r) => r.category).filter(Boolean))];
     const maxW = Math.max(1, ...t.by_week), maxT = Math.max(1, ...t.trend);
     const cur = d.weeks.findIndex((w) => nowS() >= w.start && nowS() < w.end);
@@ -4328,9 +4335,9 @@ PAGES.istatistik = {
             ${cats.length ? `<div class="chips">${['all', ...cats].map((c) => `<button class="chip${cat === c ? ' on' : ''}" data-act="stat-cat" data-v="${esc(c)}">${c === 'all' ? 'Hepsi' : esc(c)}</button>`).join('')}</div>` : ''}
             <label class="search sm">${icon('search')}<input class="input" id="stat-q" placeholder="Ürün ara" value="${esc(S.statQ || '')}" autocomplete="off"></label>
             <label class="switch sm"><input type="checkbox" id="stat-merge" ${merge ? 'checked' : ''}> Renk varyantlarını birleştir</label></div></div>
-        <div class="panel-b">${rows.length ? `<div class="tbl-wrap fitbox" style="border:0"><table class="tbl stat-tbl"><thead><tr><th></th><th>Ürün</th>
+        <div class="panel-b">${rows.length ? `<div class="tbl-wrap fitbox" style="border:0"><table class="tbl stat-tbl"><thead><tr><th></th>${tsTh('st', 'name', 'Ürün', '')}
             ${d.weeks.map((w, i) => `<th class="num${i === cur ? ' cur' : ''}" title="${esc(w.range)}">${w.index}. hf<br><small>${esc(w.range)}</small></th>`).join('')}
-            <th class="num">Toplam</th><th class="num">${esc(d.prev_label.split(' ')[0])}</th><th>6 ay</th><th class="num">Basılan</th></tr></thead><tbody>
+            ${tsTh('st', 'total', 'Toplam')}${tsTh('st', 'prev', esc(d.prev_label.split(' ')[0]))}<th>6 ay</th>${tsTh('st', 'printed', 'Basılan')}</tr></thead><tbody>
           ${rows.map((r, n) => { const c = pct(r.total, r.prev_total), mx = Math.max(1, ...r.trend);
             return `<tr><td style="width:52px">${miniThumb(r.thumbnail)}</td>
               <td>${r.id && r.variants <= 1 ? `<a class="pd-link" href="#/urun?id=${r.id}"><b>${esc(r.name)}</b></a>` : `<b>${esc(r.name)}</b>`}${r.variants > 1 ? ` <span class="faint">${r.variants} renk</span>` : ''}${r.category ? `<br><span class="faint" style="font-size:12px">${esc(r.category)}</span>` : ''}</td>
@@ -4350,6 +4357,7 @@ PAGES.istatistik = {
       ${deadHTML()}`;
   },
   after() {
+    $('#kt-sort')?.addEventListener('change', (e) => tsortSet('kt', e.target.value, TSORT.kt?.dir || (e.target.value === 'name' ? 'asc' : 'desc')));
     $('#stat-merge')?.addEventListener('change', (e) => { S.statMerge = e.target.checked; render(); });
     $('#stat-q')?.addEventListener('input', (e) => {
       S.statQ = e.target.value; const pos = e.target.selectionStart, y = scrollY;
@@ -4371,29 +4379,66 @@ function statProfitHTML() {
     // ürün başına: siparişin kârını ürünlerin cirosuna göre paylaştır
     p.lines.filter((l) => !TY_CANCEL.has(l.status) && l.unit_price != null).forEach((l) => {
       const k = l.product_id || 'x' + l.barcode, share = l.unit_price * l.quantity / r.price;
-      const x = (byP[k] ||= { name: l.name, thumb: l.thumbnail, cat: productById(l.product_id)?.category || null, qty: 0, rev: 0, pr: 0, orders: new Set() });
+      const pr0 = productById(l.product_id);
+      const x = (byP[k] ||= { name: l.name, thumb: l.thumbnail, pid: l.product_id, cat: pr0?.category || null, qty: 0, rev: 0, pr: 0, grams: 0, last: 0, orders: new Set() });
       x.qty += l.quantity; x.rev += l.unit_price * l.quantity; x.pr += r.profit * share; x.orders.add(p.package_id);
+      x.grams += (+pr0?.grams || 0) * l.quantity; x.last = Math.max(x.last, p.order_date || 0);
     });
   });
   const cat = S.statCat || 'all', sq = (S.statQ || '').trim().toLocaleLowerCase('tr');
-  let top = Object.values(byP).sort((x, y2) => y2.pr - x.pr);
+  let top = Object.values(byP);
   if (cat !== 'all' || sq) {
     top = top.filter((x) => (cat === 'all' || x.cat === cat) && (!sq || (x.name || '').toLocaleLowerCase('tr').includes(sq)));
     rev = top.reduce((s2, x) => s2 + x.rev, 0); pr = top.reduce((s2, x) => s2 + x.pr, 0);
     n = new Set(top.flatMap((x) => [...x.orders])).size;
     if (!top.length) return '';
   }
-  return `<section class="panel stat-profit"><div class="panel-h"><h2>Trendyol kârı</h2><span class="muted" style="font-size:13px">tahmini · ${n} sipariş${cat !== 'all' || sq ? ' · filtreli' : ''}</span></div>
+  const G = { name: (x) => x.name || '', qty: (x) => x.qty, orders: (x) => x.orders.size, grams: (x) => x.grams || null, rev: (x) => x.rev, pr: (x) => x.pr,
+    unit: (x) => (x.qty ? x.pr / x.qty : null), pg: (x) => (x.grams ? x.pr / x.grams : null), mg: (x) => (x.rev ? x.pr / x.rev : null), last: (x) => x.last };
+  top = tsort('kt', top, G, { k: 'pr', dir: 'desc' });
+  const ks = TSORT.kt || { k: 'pr', dir: 'desc' }, maxPr = Math.max(1, ...top.map((x) => Math.abs(x.pr)));
+  const KT_OPTS = [['pr', 'Kâr'], ['mg', 'Marj'], ['unit', 'Adet başı kâr'], ['pg', 'Gram başı kâr'], ['rev', 'Ciro'], ['qty', 'Satılan adet'], ['orders', 'Sipariş sayısı'], ['grams', 'Harcanan gram'], ['last', 'Son satış tarihi'], ['name', 'Ürün adı']];
+  return `<section class="panel stat-profit"><div class="panel-h" style="flex-wrap:wrap;gap:10px"><h2>Trendyol kârı</h2><span class="muted" style="font-size:13px">tahmini · ${n} sipariş${cat !== 'all' || sq ? ' · filtreli' : ''}</span>
+      <span style="flex:1"></span>
+      <label class="flt kt-sort"><span>Sırala</span><div style="display:flex;gap:6px"><select class="input" id="kt-sort">${KT_OPTS.map(([k, l]) => `<option value="${k}"${ks.k === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
+        <button type="button" class="btn btn-sm kt-dir" data-act="kt-dir" title="${ks.dir === 'desc' ? 'Büyükten küçüğe' : 'Küçükten büyüğe'}" aria-label="Sıralama yönü">${ks.dir === 'desc' ? '↓ Çoktan' : '↑ Azdan'}</button></div></label></div>
     <div class="panel-b"><div class="tyo-sum" style="margin:0 0 12px">
       <div><b>${fmtTL(rev)}</b><span>ciro (satıcıya kalan)</span></div>
       <div class="${pr < 0 ? 'neg' : ''}"><b>${fmtTL(pr)}</b><span>tahmini kâr · ${fmtPct(rev ? pr / rev : null)}</span></div>
       <div><b>${fmtTL(n ? pr / n : 0)}</b><span>sipariş başına kâr</span></div>
     </div>
     ${miss ? `<p class="pf-warn" style="margin-bottom:12px">${miss} siparişte eksik bilgi var (gram, makara fiyatı ya da eşleşmeyen ürün); kâr o kalemler olmadan hesaplandı.</p>` : ''}
-    <div class="tbl-wrap fitbox"><table class="tbl kt-tbl"><thead><tr><th>Ürün</th><th class="num">Adet</th><th class="num">Ciro</th><th class="num">Tahmini kâr</th><th class="num">Marj</th></tr></thead><tbody>
-      ${top.map((x) => `<tr><td><div class="kt-name">${miniThumb(x.thumb)}<span>${esc(x.name || '—')}</span></div></td><td class="num">${x.qty}</td><td class="num">${fmtTL(x.rev)}</td><td class="num">${fmtTL(x.pr)}</td><td class="num"><span class="mg ${marginCls(x.rev ? x.pr / x.rev : null)}">${fmtPct(x.rev ? x.pr / x.rev : null)}</span></td></tr>`).join('')}
+    <div class="tbl-wrap fitbox"><table class="tbl kt-tbl"><thead><tr><th class="kt-rank">#</th>${tsTh('kt', 'name', 'Ürün', '')}${tsTh('kt', 'qty', 'Adet')}${tsTh('kt', 'orders', 'Sipariş')}${tsTh('kt', 'grams', 'Gram')}${tsTh('kt', 'rev', 'Ciro')}${tsTh('kt', 'pr', 'Tahmini kâr')}${tsTh('kt', 'unit', 'Adet başı')}${tsTh('kt', 'pg', 'Kâr / 100 g')}${tsTh('kt', 'mg', 'Marj')}${tsTh('kt', 'last', 'Son satış')}</tr></thead><tbody>
+      ${top.map((x, i) => `<tr style="--i:${Math.min(i, 20)}"><td class="kt-rank faint">${i + 1}</td><td><div class="kt-name">${miniThumb(x.thumb)}<span>${x.pid ? `<a class="pd-link" href="#/urun?id=${x.pid}">${esc(x.name || '—')}</a>` : esc(x.name || '—')}${x.cat ? `<small class="faint">${esc(x.cat)}</small>` : ''}</span></div></td>
+        <td class="num">${x.qty}</td><td class="num">${x.orders.size}</td><td class="num">${x.grams ? fmtKg(x.grams) : '<span class="faint">—</span>'}</td><td class="num">${fmtTL(x.rev)}</td>
+        <td class="num kt-pr"><span class="kt-bar${x.pr < 0 ? ' neg' : ''}" style="--w:${(Math.abs(x.pr) / maxPr * 100).toFixed(1)}%"></span><b>${fmtTL(x.pr)}</b></td>
+        <td class="num">${x.qty ? fmtTL(x.pr / x.qty) : '—'}</td><td class="num">${x.grams ? fmtTL(x.pr / x.grams * 100) : '<span class="faint">—</span>'}</td>
+        <td class="num"><span class="mg ${marginCls(x.rev ? x.pr / x.rev : null)}">${fmtPct(x.rev ? x.pr / x.rev : null)}</span></td>
+        <td class="num faint">${x.last ? new Date(x.last).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) : ''}</td></tr>`).join('')}
     </tbody></table></div>
     <p class="muted" style="font-size:12.5px;margin:8px 0 0">Kargo ve hizmet bedeli çok ürünlü siparişlerde ürünlere ciroları oranında paylaştırılır. Trendyol'a bağlanmadan önceki aylarda veri olmayabilir.</p></div></section>`;
+}
+// Sıralanabilir tablolar: başlığa tıklayınca o sütuna göre, tekrar tıklayınca ters; seçim bu cihazda hatırlanır
+const TSORT = (() => { try { return JSON.parse(localStorage.getItem('tsort') || '{}'); } catch { return {}; } })();
+function tsort(id, list, getters, def) {
+  const st = TSORT[id] && getters[TSORT[id].k] ? TSORT[id] : def, g = getters[st.k];
+  return [...list].sort((a, b) => {
+    const x = g(a), y = g(b);
+    if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;   // boşlar hep sonda
+    const c = typeof x === 'string' ? x.localeCompare(y, 'tr') : x - y;
+    return st.dir === 'asc' ? c : -c;
+  });
+}
+function tsTh(id, k, label, cls = 'num') {
+  const st = TSORT[id], on = st?.k === k;
+  return `<th class="${cls} ts-th${on ? ' on' : ''}" aria-sort="${on ? (st.dir === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" data-act="tsort" data-t="${id}" data-k="${k}">${label}<i aria-hidden="true">${on ? (st.dir === 'asc' ? '▲' : '▼') : '↕'}</i></button></th>`;
+}
+function tsortSet(id, k, dir) {
+  const cur = TSORT[id];
+  TSORT[id] = { k, dir: dir || (cur?.k === k ? (cur.dir === 'desc' ? 'asc' : 'desc') : (k === 'name' ? 'asc' : 'desc')) };
+  try { localStorage.setItem('tsort', JSON.stringify(TSORT)); } catch { /* */ }
+  const y = scrollY, v = $('#view'); v.innerHTML = PAGES.istatistik.html(); PAGES.istatistik.after(); scrollTo(0, y);
+  $$('.kt-tbl tbody tr').forEach((r) => r.classList.add('ts-in'));
 }
 function shiftMonth(key, d) { const [y, m] = key.split('-').map(Number); const t = new Date(y, m - 1 + d, 1); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`; }
 
@@ -5740,6 +5785,8 @@ const ACTIONS = {
       location.reload();
     } catch (e) { ov.remove(); fail(e); el.disabled = false; }
   },
+  'tsort': (el) => tsortSet(el.dataset.t, el.dataset.k),
+  'kt-dir': () => { const st = TSORT.kt || { k: 'pr', dir: 'desc' }; tsortSet('kt', st.k, st.dir === 'desc' ? 'asc' : 'desc'); },
   'go-set': (el) => { try { localStorage.setItem('setGrp', el.dataset.g); } catch { /* */ } },
   'store-loc-save': async () => {
     try { S.settings = await api('PUT', '/api/settings', { store_city: $('#store-city').value, store_district: $('#store-district').value }); toast(S.settings.store_city ? `Mağaza konumu: ${S.settings.store_city}${S.settings.store_district ? ' · ' + S.settings.store_district : ''}` : 'Mağaza konumu kaldırıldı'); } catch (e) { fail(e); }

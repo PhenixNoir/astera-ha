@@ -1,5 +1,12 @@
 # Sürüm notları
 
+## 1.8.3
+- Menüde Siparişler'in yanında yeni sipariş sayısı: Trendyol turuncu rozet; Hepsiburada için mavi rozet hazır (bağlantı kurulunca dolar).
+
+## 1.8.2
+- İstatistik → Trendyol kârı: yeni sütunlar (sipariş sayısı, harcanan gram, adet başı kâr, 100 g başı kâr, son satış tarihi), sıra numarası, kâr çubuğu; "Sırala" menüsü ve yön düğmesi. Sütun başlıklarına tıklayarak da sıralanır.
+- Ürün satışları tablosu da başlıklardan sıralanabilir (ad, toplam, önceki ay, basılan). Seçilen sıralama bu cihazda hatırlanır.
+
 ## 1.8.1
 - Özel sipariş kalemlerinde kalem başına FDM / SLA seçimi; üstte türlere göre parça sayısı (ör. SLA 4 · FDM 16).
 - Özel sipariş düzenleyicisi genişleyerek açılır, kalemler sırayla belirir; pencere daha geniş.
