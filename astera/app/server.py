@@ -3249,10 +3249,11 @@ def api_notifications(req):
     notify.tick()
     d = notify.items()
     # menüdeki sipariş rozeti: pazar yeri başına "Yeni" durumundaki paket sayısı (hb: Hepsiburada bağlanınca dolacak)
+    # istemci, Siparişler sayfasını en son açtığı andan sonra gelenleri sayar
     d["orders_new"] = {
-        "ty": db().execute("""SELECT COUNT(DISTINCT COALESCE(package_id, order_number)) FROM ty_lines
-                              WHERE ty_status IN ('Created','Awaiting')""").fetchone()[0],
-        "hb": 0,
+        "ty": [r[0] for r in db().execute("""SELECT COALESCE(package_id, order_number) k FROM ty_lines WHERE ty_status IN ('Created','Awaiting')
+                                             GROUP BY k ORDER BY MAX(order_date) DESC LIMIT 300""")],
+        "hb": [],
     }
     return d
 

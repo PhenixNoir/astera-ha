@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.8.4
+- Siparişler rozeti artık yalnızca Siparişler sayfası son açıldıktan sonra gelen yeni siparişleri sayar; sayfa açılınca sıfırlanır (bu cihaza göre).
+
 ## 1.8.3
 - Menüde Siparişler'in yanında yeni sipariş sayısı: Trendyol turuncu rozet; Hepsiburada için mavi rozet hazır (bağlantı kurulunca dolar).
 

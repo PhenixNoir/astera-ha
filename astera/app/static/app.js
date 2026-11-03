@@ -199,7 +199,26 @@ const lsGet = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { r
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* */ } };
 const route = () => (location.hash.replace(/^#\/?/, '').split('?')[0] || '');
 
+// Siparişler sayfası en son açıldıktan sonra gelen siparişler (bu cihaz); sayfa açılınca sıfırlanır
+// (görülen paketler kümesi saklanır: Trendyol'dan geç gelen sipariş de yeni sayılır)
+function ordSeen() {
+  if (S.ordSeen) return S.ordSeen;
+  try { const v = localStorage.getItem('ordSeen2'); if (v) return (S.ordSeen = new Set(JSON.parse(v))); } catch { /* */ }
+  if (!S.notif?.orders_new) return null;
+  ordMarkSeen(); return S.ordSeen;   // ilk açılış: şu an bekleyenler "görülmüş" sayılır
+}
+function ordNewCounts() {
+  const on = S.notif?.orders_new || {}, seen = ordSeen(), out = {};
+  for (const k of ['ty', 'hb']) out[k] = seen ? (on[k] || []).filter((id) => !seen.has(k + ':' + id)).length : 0;
+  return out;
+}
+function ordMarkSeen() {
+  const on = S.notif?.orders_new; if (!on) return;
+  S.ordSeen = new Set(Object.entries(on).flatMap(([k, ids]) => ids.map((id) => k + ':' + id)));
+  try { localStorage.setItem('ordSeen2', JSON.stringify([...S.ordSeen])); } catch { /* */ }
+}
 function renderNav() {
+  if (route() === 'siparisler') ordMarkSeen();
   const r = route() === 'urun' ? 'urunler' : route();
   const badge = (n) => {
     if (n.r === 'satis' && S.dash?.ty_unmatched) return `<span class="count">${S.dash.ty_unmatched}</span>`;
@@ -207,7 +226,7 @@ function renderNav() {
     if (n.r === 'iadeler' || n.r === 'sorular') { const pre = n.r === 'iadeler' ? 'claim:' : 'qna:', d = (S.notif?.items || []).filter((x) => !x.resolved_at && String(x.key).startsWith(pre)).length; return d ? `<span class="count${n.r === 'iadeler' ? ' bad' : ''}">${d}</span>` : ''; }
     if (n.r === 'siparisler') {
       // pazar yeri başına yeni sipariş: Trendyol turuncu, Hepsiburada mavi
-      const on = S.notif?.orders_new || {};
+      const on = ordNewCounts();
       return [['ty', 'Trendyol'], ['hb', 'Hepsiburada']].filter(([k]) => on[k] > 0).map(([k, l]) => `<span class="count mp-${k}${on[k] > (S.mpPrev?.[k] ?? on[k]) ? ' pop' : ''}" title="${l}: ${on[k]} yeni sipariş">${on[k]}</span>`).join('');
     }
     if (n.r === 'buybox') { const d = (S.notif?.items || []).filter((x) => !x.resolved_at && String(x.key).startsWith('bb:')).length; return d ? `<span class="count bad">${d}</span>` : ''; }
@@ -222,7 +241,7 @@ function renderNav() {
     + `<a href="#" class="${inMore ? 'active' : ''}" data-act="more-menu">${icon('more')}<span>${inMore ? esc(more.find((n) => n.r === r).label) : 'Daha'}</span>${moreBadge ? '<span class="count">!</span>' : ''}</a>`;
   S.moreItems = more.map((n) => ({ ...n, badge: badge(n) }));
   $('.settings-link').classList.toggle('active', r === 'ayarlar');
-  if (S.notif?.orders_new) S.mpPrev = { ...S.notif.orders_new };
+  if (S.notif?.orders_new) S.mpPrev = ordNewCounts();
 }
 
 // ------------------------------------------------------------------ marka (Ayarlar'dan ad / logo)
