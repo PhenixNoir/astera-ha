@@ -1,5 +1,13 @@
 # Sürüm notları
 
+## 1.9.1
+- Finans: ödeme günleri yanlış öğreniliyordu (erken ödeme ve bayram kayması yüzünden Cuma da sayılıyordu); artık yalnızca düzenli ödeme günleri (ör. Pazartesi ve Perşembe).
+- Finans: gelecek ödemelerden kargo, platform hizmet bedeli ve %1 stopaj da tahminen düşülür (kargo faturası kesilmiş siparişte tekrar düşülmez). Önceden yalnızca komisyon düşüldüğü için gelecek ödemeler olduğundan yüksek görünüyordu.
+- Finans: vadesi birkaç gün önce geçmiş ama ödenmemiş kayıtlar sıradaki ödemeye eklenir (önceden atlanıyordu, sıradaki ödeme düşük görünüyordu).
+- Finans: "Onaylanan / kargolanan sipariş tutarı" teslim edilmemiş Trendyol siparişlerinden hesaplanır. Gelecek ödemede bir güne tıklayınca o günün siparişleri ve tahmini kesintileri açılır.
+- Karttan açılan pencere artık yazılarıyla birlikte büyüyerek açılır (önceden içerik animasyon bitince beliriyordu); açılış daha hızlı.
+- Sipariş çekmecesi daha geniş (ekranın yaklaşık %44'ü); büyük ekranda ürünler ve işlemler yan yana.
+
 ## 1.9.0
 - Ayarlar → Tema ve görünüm: **Animasyonlar** (Tam / Sade / Kapalı). Sade'de geçişler kalır, süsler kapanır.
 - Sağ çekmece: Trendyol siparişleri, iadeler ve sorular satıra tıklayınca sağdan kayan çekmecede açılır; ↑ ↓ ile gezilir, Esc kapatır. İade ve soru listeleri kısa satırlara dönüştü. Bildirimdeki siparişe tıklayınca o siparişin çekmecesi açılır.

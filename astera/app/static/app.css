@@ -3194,7 +3194,7 @@ body.k-dragging .kanban .kcol.drop-on { outline-color: var(--pei); background: v
 :root[data-motion="calm"] .pb.heat-up > i, :root[data-motion="calm"] .hc.up, :root[data-motion="calm"] .hc.up svg .w, :root[data-motion="calm"] .hp-haze, :root[data-motion="calm"] .hp-st.up::before { animation: none !important; }
 
 /* ================= 4. aşama: sağ çekmece + kart → çekmece ================= */
-.drw { position: fixed; top: 12px; right: 12px; bottom: 12px; width: min(500px, calc(100vw - 24px)); z-index: 45; display: flex; flex-direction: column; overflow: hidden;
+.drw { position: fixed; top: 12px; right: 12px; bottom: 12px; width: min(clamp(520px, 44vw, 720px), calc(100vw - 24px)); z-index: 45; display: flex; flex-direction: column; overflow: hidden;
   background: var(--sheet); border: 1px solid var(--line); border-radius: 18px; box-shadow: -28px 0 70px -24px rgba(0,0,0,.42), 0 0 0 1px rgba(0,0,0,.02);
   animation: drw-in .55s cubic-bezier(.2, 1.12, .3, 1) both; }
 .drw.out { animation: drw-out .3s cubic-bezier(.5, 0, .75, 0) both; pointer-events: none; }
@@ -3250,15 +3250,10 @@ body.drw-on .tyo-row:not(.dr-cur), body.drw-on .dr-row:not(.dr-cur) { opacity: .
 /* kart → çekmece: pencere sağa yaslanır, kart büyüyerek oraya uçar */
 .modal-back.as-drawer { place-items: stretch end; padding: 12px; background: rgba(12,18,22,.32); }
 .modal-back.as-drawer .modal { height: calc(100vh - 24px); max-height: none; max-width: calc(100vw - 140px); border-radius: 18px; animation: none; box-shadow: -30px 0 80px -26px rgba(0,0,0,.5); }
-.modal-back.as-drawer .modal.fly-hide { visibility: hidden; }
-.modal-back.as-drawer .modal.fly-reveal > * { animation: drw-row .42s cubic-bezier(.2, .8, .2, 1) both; }
-.modal-back.as-drawer .modal.fly-reveal > :nth-child(2) { animation-delay: .06s; } .modal-back.as-drawer .modal.fly-reveal > :nth-child(3) { animation-delay: .12s; }
+.modal-back.as-drawer > .modal > .modal-b { flex: 1; min-height: 0; }
 .modal-back.as-drawer.closing { animation: fade .26s ease-in reverse forwards; }
-.modal-back.as-drawer.closing .modal { animation: drw-out .26s cubic-bezier(.5, 0, .75, 0) forwards; }
-.modal-back.as-drawer.fly-gone .modal { visibility: hidden; animation: none; }
-.fly-src { visibility: hidden; }
-.fly-morph { position: fixed; z-index: 60; overflow: hidden; pointer-events: none; background: var(--sheet); border: 1px solid var(--line); box-shadow: -20px 20px 60px -24px rgba(0,0,0,.5); }
-.fly-morph i { display: block; width: 100%; background: var(--sheet-2) center/cover no-repeat; }
+.modal-back.as-drawer.closing:not(.fly-back) .modal { animation: drw-out .26s cubic-bezier(.5, 0, .75, 0) forwards; }
+.modal-back.as-drawer.closing.fly-back .modal { animation: none; }
 /* sipariş ayrıntısı çekmecede tek sütun */
 .drw .oc { grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .drw .oc-items { padding: 0; }
@@ -3271,3 +3266,24 @@ body.drw-on .tyo-row:not(.dr-cur), body.drw-on .dr-row:not(.dr-cur) { opacity: .
 .drw .oc-pf-b { padding: 0 0 12px; }
 .drw .oc-rules { padding: 0; }
 .drw-keys { font-size: 12px; } .drw-keys kbd { font: 600 11px var(--ui); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; margin: 0 1px; background: var(--sheet); color: var(--ink-2); }
+/* geniş çekmecede sipariş ayrıntısı: solda ürünler, sağda kargo ve işlemler */
+@media (min-width: 1500px) {
+  .drw .oc { grid-template-columns: minmax(0, 1fr) 220px; column-gap: 18px; }
+  .drw .oc-rules, .drw .oc-pf { grid-column: 1 / -1; }
+  .drw .oc-acts { display: grid; }
+}
+/* gelecek ödemeler: gün açılınca siparişler */
+.fin-up { display: grid; }
+.fin-d { border-bottom: 1px solid var(--line-2); } .fin-d:last-child { border-bottom: 0; }
+.fin-d > summary { list-style: none; display: flex; align-items: center; gap: 14px; padding: 11px 4px; cursor: pointer; border-radius: 8px; }
+.fin-d > summary::-webkit-details-marker { display: none; }
+.fin-d > summary:hover { background: var(--sheet-2); }
+.fin-d > summary > b { font: 700 17px/1 var(--display); white-space: nowrap; }
+.fin-d > summary::after { content: ""; width: 7px; height: 7px; border-right: 2px solid var(--ink-3); border-bottom: 2px solid var(--ink-3); transform: rotate(45deg); transition: transform .2s; flex: none; }
+.fin-d[open] > summary::after { transform: rotate(-135deg); }
+.fin-d .t { font-weight: 700; } .fin-d .s { font-size: 13px; color: var(--ink-2); }
+.fin-ol { display: grid; gap: 2px; padding: 0 4px 12px; animation: drw-row .3s ease both; }
+.fin-ol > div { display: grid; grid-template-columns: 120px 90px minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 13px; padding: 5px 8px; border-radius: 6px; }
+.fin-ol > div:nth-child(odd) { background: var(--sheet-2); }
+.fin-ol small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) { .fin-ol > div { grid-template-columns: 1fr auto; } .fin-ol small { grid-column: 1 / -1; } }

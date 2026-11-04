@@ -340,13 +340,34 @@ def _order_states():
 
 
 def pay_weekdays():
-    """Trendyol'un ödeme yaptığı haftanın günleri (0 = Pazartesi). Geçmiş ödemelerden öğrenilir; yoksa Pazartesi ve Perşembe."""
-    cnt = {}
-    for r in _db().execute("SELECT payout_date FROM fin_payouts WHERE payout_date IS NOT NULL ORDER BY payout_date DESC LIMIT 30"):
+    """Trendyol'un düzenli ödeme yaptığı haftanın günleri (0 = Pazartesi). Geçmiş ödemelerden öğrenilir; yoksa Pazartesi ve Perşembe.
+    Erken ödemeler ve bayram kaymaları (ör. 29 Ekim yüzünden Cuma'ya kayan ödeme) sayılmaz: bir gün ancak ödemelerin
+    en az dörtte birinde görülüyorsa ödeme günü kabul edilir."""
+    cnt, tot = {}, 0
+    for r in _db().execute("SELECT payout_date, raw FROM fin_payouts WHERE payout_date IS NOT NULL ORDER BY payout_date DESC LIMIT 30"):
+        if "erken" in (r["raw"] or "").lower() or "advance" in (r["raw"] or "").lower():
+            continue
         wd = time.localtime(r["payout_date"]).tm_wday
         cnt[wd] = cnt.get(wd, 0) + 1
-    days = {d for d, n in cnt.items() if n >= 2}
+        tot += 1
+    days = {d for d, n in cnt.items() if n >= 2 and n >= tot * 0.25}
     return days or {0, 3}
+
+
+ACTIVE_ORDER = ("Created", "Picking", "Invoiced", "Shipped", "AtCollectionPoint", "UnDelivered", "Awaiting", "ReadyToShip")
+
+
+def _service_fee_per_order(t):
+    """Platform hizmet bedeli: son 30 günde kesilen hizmet bedeli faturaları / aynı dönemde satılan sipariş sayısı."""
+    fee = 0.0
+    for r in _db().execute("""SELECT tx_label, description, debt, credit FROM fin_tx WHERE kind='other' AND tx_type='DeductionInvoices'
+                              AND tx_date >= ?""", (t - 30 * 86400,)):
+        txt = f"{r['tx_label'] or ''} {r['description'] or ''}".lower().replace("İ", "i")
+        if "hizmet" in txt and "kargo" not in txt:
+            fee += (r["debt"] or 0) - (r["credit"] or 0)
+    n = _db().execute("""SELECT COUNT(DISTINCT order_number) FROM fin_tx WHERE kind='settlement' AND tx_type='Sale'
+                         AND tx_date >= ?""", (t - 30 * 86400,)).fetchone()[0]
+    return round(fee / n, 2) if fee > 0 and n else 0.0
 
 
 def next_pay_day(ts, days):
@@ -397,6 +418,14 @@ def overview():
     days = pay_weekdays()
     upcoming, paid = {}, {}
     pending = {"gross": 0.0, "net": 0.0, "orders": set(), "n": 0}
+    # en son ayrıntısı çekilmiş ödeme: bundan önce vadesi gelip içinde olmayan kayıt başka (çekilmemiş) bir ödemede ödenmiştir
+    last_fetched = _db().execute("SELECT MAX(payout_date) FROM fin_payouts WHERE COALESCE(fetched,0)>0").fetchone()[0] or 0
+    # sipariş başına tahmini kesintiler: kargo (gerçek fatura varsa o, yoksa son 90 günün ortalaması), platform hizmet bedeli, stopaj
+    cg = _db().execute("""SELECT COUNT(DISTINCT order_number) n, COALESCE(SUM(amount),0) a FROM fin_cargo
+                          WHERE invoice_date>=? AND order_number IS NOT NULL""", (t - 90 * 86400,)).fetchone()
+    cargo_avg = round(cg["a"] / cg["n"], 2) if cg["n"] else 0.0
+    svc = _service_fee_per_order(t)
+    cargo_real = {r["order_number"] for r in _db().execute("SELECT DISTINCT order_number FROM fin_cargo WHERE order_number IS NOT NULL")}
     for r in rows:
         if r["tx_type"] == "PaymentOrder":
             continue
@@ -407,28 +436,52 @@ def overview():
             g["n"] += 1
             g["date"] = g["date"] or r["payment_date"]
             continue
-        # ödenmemiş kayıt: vadesi çok önce geçmişse büyük olasılıkla ödenmiştir ama ödeme bilgisi henüz gelmemiştir
-        due = r["payment_date"]
-        if due and due < today0 - 3 * 86400:
-            continue
-        if not due and (r["kind"] != "other" or (r["tx_date"] or 0) < t - 30 * 86400):
-            continue
-        if r["kind"] == "settlement" and r["order_number"] and order_st.get(r["order_number"]) == "pending":
+        on = r["order_number"]
+        if r["kind"] == "settlement" and on and order_st.get(on) == "pending":
             # teslim edilmemiş sipariş: Trendyol ödemeye katmaz (panelde "Onaylanan/Kargolanan Sipariş Tutarı")
-            pending["gross"] += max(0.0, r["credit"] or 0)
             pending["net"] += net
             pending["n"] += 1
-            pending["orders"].add(r["order_number"])
+            continue
+        due = r["payment_date"]
+        if due and due < today0 - 60 * 86400:
+            continue
+        if due and due < today0 and due <= last_fetched:
+            continue   # vadesi son çekilen ödemeden önce: o ödemede ya da daha eskisinde ödenmiş
+        if not due and (r["kind"] != "other" or (r["tx_date"] or 0) < t - 30 * 86400):
             continue
         day = next_pay_day(max(due or t, today0), days)
         k = time.strftime("%Y-%m-%d", time.localtime(day))
-        g = upcoming.setdefault(k, {"day": k, "date": day, "net": 0.0, "gross": 0.0, "cut": 0.0, "n": 0, "orders": set()})
+        g = upcoming.setdefault(k, {"day": k, "date": day, "net": 0.0, "gross": 0.0, "cut": 0.0, "n": 0, "orders": set(),
+                                    "est_cargo": 0.0, "est_svc": 0.0, "est_stop": 0.0, "list": {}})
         g["net"] += net
         g["n"] += 1
         if r["kind"] == "settlement" and (r["credit"] or 0) > 0:
             g["gross"] += r["credit"]
-        if r["order_number"]:
-            g["orders"].add(r["order_number"])
+        if on:
+            g["orders"].add(on)
+            if r["kind"] == "settlement":
+                o = g["list"].setdefault(on, {"no": on, "gross": 0.0, "net": 0.0})
+                o["gross"] += max(0.0, r["credit"] or 0) if r["tx_type"] == "Sale" else 0
+                o["net"] += net
+    # tahmini kesintiler: her siparişe bir kez
+    for g in upcoming.values():
+        for on, o in g["list"].items():
+            if o["gross"] <= 0:
+                continue
+            # kargo faturası kesilmişse (ödendiyse geçmiş ödemeden, ödenmediyse zaten kayıtlarda) düşülmüştür; yoksa ortalama
+            c = 0.0 if on in cargo_real else cargo_avg
+            o["cargo"], o["svc"], o["stop"] = c, svc, round(o["gross"] / 1.2 * 0.01, 2)
+            g["est_cargo"] += c
+            g["est_svc"] += svc
+            g["est_stop"] += o["stop"]
+            o["net"] -= c + svc + o["stop"]
+        g["net"] -= g["est_cargo"] + g["est_svc"] + g["est_stop"]
+    # onaylanan / kargolanan: henüz teslim edilmemiş siparişlerin tutarı (sistemdeki Trendyol siparişlerinden)
+    for r in _db().execute(f"""SELECT order_number, SUM(COALESCE(unit_price,0) * quantity) a FROM ty_lines
+                               WHERE ty_status IN ({','.join('?' * len(ACTIVE_ORDER))}) AND order_date >= ? GROUP BY order_number""",
+                           (*ACTIVE_ORDER, (t - 45 * 86400) * 1000)):
+        pending["gross"] += r["a"] or 0
+        pending["orders"].add(r["order_number"])
     for g in upcoming.values():
         g["cut"] = g["net"] - g["gross"]
     payouts = {r["id"]: dict(r) for r in _db().execute("SELECT id, payout_date, amount FROM fin_payouts")}
@@ -437,7 +490,9 @@ def overview():
         g["date"] = p["payout_date"] or g["date"]
         if p["amount"] is not None:
             g["amount"] = p["amount"]
-    up = sorted(({**g, "orders": len(g["orders"]), "net": round(g["net"], 2), "gross": round(g["gross"], 2), "cut": round(g["cut"], 2)}
+    up = sorted(({**g, "orders": len(g["orders"]), "net": round(g["net"], 2), "gross": round(g["gross"], 2), "cut": round(g["cut"], 2),
+                  "est_cargo": round(g["est_cargo"], 2), "est_svc": round(g["est_svc"], 2), "est_stop": round(g["est_stop"], 2),
+                  "list": sorted(({**o, "gross": round(o["gross"], 2), "net": round(o["net"], 2)} for o in g["list"].values()), key=lambda o: -o["gross"])}
                  for g in upcoming.values()), key=lambda g: g["date"])
     pd = sorted(({**g, "net": round(g["net"], 2)} for g in paid.values() if g["n"] or g.get("amount") is not None),
                 key=lambda g: -(g["date"] or 0))[:24]
@@ -476,6 +531,7 @@ def overview():
         "upcoming": up,
         "pending": {"gross": round(pending["gross"], 2), "net": round(pending["net"], 2), "orders": len(pending["orders"]), "n": pending["n"]},
         "pay_days": sorted(days),
+        "est": {"cargo_avg": cargo_avg, "svc": svc, "stop_pct": 1.0},
         "paid": pd,
         "invoices": inv[:400],
         "invoices_30": round(sum(x["amount"] for x in inv if (x["date"] or 0) >= since30 and x["amount"] > 0), 2),

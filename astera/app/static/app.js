@@ -4098,40 +4098,30 @@ document.addEventListener('click', (e) => {
   const card = el.closest('.pcard, article.job, .ocard'), sel = card && flyCardSel(card);
   S.fly = sel ? { t: Date.now(), sel } : null;
 }, true);
-function flyLook(card) {
-  const im = card.querySelector('.thumb, .stack .fill, .img, .oc-img, .job-visual');
-  const cs = im ? getComputedStyle(im) : null, bg = cs && cs.backgroundImage !== 'none' ? cs.backgroundImage : '';
-  return { r: card.getBoundingClientRect(), ir: im?.getBoundingClientRect(), bg, bc: cs?.backgroundColor || '' };
-}
-function flyMorph(from, to, look, back) {
-  const z = ZF(), m = document.createElement('div'); m.className = 'fly-morph' + (back ? ' back' : '');
-  const ih = look.ir ? look.ir.height / z : 0;
-  m.innerHTML = `<i style="${look.bg ? `background-image:${look.bg};` : ''}${look.bc ? `background-color:${look.bc};` : ''}"></i>`;
-  document.body.appendChild(m);
-  const R = (r) => ({ left: r.left / z + 'px', top: r.top / z + 'px', width: r.width / z + 'px', height: r.height / z + 'px' });
-  const dur = back ? 420 : 560, ease = 'cubic-bezier(.2, .9, .25, 1)';
-  m.animate([{ ...R(from), borderRadius: back ? '18px' : '14px' }, { ...R(to), borderRadius: back ? '14px' : '18px' }], { duration: dur, easing: ease, fill: 'forwards' });
-  m.firstChild.animate(back ? [{ height: '0px', opacity: 0 }, { height: ih + 'px', opacity: 1 }] : [{ height: ih + 'px', opacity: 1 }, { height: Math.min(180, ih * 1.6) + 'px', opacity: 1, offset: .5 }, { height: '0px', opacity: 0 }], { duration: dur, easing: ease, fill: 'forwards' });
-  return new Promise((ok) => setTimeout(() => ok(m), dur));
+// Pencere hemen içeriğiyle çizilir; kartın yerinden, kart boyutunda bir kesitle başlar ve kayarak tam boyuna açılır.
+// (yazılar baştan görünür, ayrı bir boş kutu uçmaz)
+function flyClip(modal, r, open) {
+  const z = ZF(), m = modal.getBoundingClientRect();
+  const dx = (r.left - m.left) / z, dy = (r.top - m.top) / z;
+  const cw = Math.max(0, (m.width - r.width) / z), ch = Math.max(0, (m.height - r.height) / z);
+  const from = { transform: `translate(${dx}px, ${dy}px)`, clipPath: `inset(0px ${cw}px ${ch}px 0px round 14px)`, opacity: 0.6 };
+  const to = { transform: 'translate(0, 0)', clipPath: 'inset(0px 0px 0px 0px round 18px)', opacity: 1 };
+  return modal.animate(open ? [from, to] : [to, from], { duration: open ? 420 : 300, easing: open ? 'cubic-bezier(.2, .9, .25, 1)' : 'cubic-bezier(.5, 0, .7, .4)', fill: 'both' });
 }
 function flyIn(back) {
   const f = S.fly; S.fly = null;
   if (!f || Date.now() - f.t > 2500 || REDUCED() || innerWidth < 760) return;
   const card = $(f.sel); if (!card) return;
-  const look = flyLook(card), modal = back.querySelector('.modal');
+  const modal = back.querySelector('.modal');
   back.classList.add('as-drawer'); back.dataset.flySel = f.sel;
-  modal.classList.add('fly-hide'); card.classList.add('fly-src');
-  requestAnimationFrame(() => flyMorph(look.r, modal.getBoundingClientRect(), look).then((m) => {
-    card.classList.remove('fly-src'); modal.classList.remove('fly-hide'); modal.classList.add('fly-reveal'); m.remove();
-  }));
+  const a = flyClip(modal, card.getBoundingClientRect(), true);
+  a.finished.then(() => a.cancel()).catch(() => {});
 }
 function flyOut(back) {
   const sel = back?.dataset.flySel, card = sel && $(sel), modal = back?.querySelector('.modal');
   if (!card || !modal || REDUCED()) return false;
   const cr = card.getBoundingClientRect(); if (cr.bottom < 0 || cr.top > innerHeight) return false;
-  const look = flyLook(card), mr = modal.getBoundingClientRect();
-  card.classList.add('fly-src'); back.classList.add('fly-gone');
-  flyMorph(mr, cr, look, true).then((m) => { card.classList.remove('fly-src'); m.remove(); });
+  back.classList.add('fly-back'); flyClip(modal, cr, false);
   return true;
 }
 
@@ -4624,7 +4614,7 @@ PAGES.finans = {
       <div class="readout fin-kpis">
         <div><b>${next ? fmtTL(next.net) : '–'}</b><span>${next ? `sonraki ödeme · ${fmtDayD(next.date)}` : 'yaklaşan ödeme yok'}</span></div>
         <div><b>${fmtTL(upAll)}</b><span>gelecek ${d.upcoming.length} ödemenin tahmini toplamı</span></div>
-        <div><b>${fmtTL(d.pending?.gross || 0)}</b><span>kargolanan / teslim bekleyen · ${d.pending?.orders || 0} sipariş</span></div>
+        <div><b>${fmtTL(d.pending?.gross || 0)}</b><span>onaylanan / kargolanan · ${d.pending?.orders || 0} sipariş</span></div>
         <div><b>${lastPaid ? fmtTL(lastPaid.amount ?? lastPaid.net) : '–'}</b><span>${lastPaid ? `son ödeme · ${fmtDayD(lastPaid.date)}` : 'ödeme kaydı yok'}</span></div>
         <div><b>${fmtTL(d.invoices_30)}</b><span>son 30 gün Trendyol faturaları</span></div>
         <div><b>${d.cargo.avg != null ? fmtTL(d.cargo.avg) : '–'}</b><span>sipariş başı gerçek kargo${d.cargo.avg_desi ? ` · ort. ${String(d.cargo.avg_desi).replace('.', ',')} desi` : ''}</span></div>
@@ -4647,16 +4637,18 @@ function finPayHTML() {
   const days = (d.pay_days || [0, 3]).map((x) => WD_TR[x]).join(' ve ');
   return `${d.upcoming.length ? `<section class="panel fin-sum"><div class="panel-b">
       <div class="fs-rows"><div class="fs-r gross"><span>Toplam satış</span><b>${fmtTL(g)}</b></div>
-        <div class="fs-r cut"><span>Toplam tahmini kesintiler <small class="muted">komisyon, kargo, hizmet bedeli, faturalar, iade</small></span><b>${fmtTL(c)}</b></div>
+        <div class="fs-r cut"><span>Toplam tahmini kesintiler <small class="muted">${(() => { const ec = d.upcoming.reduce((a, u) => a + (u.est_cargo || 0), 0), es = d.upcoming.reduce((a, u) => a + (u.est_svc || 0), 0), et = d.upcoming.reduce((a, u) => a + (u.est_stop || 0), 0);
+          return `komisyon, indirim, iade ${fmtTL(-(-c - ec - es - et))} · kargo ~${fmtTL(-ec)} · hizmet bedeli ~${fmtTL(-es)} · stopaj ~${fmtTL(-et)}`; })()}</small></span><b>${fmtTL(c)}</b></div>
         <div class="fs-r tot"><span>Gelecek ${d.upcoming.length} ödemenin tahmini toplamı</span><b>${fmtTL(g + c)}</b></div></div>
-      <div class="fs-side"><span>Kargolanan / teslim bekleyen sipariş tutarı</span><b>${fmtTL(d.pending?.gross || 0)}</b><small class="muted">${d.pending?.orders || 0} sipariş · teslim edilince ödemeye girer</small></div>
+      <div class="fs-side"><span>Onaylanan / kargolanan sipariş tutarı</span><b>${fmtTL(d.pending?.gross || 0)}</b><small class="muted">${d.pending?.orders || 0} sipariş · teslim edilince ödemeye girer</small></div>
     </div></section>` : ''}
   <div class="two-col fin-pay">
     <section class="panel"><div class="panel-h"><h2>Gelecek ödemeler</h2><span class="muted" style="font-size:13px">ödeme günleri: ${days}</span></div><div class="panel-b">
-      ${d.upcoming.length ? `<ul class="lst fin-up">${d.upcoming.map((u) => `<li><div class="grow"><div class="t">${fmtDayW(u.date)}</div>
+      ${d.upcoming.length ? `<div class="fin-up">${d.upcoming.map((u) => `<details class="fin-d"><summary><div class="grow"><div class="t">${fmtDayW(u.date)}</div>
         <div class="s">${u.orders} sipariş · satış ${fmtTL(u.gross)} · kesinti ${fmtTL(u.cut)}</div>
-        <span class="fin-bar"><i style="width:${(Math.abs(u.net) / maxU * 100).toFixed(1)}%"></i></span></div><b class="${u.net < 0 ? 'neg-text' : ''}">${fmtTL(u.net)}</b></li>`).join('')}</ul>
-        <p class="muted fin-note">Yalnızca teslim edilmiş siparişler; her kayıt vadesinden sonraki ilk ödeme gününe yazılır, ödenmemiş faturalar sıradaki ödemeden düşülür. Tahminidir; Trendyol ödeme gününde değişiklik yapabilir.</p>`
+        <span class="fin-bar"><i style="width:${(Math.abs(u.net) / maxU * 100).toFixed(1)}%"></i></span></div><b class="${u.net < 0 ? 'neg-text' : ''}">${fmtTL(u.net)}</b></summary>
+        <div class="fin-ol">${(u.list || []).map((o) => `<div><span class="mono">${esc(o.no)}</span><span>${fmtTL(o.gross)}</span><small class="muted">${o.cargo != null ? `kargo ~${fmtTL(o.cargo)} · hizmet ~${fmtTL(o.svc)} · stopaj ${fmtTL(o.stop)}` : 'iade / düzeltme'}</small><b>${fmtTL(o.net)}</b></div>`).join('')}</div></details>`).join('')}</div>
+        <p class="muted fin-note">Yalnızca teslim edilmiş siparişler; her kayıt vadesinden sonraki ilk ödeme gününe yazılır. Komisyon Trendyol kayıtlarından gelir; kargo (faturası kesilmişse gerçek tutar, yoksa sipariş başı ortalama ${fmtTL(d.est?.cargo_avg || 0)}), platform hizmet bedeli (sipariş başı ~${fmtTL(d.est?.svc || 0)}) ve %1 stopaj tahminidir. Bir günü açınca siparişleri görürsün; Trendyol panelindeki aynı günle karşılaştırabilirsin.</p>`
         : '<p class="muted" style="margin:0">Teslim edilmiş ve ödenmeyi bekleyen kayıt yok.</p>'}</div></section>
     <section class="panel"><div class="panel-h"><h2>Yapılan ödemeler</h2></div><div class="panel-b">
       ${d.paid.length ? `<ul class="lst">${d.paid.map((x) => `<li><div class="grow"><div class="t">${fmtDayD(x.date)}</div><div class="s">ödeme no ${esc(x.id)}${x.n ? ` · ${x.n} kayıt` : ''}</div></div><b>${fmtTL(x.amount ?? x.net)}</b></li>`).join('')}</ul>`
@@ -5929,7 +5921,7 @@ function closeModal(silent) {
     // Pencereyi kökten hemen ayır (mantık için kapanmış sayılır), çıkış animasyonu bitince sil
     document.body.appendChild(back); back.style.pointerEvents = 'none';
     const flew = back.classList.contains('as-drawer') && flyOut(back);
-    back.classList.add('closing'); setTimeout(() => back.remove(), flew ? 260 : 200);
+    back.classList.add('closing'); setTimeout(() => back.remove(), flew ? 300 : 200);
   }
   $('#modal-root').innerHTML = '';
   document.body.style.overflow = '';
