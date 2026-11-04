@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.9.4
+- Finans: Trendyol bir kaydı vade gününden önceki son ödeme gününde öder (Pazartesi ödemesi Pazartesi–Çarşamba vadelerini, Perşembe ödemesi Perşembe–Pazar vadelerini kapsar). Gelecek ödemeler artık günlere bu kurala göre dağıtılır; kural geçmiş ödemelerden doğrulanır.
+- Finans: komisyon faturaları gelecek ödemeden ayrıca düşülmez (komisyon satış kayıtlarında zaten var).
+
 ## 1.9.3
 - Finans: Trendyol ekstresinde işlem türü Türkçe geldiği için satış kayıtları tanınmıyordu; bu yüzden kargo / hizmet bedeli / stopaj tahmini hiç düşülmüyordu. Artık satışlar tutarın yönünden tanınır.
 - Finans: Trendyol'un bir kaydı vadesine göre hangi ödeme gününde ödediği geçmiş ödemelerden öğrenilir (ör. vadeden birkaç gün önceki ödeme günü); gelecek ödemeler günlere buna göre dağıtılır.

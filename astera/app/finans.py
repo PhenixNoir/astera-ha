@@ -361,16 +361,16 @@ def pay_lead(days, t):
         "SELECT id, payout_date, raw FROM fin_payouts WHERE payout_date > ? AND COALESCE(fetched,0) > 0", (t - 60 * 86400,))
         if r["payout_date"] and "erken" not in (r["raw"] or "").lower() and "advance" not in (r["raw"] or "").lower()}
     if not pays:
-        return 0, None
+        return "prev", None
     pairs = [(r["payment_date"], pays[r["payment_order_id"]]) for r in _db().execute(
         f"SELECT payment_date, payment_order_id FROM fin_tx WHERE payment_date IS NOT NULL AND payment_order_id IN ({','.join('?' * len(pays))})",
         list(pays))]
     if len(pairs) < 20:
-        return 0, None
+        return "prev", None
     day = lambda x: time.strftime("%Y-%m-%d", time.localtime(x))
-    best = (0, -1)
-    for lead in range(-3, 15):
-        ok = sum(1 for due, paid in pairs if day(next_pay_day(due - lead * 86400, days)) == day(paid))
+    best = ("prev", -1)
+    for lead in ["prev", *range(-3, 15)]:
+        ok = sum(1 for due, paid in pairs if day(pay_day_for(due, days, lead)) == day(paid))
         if ok > best[1]:
             best = (lead, ok)
     return best[0], round(best[1] / len(pairs), 3)
@@ -390,6 +390,22 @@ def _service_fee_per_order(t):
     n = _db().execute("""SELECT COUNT(DISTINCT order_number) FROM fin_tx WHERE kind='settlement' AND COALESCE(credit,0) > 0
                          AND tx_date >= ?""", (t - 30 * 86400,)).fetchone()[0]
     return round(fee / n, 2) if fee > 0 and n else 0.0
+
+
+def prev_pay_day(ts, days):
+    """Vadeden önceki (ya da vade günündeki) son ödeme günü."""
+    lt = time.localtime(ts)
+    for i in range(15):
+        d = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday - i, 12, 0, 0, 0, 0, -1))
+        if time.localtime(d).tm_wday in days:
+            return int(d)
+    return int(ts)
+
+
+def pay_day_for(due, days, lead):
+    """lead = 'prev': vade gününden önceki son ödeme gününde ödenir (Trendyol'un bugünkü düzeni);
+    sayı: (vade - lead gün)'den sonraki ilk ödeme gününde."""
+    return prev_pay_day(due, days) if lead == "prev" else next_pay_day(due - lead * 86400, days)
 
 
 def next_pay_day(ts, days):
@@ -468,11 +484,15 @@ def overview():
         due = r["payment_date"]
         if due and due < today0 - 60 * 86400:
             continue
-        if due and last_fetched and time.strftime("%Y%m%d", time.localtime(next_pay_day(due - lead * 86400, days))) <= time.strftime("%Y%m%d", time.localtime(last_fetched)):
+        if r["kind"] == "other" and "komisyon" in (r["tx_label"] or "").lower():
+            continue   # komisyon faturası belgedir; komisyon satış kayıtlarında zaten düşülü
+        if due and last_fetched and time.strftime("%Y%m%d", time.localtime(pay_day_for(due, days, lead))) <= time.strftime("%Y%m%d", time.localtime(last_fetched)):
             continue   # kurala göre son çekilen ödemede ya da daha eskisinde ödenmesi gerekirdi: ödenmiş say
         if not due and (r["kind"] != "other" or (r["tx_date"] or 0) < t - 30 * 86400):
             continue
-        day = next_pay_day(max((due - lead * 86400) if due else t, today0), days)
+        day = pay_day_for(due, days, lead) if due else next_pay_day(t, days)
+        if day < today0:
+            day = next_pay_day(today0, days)
         k = time.strftime("%Y-%m-%d", time.localtime(day))
         g = upcoming.setdefault(k, {"day": k, "date": day, "net": 0.0, "gross": 0.0, "cut": 0.0, "n": 0, "orders": set(),
                                     "est_cargo": 0.0, "est_svc": 0.0, "est_stop": 0.0, "list": {}})
