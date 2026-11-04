@@ -49,6 +49,7 @@ import musteri
 import push
 import auth
 import updater
+import diag
 
 # Windows kayıt defterindeki bozuk MIME eşlemelerine karşı
 for _ext, _type in ((".js", "application/javascript"), (".css", "text/css"), (".svg", "image/svg+xml"),
@@ -3984,6 +3985,10 @@ class Handler(BaseHTTPRequestHandler):
     def _static(self):
         u = urlparse(self.path)
         path = unquote(u.path)
+        if path == "/api/diag":
+            data = diag.dumps(diag_report(parse_qs(u.query).get("client", [""])[0])).encode("utf-8")
+            name = time.strftime("astera-hata-raporu-%Y%m%d-%H%M.json")
+            return self._send(200, data, "application/json; charset=utf-8", {"Content-Disposition": f'attachment; filename="{name}"'})
         if path == "/api/backup":
             with DB_LOCK:
                 db().commit()
@@ -4060,7 +4065,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if urlparse(self.path).path == "/giris":
             return self._send(200, auth.LOGIN_HTML, "text/html; charset=utf-8", {"Cache-Control": "no-store"})
-        if self.path.startswith("/api/") and self.path.split("?")[0] not in ("/api/backup", "/api/backups/file"):
+        if self.path.startswith("/api/") and self.path.split("?")[0] not in ("/api/backup", "/api/backups/file", "/api/diag"):
             return self._api("GET")
         self._static()
 
@@ -4103,6 +4108,63 @@ class QuietServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
+# ---------------------------------------------------------------- hata raporu
+@route("POST", "/api/diag/client", lock=False)
+def api_diag_client(req):
+    b = req.json()
+    for it in (b.get("errors") if isinstance(b.get("errors"), list) else [b])[:20]:
+        diag.client_error(it)
+    return {"ok": True}
+
+
+def diag_report(client_json=""):
+    def counts():
+        with DB_LOCK:
+            out = {}
+            for t in ("products", "print_jobs", "custom_orders", "spools", "ty_lines", "fin_tx", "fin_cargo", "fin_payouts", "notifications"):
+                try:
+                    out[t] = db().execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+                except sqlite3.Error:
+                    pass
+            return out
+
+    def ty():
+        with DB_LOCK:
+            st = {f"{r[0]}/{r[1]}": r[2] for r in db().execute("SELECT ty_status, state, COUNT(*) FROM ty_lines GROUP BY ty_status, state")}
+            s = trendyol.public_settings()
+        return {"satir_durumlari": st, "son_esitleme": s.get("ty_last_sync"), "son_hata": s.get("ty_last_error"),
+                "son_sonuc": s.get("ty_last_result"), "acik": s.get("ty_enabled"), "dusme_asamasi": s.get("ty_deduct_at")}
+
+    def fin():
+        with DB_LOCK:
+            o = finans.overview()
+        o.pop("invoices", None)
+        o.pop("types", None)
+        (o.get("cargo") or {}).pop("rows", None)
+        return o
+
+    def jobs():
+        with DB_LOCK:
+            return [dict(r) for r in db().execute("""SELECT id, product_id, order_id, print_type, quantity, printer, status, started_at, ends_at,
+                                                      bambu_state, bambu_percent FROM print_jobs ORDER BY id DESC LIMIT 30""")]
+
+    def settings():
+        s = trendyol.public_settings()
+        s.pop("app_logo", None)
+        return s
+
+    parts = {"surum": app_version, "ayarlar": settings, "tablo_sayilari": counts, "trendyol": ty,
+             "makineler": bambu.snapshot, "son_baskilar": jobs, "finans": fin, "finans_esitleme": finans.status}
+    out = diag.report(parts)
+    try:
+        c = json.loads(client_json) if client_json else None
+        if isinstance(c, dict):
+            out["tarayici"] = diag.scrub(c)
+    except ValueError:
+        pass
+    return out
+
+
 def _quiet_console():
     """Windows'ta konsol penceresine tıklayınca "Hızlı Düzenleme" seçimi programı dondurur; bu modu kapat."""
     if os.name != "nt":
@@ -4119,6 +4181,7 @@ def _quiet_console():
 
 
 def main():
+    diag.install()
     ap = argparse.ArgumentParser()
     port = int(os.environ.get("ATOLYE_PORT", 8080))
     try:   # Home Assistant eklentisi: seçenekler /data/options.json'da

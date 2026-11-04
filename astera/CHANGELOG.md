@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.9.2
+- Hata raporu: Ayarlar → Veri ve Yedek → "Hata raporunu indir" (ya da Ctrl+K → Hata raporu). Tek bir .json dosyası: sunucunun son kayıtları, tarayıcıda oluşan hatalar, sürüm, makine ve Trendyol eşitleme durumu, finans hesabının ayrıntısı. API anahtarları, erişim kodları ve şifreler rapora girmez; müşteri adı, telefon ve e-posta gizlenir.
+- Tarayıcıda oluşan hatalar ve başarısız işlemler artık sunucuya kaydedilir (rapora girer).
+
 ## 1.9.1
 - Finans: ödeme günleri yanlış öğreniliyordu (erken ödeme ve bayram kayması yüzünden Cuma da sayılıyordu); artık yalnızca düzenli ödeme günleri (ör. Pazartesi ve Perşembe).
 - Finans: gelecek ödemelerden kargo, platform hizmet bedeli ve %1 stopaj da tahminen düşülür (kargo faturası kesilmiş siparişte tekrar düşülmez). Önceden yalnızca komisyon düşüldüğü için gelecek ödemeler olduğundan yüksek görünüyordu.

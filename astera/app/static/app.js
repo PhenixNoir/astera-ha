@@ -30,7 +30,25 @@ function toast(msg, opts = {}) {
   $('#toasts').appendChild(el);
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 220); }, opts.ms || (opts.action ? 6000 : 3200));
 }
-const fail = (e) => toast(e.message || String(e), { bad: true });
+const fail = (e) => { diagNote({ msg: `İşlem hatası: ${e?.message || e}`, src: 'fail', stack: e?.stack }); toast(e.message || String(e), { bad: true }); };
+// ---------- hata raporu: tarayıcıdaki hatalar sunucuya bildirilir; Ayarlar → Veri ve Yedek'ten rapor olarak indirilir
+const DIAGQ = [];
+let diagT = 0;
+function diagNote(e) {
+  try {
+    DIAGQ.push({ ...e, route: location.hash.slice(0, 100), ver: S?.version?.version || '' });
+    clearTimeout(diagT);
+    diagT = setTimeout(() => { const errors = DIAGQ.splice(0, 20); fetch('/api/diag/client', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ errors }) }).catch(() => {}); }, 1500);
+  } catch { /* */ }
+}
+addEventListener('error', (e) => { if (e.message) diagNote({ msg: e.message, src: `${(e.filename || '').split('/').pop()}:${e.lineno}:${e.colno}`, stack: e.error?.stack }); });
+addEventListener('unhandledrejection', (e) => diagNote({ msg: `Yakalanmamış: ${e.reason?.message || e.reason}`, stack: e.reason?.stack }));
+function diagDownload() {
+  const env = { ua: navigator.userAgent, ekran: `${innerWidth}x${innerHeight} @${devicePixelRatio}`, sayfa: location.hash, tema: document.documentElement.dataset.theme || 'auto',
+    ton: document.documentElement.dataset.tone, animasyon: document.documentElement.dataset.motion, surum: S.version?.version, saat: new Date().toString() };
+  const a = document.createElement('a'); a.href = `/api/diag?client=${encodeURIComponent(JSON.stringify(env))}`; a.download = ''; document.body.appendChild(a); a.click(); a.remove();
+  toast('Hata raporu indiriliyor; dosyayı sohbete ekleyip gönderebilirsin');
+}
 
 // Alt orta şerit: yeni sipariş / iade / soru ve kısa onaylar. Aynı anda en çok 3 şerit, tıklayınca ilgili sayfa.
 const ISLAND_IC = { order: 'cart', claim: 'return', question: 'chat', ok: 'check' };
@@ -5555,7 +5573,7 @@ function labelSetHTML() {
 const SET_GROUPS = [['genel', 'Genel', 'gear'], ['magaza', 'Mağaza ve Kargo', 'pack'], ['trendyol', 'Trendyol', 'cart'], ['uretim', 'Üretim', 'layers'],
   ['bildirim', 'Bildirimler', 'bell'], ['uzak', 'Uzaktan erişim', 'lock'], ['veri', 'Veri ve Yedek', 'download']];
 const SET_MAP = [[/^Uygulama|^Tema|^Görünüm/, 'genel'], [/^Kargo|^Stok ne zaman|^Sipariş notları/, 'magaza'], [/^Trendyol/, 'trendyol'], [/^Kategoriler|^Makineler/, 'uretim'],
-  [/^Bildirimler|^Haftalık/, 'bildirim'], [/^Telefon|^Uzak/, 'uzak'], [/^Yedek|^Arşiv/, 'veri']];
+  [/^Bildirimler|^Haftalık/, 'bildirim'], [/^Telefon|^Uzak/, 'uzak'], [/^Yedek|^Arşiv|^Hata raporu/, 'veri']];
 const setGroup = () => { try { const g = localStorage.getItem('setGrp'); return SET_GROUPS.some((x) => x[0] === g) ? g : 'genel'; } catch { return 'genel'; } };
 function setGroupsBind() {
   const grid = $('.settings-grid'); if (!grid) return;
@@ -5673,6 +5691,10 @@ PAGES.ayarlar = {
 
       ${labelSetHTML()}
       <section class="panel" id="backup-sec">${backupHTML()}</section>
+      <section class="panel"><div class="panel-h"><h2>Hata raporu</h2></div><div class="panel-b" style="display:grid;gap:10px">
+        <p class="muted" style="margin:0">Bir şey yanlış çalıştığında bu raporu indirip destek için gönder. İçinde sunucunun son kayıtları, tarayıcıdaki hatalar, sürüm, makine ve Trendyol eşitleme durumu ile finans hesabının ayrıntısı var.</p>
+        <p class="muted" style="margin:0;font-size:13px">${icon('lock')} API anahtarları, erişim kodları ve şifreler rapora girmez; müşteri adı, telefon ve e-posta gizlenir (sipariş numaraları kalır).</p>
+        <div><button class="btn btn-primary" data-act="diag-dl">${icon('download')} Hata raporunu indir</button></div></div></section>
       ${weeklySetHTML()}
 
       ${S.archived.length ? `<section class="panel"><div class="panel-h"><h2>Arşivlenen ürünler</h2></div><div class="panel-b"><ul class="lst">
@@ -5935,6 +5957,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (PAL)
 const stepInput = (sel, d, min = 1, max = 9999) => { const i = $(sel); i.value = clamp((parseInt(i.value) || 0) + d, min, max); i.dispatchEvent(new Event('input')); };
 const ACTIONS = {
   'close': () => closeModal(),
+  'diag-dl': () => diagDownload(),
   'new-print': () => openNewPrint(),
   'print-product': (el) => openNewPrint(+el.dataset.id),
   'new-product': () => openProductEditor(),
@@ -6819,6 +6842,7 @@ const CK_ACTIONS = [
   { t: 'Yeni baskı', s: 'N', icon: 'plus', run: () => openNewPrint() },
   { t: 'Toplu sonuç gir', s: 'T', icon: 'check', run: () => openBulkResults(), when: () => dueJobs().length > 0 },
   { t: 'Yeni ürün', icon: 'box', run: () => openProductEditor() },
+  { t: 'Hata raporunu indir', icon: 'download', run: () => diagDownload() },
   { t: 'Yeni özel sipariş', icon: 'clip', run: async () => { if (!S.orders?.length) await loadOrders().catch(() => {}); openOrderEditor(); } },
   { t: 'Diğer amaçlı kayıt ekle', icon: 'plus', run: () => openCompEditor(null, 'misc') },
   { t: 'Buybox şimdi kontrol et', icon: 'crown', run: () => { location.hash = '#/buybox'; setTimeout(() => $('[data-act="bb-check"]')?.click(), 700); } },
