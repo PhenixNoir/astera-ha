@@ -4138,9 +4138,27 @@ def diag_report(client_json=""):
     def fin():
         with DB_LOCK:
             o = finans.overview()
+            day = lambda x: time.strftime("%Y-%m-%d %a", time.localtime(x)) if x else None
+            # ödenmiş ödemelerin kayıtları hangi vadelerden oluşuyor (ödeme kuralını görmek için)
+            o["odeme_vadeleri"] = [{"odeme": day(r["payout_date"]), "tutar": r["amount"], "kayit": r["n"], "en_erken_vade": day(r["a"]), "en_gec_vade": day(r["b"]),
+                                    "vade_gunleri": r["g"]}
+                                   for r in db().execute("""SELECT p.payout_date, p.amount, COUNT(t.key) n, MIN(t.payment_date) a, MAX(t.payment_date) b,
+                                                            GROUP_CONCAT(DISTINCT date(t.payment_date,'unixepoch','localtime')) g
+                                                     FROM fin_payouts p LEFT JOIN fin_tx t ON t.payment_order_id = p.id
+                                                     GROUP BY p.id ORDER BY p.payout_date DESC LIMIT 8""")]
+            # ödenmemiş kayıtların vadeye göre dağılımı
+            o["odenmemis_vadeler"] = [dict(r) for r in db().execute("""SELECT date(payment_date,'unixepoch','localtime') vade, kind, COUNT(*) n,
+                                                  ROUND(SUM(CASE WHEN kind='settlement' AND seller_revenue IS NOT NULL THEN seller_revenue
+                                                                 ELSE COALESCE(credit,0)-COALESCE(debt,0) END), 2) net
+                                                  FROM fin_tx WHERE payment_order_id IS NULL AND (payment_date IS NULL OR payment_date > ?)
+                                                  GROUP BY vade, kind ORDER BY vade""", (now() - 40 * 86400,))]
+            o["turler"] = [dict(r) for r in db().execute("""SELECT kind, tx_type, tx_label, COUNT(*) n, SUM(payment_order_id IS NULL) odenmemis
+                                                    FROM fin_tx GROUP BY kind, tx_type, tx_label ORDER BY n DESC LIMIT 60""")]
         o.pop("invoices", None)
         o.pop("types", None)
         (o.get("cargo") or {}).pop("rows", None)
+        for u in o.get("upcoming") or []:
+            u["list"] = u.get("list", [])[:40]
         return o
 
     def jobs():

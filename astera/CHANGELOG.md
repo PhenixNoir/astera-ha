@@ -1,5 +1,11 @@
 # Sürüm notları
 
+## 1.9.3
+- Finans: Trendyol ekstresinde işlem türü Türkçe geldiği için satış kayıtları tanınmıyordu; bu yüzden kargo / hizmet bedeli / stopaj tahmini hiç düşülmüyordu. Artık satışlar tutarın yönünden tanınır.
+- Finans: Trendyol'un bir kaydı vadesine göre hangi ödeme gününde ödediği geçmiş ödemelerden öğrenilir (ör. vadeden birkaç gün önceki ödeme günü); gelecek ödemeler günlere buna göre dağıtılır.
+- Sipariş kârındaki gerçek komisyon da aynı sebeple okunamıyordu; düzeltildi.
+- Hata raporuna finans ayrıntısı eklendi (ödemelerin hangi vadelerden oluştuğu, ödenmemiş kayıtların vadeye göre dağılımı, kayıt türleri).
+
 ## 1.9.2
 - Hata raporu: Ayarlar → Veri ve Yedek → "Hata raporunu indir" (ya da Ctrl+K → Hata raporu). Tek bir .json dosyası: sunucunun son kayıtları, tarayıcıda oluşan hatalar, sürüm, makine ve Trendyol eşitleme durumu, finans hesabının ayrıntısı. API anahtarları, erişim kodları ve şifreler rapora girmez; müşteri adı, telefon ve e-posta gizlenir.
 - Tarayıcıda oluşan hatalar ve başarısız işlemler artık sunucuya kaydedilir (rapora girer).
