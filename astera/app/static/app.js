@@ -191,7 +191,17 @@ function navAll() {
   NAV.forEach((n, i) => { if (!known.includes(n.r)) known.splice(Math.min(i, known.length), 0, n.r); });
   return known.map((r) => NAV.find((n) => n.r === r));
 }
-const navVisible = () => navAll().filter((n) => !(U('nav.hidden') || []).includes(n.r));
+// Kullanım şekli (ilk açılışta seçilir, Ayarlar → Genel'den değişir): seçilmeyen işlere ait sayfalar menüde görünmez
+const USE_MODES = [
+  ['ty', 'Pazar yerinde satıyorum', 'Trendyol siparişleri gelir; basıp gönderirim.', 'cart', ['Siparişler, Hazırla, İadeler, Sorular', 'Kâr, Finans, Buybox', 'Trendyol bağlantısı']],
+  ['custom', 'Özel sipariş alıyorum', 'Müşteriye özel figür, parça, boyama işleri.', 'clip', ['Özel sipariş panosu', 'Kalem ve parça takibi', 'Termin takibi']],
+  ['stock', 'Stok için üretiyorum', 'Kendi ürünlerimi basıp rafta tutuyorum.', 'box', ['Ürünler ve stok', 'Plan: neyi kaç tane basmalı', 'Elle satış ve barkod']],
+  ['farm', 'Çok makine yönetiyorum', 'Birden fazla yazıcı; doluluk ve sıra önemli.', 'layers', ['Makine bağlantıları', 'Canlı durum ve ısı', 'Başarısızlık analizi']],
+];
+const PAGE_MODES = { plan: ['stock', 'farm', 'ty'], hazirla: ['ty'], siparisler: ['ty', 'custom'], iadeler: ['ty'], sorular: ['ty'], satis: ['ty', 'stock'], buybox: ['ty'], kar: ['ty', 'custom'], finans: ['ty'] };
+const useModes = () => S.settings?.use_modes || [];
+const pageInUse = (r) => { const m = useModes(); return !m.length || !PAGE_MODES[r] || PAGE_MODES[r].some((x) => m.includes(x)); };
+const navVisible = () => navAll().filter((n) => !(U('nav.hidden') || []).includes(n.r) && pageInUse(n.r));
 const tabMain = () => { const t = (U('nav.tabs') || TAB_MAIN_DEFAULT).filter((r) => NAV.some((n) => n.r === r)); return t.length ? t.slice(0, 4) : TAB_MAIN_DEFAULT; };
 // html etiketindeki işaretler: CSS ile gizlenenler
 function applyUI() {
@@ -260,6 +270,93 @@ function renderNav() {
   S.moreItems = more.map((n) => ({ ...n, badge: badge(n) }));
   $('.settings-link').classList.toggle('active', r === 'ayarlar');
   if (S.notif?.orders_new) S.mpPrev = ordNewCounts();
+  renderDemoBar();
+  setTimeout(placeHints, 400);
+}
+// ---------- keşif noktaları: henüz kullanılmamış özelliklerin yanında nabız gibi atan nokta; üzerine gelince kısa açıklama
+// "Anladım" ya da özelliği kullanmak noktayı kalıcı kapatır (görülenler sunucuda saklanır, tüm cihazlarda geçerli)
+const HINTS = [
+  { id: 'cmdk', sel: '#cmdk-btn', t: 'Hızlı arama', x: 'Ctrl+K ile ürün, sipariş, müşteri ya da sayfa ara; "yeni baskı", "yedek al" gibi komutları buradan çalıştır.' },
+  { id: 'plan', sel: '#nav a[href="#/plan"]', t: 'Plan', x: 'Satış hızına ve stoğa bakıp hangi üründen kaç tane basman gerektiğini sıralar.' },
+  { id: 'hazirla', sel: '#nav a[href="#/hazirla"]', t: 'Hazırla', x: 'Bugün çıkacak siparişlerin ürünlerini tek listede toplar; rafta olmayanları gösterir.' },
+  { id: 'kar', sel: '#nav a[href="#/kar"]', t: 'Kâr', x: 'Komisyon, kargo, malzeme ve elektrik düşülmüş gerçek kârını ürün ürün gösterir.' },
+  { id: 'pbar', sel: '#pbar .pb', t: 'Makine durumu', x: 'Bağlı makinelerin üzerine gelince kalan süre, nozul ve tabla sıcaklığı görünür.' },
+  { id: 'rclick-ord', sel: '.tyo-row', route: 'siparisler', t: 'Sağ tık', x: 'Sipariş satırına sağ tıkla: hazırla, barkod bas, sipariş numarasını kopyala. Tıklayınca ayrıntı sağdan açılır; ↑ ↓ ile gezersin.' },
+  { id: 'rclick-pc', sel: '.pcard[data-pid]', route: 'urunler', t: 'Ürün kartı', x: 'Görsele tıklayınca ürün düzenlenir; sağ tıkla baskı başlat, ürün sayfası, istatistik.' },
+  { id: 'theme', sel: '#nav-theme, .settings-link', t: 'Görünüm', x: 'Ayarlar → Tema ve görünüm: renk paleti, koyu tema ve animasyon seviyesi.' },
+];
+const hintSeen = () => new Set(S.settings?.hints_seen || []);
+function placeHints() {
+  $$('.hs[data-hs]').forEach((el) => { el.classList.remove('hs'); delete el.dataset.hs; });
+  if (!S.settings || S.settings.hints_off || $('#wiz')) return;
+  const seen = hintSeen(); let n = 0;
+  for (const h of HINTS) {
+    if (seen.has(h.id) || n >= 3 || (h.route && route() !== h.route)) continue;
+    const el = $(h.sel); if (!el || !el.offsetParent) continue;
+    el.classList.add('hs'); el.dataset.hs = h.id; n++;
+  }
+}
+let HS_TIP = null;
+function hintTip(el) {
+  const h = HINTS.find((x) => x.id === el.dataset.hs); if (!h) return;
+  hintHide(true);
+  const t = document.createElement('div'); t.className = 'hs-tip'; t.setAttribute('role', 'tooltip');
+  t.innerHTML = `<b>${esc(h.t)}</b><span>${esc(h.x)}</span><button type="button">Anladım</button>`;
+  document.body.appendChild(t); HS_TIP = { t, el };
+  const z = ZF(), r = el.getBoundingClientRect(), w = t.offsetWidth, hh = t.offsetHeight;
+  const right = r.right / z + 12 + w < innerWidth / z;
+  t.style.left = (right ? r.right / z + 12 : Math.max(8, r.left / z + r.width / z / 2 - w / 2)) + 'px';
+  t.style.top = (right ? Math.max(8, r.top / z + r.height / z / 2 - hh / 2) : (r.bottom / z + 10 + hh < innerHeight / z ? r.bottom / z + 10 : r.top / z - hh - 10)) + 'px';
+  t.classList.add(right ? 'side' : 'below');
+  t.querySelector('button').onclick = () => hintDone(h.id);
+  t.addEventListener('pointerleave', () => hintHide());
+}
+function hintHide(now) { const x = HS_TIP; if (!x) return; clearTimeout(x.k); const go = () => { x.t.remove(); if (HS_TIP === x) HS_TIP = null; }; if (now) go(); else x.k = setTimeout(go, 250); }
+async function hintDone(id) {
+  hintHide(true);
+  (S.settings.hints_seen ||= []).push(id); placeHints();
+  try { await api('PUT', '/api/settings', { hint_seen: id }); } catch { /* */ }
+}
+document.addEventListener('pointerover', (e) => {
+  const el = e.target.closest?.('.hs[data-hs]'); if (!el) { if (HS_TIP && !HS_TIP.t.contains(e.target)) hintHide(); return; }
+  if (e.pointerType === 'mouse' && HS_TIP?.el !== el) hintTip(el); else if (HS_TIP?.el === el) clearTimeout(HS_TIP.k);
+});
+document.addEventListener('focusin', (e) => { const el = e.target.closest?.('.hs[data-hs]'); if (el) hintTip(el); });
+// özelliği kullanmak da "görüldü" sayılır; dokunmatikte ilk dokunuş açıklamayı gösterir
+document.addEventListener('click', (e) => {
+  const el = e.target.closest?.('.hs[data-hs]'); if (!el) return;
+  if (matchMedia('(hover: none)').matches && HS_TIP?.el !== el) { e.preventDefault(); e.stopPropagation(); hintTip(el); return; }
+  hintDone(el.dataset.hs);
+}, true);
+document.addEventListener('contextmenu', (e) => { const el = e.target.closest?.('.hs[data-hs]'); if (el) hintDone(el.dataset.hs); }, true);
+// ---------- örnek veriler: kurmadan gezmek için; üstte şerit, tek tuşla silinir
+function renderDemoBar() {
+  let el = $('#demo-bar');
+  if (!S.settings?.demo) { el?.remove(); return; }
+  if (el) return;
+  el = document.createElement('div'); el.id = 'demo-bar'; el.setAttribute('role', 'status');
+  el.innerHTML = `<span class="demo-dot"></span><span><b>Örnek verilerle geziyorsun.</b> Ürünler, siparişler ve baskılar örnek; dilediğin gibi dene.</span><span class="spacer"></span><button class="btn btn-sm" data-act="demo-end">Örnek verileri sil, kuruluma başla</button>`;
+  (document.querySelector('.main') || document.body).prepend(el);
+}
+async function demoStart() {
+  try {
+    const r = await api('POST', '/api/demo/start');
+    $('#wiz')?.remove(); document.body.classList.remove('wz-open'); WZ = null;
+    await Promise.all([loadSettings(), loadProducts(), loadCategories()]);
+    location.hash = '#/'; await render(); renderNav();
+    island('ok', `<b>Örnek veriler yüklendi</b> · ${r.products} ürün, ${r.orders} sipariş`, { ms: 3000 });
+  } catch (e) { fail(e); }
+}
+async function demoEnd() {
+  if (!confirm('Örnek ürünler, siparişler, baskılar ve makaralar silinsin mi? Kendi eklediklerine dokunulmaz.')) return;
+  try {
+    await api('POST', '/api/demo/end');
+    await Promise.all([loadSettings(), loadProducts()]);
+    S.tyOrders = null; S.orders = null; S.spools = null;
+    location.hash = '#/'; await render(); renderNav();
+    toast('Örnek veriler silindi');
+    if (!S.settings.setup_done) setTimeout(openWizard, 400);
+  } catch (e) { fail(e); }
 }
 
 // ------------------------------------------------------------------ marka (Ayarlar'dan ad / logo)
@@ -300,7 +397,7 @@ async function render() {
   try { await page.load?.(); } catch (e) { fail(e); }
   if (route() !== r) return;
   if (page.title) { $('#page-title').textContent = page.title(); document.title = page.title() + ' · ' + appName(); }
-  const swap = () => { $('#view').innerHTML = page.html(); page.after?.(); tick(); countUp($('#view')); };
+  const swap = () => { $('#view').innerHTML = page.html(); page.after?.(); tick(); countUp($('#view')); setTimeout(placeHints, 500); };
   const isNav = S.lastRoute !== r;
   S.lastRoute = r;
   document.documentElement.dataset.vt = isNav ? 'page' : 'update';
@@ -4654,7 +4751,8 @@ const Q_TABS = [['wait', 'Cevap bekleyen'], ['approve', 'Onayda'], ['done', 'Cev
 PAGES.sorular = {
   async load() {
     S.qTab = tabFromHash(S.qTab || 'wait');
-    await Promise.all([S.settings ? null : loadSettings(), (async () => { S.qs = await api('GET', `/api/questions?tab=${S.qTab}`); })()]);
+    await Promise.all([S.settings ? null : loadSettings(), (async () => { S.qs = await api('GET', `/api/questions?tab=${S.qTab}`); })(),
+      S.qTpl ? null : api('GET', '/api/qna/templates').then((r) => { S.qTpl = r.items; }).catch(() => { S.qTpl = []; })]);
   },
   html() {
     if (!S.settings?.ty_seller_id) return `<div class="empty panel"><h3>Trendyol bağlı değil</h3><p>Önce Satış sayfasından Trendyol API bilgilerini girin.</p><a class="btn btn-primary" href="#/satis">Trendyol ayarları</a></div>`;
@@ -4668,6 +4766,24 @@ PAGES.sorular = {
 function qBind(root) {
     $$('.q-ans textarea', root).forEach((ta) => ta.addEventListener('input', () => { const n = ta.value.trim().length, c = ta.closest('.q-ans').querySelector('.q-n'); c.textContent = `${n} / 2000`; c.classList.toggle('warn-text', n > 0 && n < 10); }));
 }
+// Hazır cevap şablonları: başlık + metin; {urun} yazılan yere sorunun ürün adı gelir
+function openTplEditor() {
+  let list = structuredClone(S.qTpl || []);
+  const draw = () => { $('#tpl-list').innerHTML = list.map((t, i) => `<div class="tpl-row"><div class="tpl-top"><input class="input" data-tpl-t="${i}" value="${esc(t.t)}" maxlength="40" placeholder="Başlık (ör. Ölçü)"><button type="button" class="icon-btn" data-tpl-x="${i}" aria-label="Sil">${icon('trash')}</button></div>
+      <textarea class="input" data-tpl-x2="${i}" rows="3" maxlength="2000" placeholder="Cevap metni">${esc(t.x)}</textarea></div>`).join('') || '<p class="muted" style="margin:0">Şablon yok.</p>'; };
+  openModal(`<div class="modal-h"><h2>Hazır cevaplar</h2><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
+    <div class="modal-b" style="display:grid;gap:12px"><p class="muted" style="margin:0">Metinde <b>{urun}</b> yazan yere sorunun sorulduğu ürünün adı gelir. Trendyol cevaplarda telefon, bağlantı ve kişisel bilgiye izin vermez.</p>
+      <div id="tpl-list" style="display:grid;gap:10px"></div><div><button type="button" class="btn btn-sm" id="tpl-add">${icon('plus')} Şablon ekle</button></div></div>
+    <div class="modal-f"><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" id="tpl-save">Kaydet</button></div></div>`, '');
+  draw();
+  const box = $('#tpl-list');
+  box.addEventListener('input', (e) => { const a = e.target.dataset; if (a.tplT != null) list[+a.tplT].t = e.target.value; if (a.tplX2 != null) list[+a.tplX2].x = e.target.value; });
+  box.addEventListener('click', (e) => { const b = e.target.closest('[data-tpl-x]'); if (b) { list.splice(+b.dataset.tplX, 1); draw(); } });
+  $('#tpl-add').onclick = () => { list.push({ t: '', x: '' }); draw(); box.querySelector('.tpl-row:last-child input')?.focus(); };
+  $('#tpl-save').onclick = async () => {
+    try { const r = await api('PUT', '/api/qna/templates', { items: list }); S.qTpl = r.items; closeModal(); toast('Hazır cevaplar kaydedildi'); render(); if (DRW.kind === 'q') drawerOpen('q', DRW.key); } catch (e) { fail(e); }
+  };
+}
 function qCard(q) {
   const wait = q.status === 'WAITING_FOR_ANSWER';
   return `<article class="q-card${wait ? ' wait' : ''}" data-qid="${q.id}">
@@ -4677,13 +4793,14 @@ function qCard(q) {
     <p class="q-text">${icon('chat')} ${esc(q.text || '')}</p>
     ${q.answer ? `<div class="q-a"><small>Cevabınız${q.answer_date ? ` · ${fmtWhen(q.answer_date)}` : ''}</small>${esc(q.answer)}</div>` : ''}
     ${q.rejected?.text ? `<div class="q-a rej"><small>Reddedilen cevap${q.rejected.reason ? ` · ${esc(q.rejected.reason)}` : ''}</small>${esc(q.rejected.text)}</div>` : ''}
-    ${wait ? `<div class="q-ans"><textarea class="input" rows="3" maxlength="2000" placeholder="Cevabınızı yazın (en az 10 karakter). Kişisel bilgi, telefon, bağlantı yazmayın."></textarea>
+    ${wait ? `<div class="q-tpl"><span class="muted">Hazır cevap:</span>${(S.qTpl || []).map((t, i) => `<button type="button" class="chip" data-act="q-tpl" data-i="${i}" data-q="${q.id}" title="${esc(t.x)}">${esc(t.t)}</button>`).join('')}<button type="button" class="chip ghost" data-act="q-tpl-edit">${icon('edit')} Düzenle</button></div>
+    <div class="q-ans"><textarea class="input" rows="3" maxlength="2000" placeholder="Cevabınızı yazın (en az 10 karakter). Kişisel bilgi, telefon, bağlantı yazmayın."></textarea>
       <div class="q-ans-f"><small class="q-n muted">0 / 2000</small><button class="btn btn-primary" data-act="q-send" data-id="${q.id}">${icon('check')} Cevabı gönder</button></div></div>` : ''}
   </article>`;
 }
 
 // ================================================================== FİNANS (Trendyol cari hesap ekstresi)
-const FIN_TABS = [['pay', 'Ödemeler'], ['inv', 'Faturalar'], ['tx', 'Hareketler'], ['cargo', 'Kargo']];
+const FIN_TABS = [['pay', 'Ödemeler'], ['inv', 'Faturalar'], ['tx', 'Hareketler'], ['cargo', 'Kargo'], ['pen', 'Cezalar']];
 const fmtDayD = (t) => t ? new Date(t * 1000).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' }) : '–';
 const fmtDayW = (t) => t ? new Date(t * 1000).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' }) : '–';
 async function loadFin() { S.fin = await api('GET', '/api/finance'); }
@@ -4693,7 +4810,7 @@ async function loadFinTx() {
   f.data = await api('GET', `/api/finance/tx?${qs}`);
 }
 PAGES.finans = {
-  async load() { await Promise.all([loadFin(), S.settings ? null : loadSettings(), (S.finTab || 'pay') === 'tx' ? loadFinTx() : null]); },
+  async load() { await Promise.all([loadFin(), S.settings ? null : loadSettings(), (S.finTab || 'pay') === 'tx' ? loadFinTx() : null, (S.finTab || 'pay') === 'pen' ? loadPen() : null]); },
   html() {
     const d = S.fin, st = d.status || {}, tab = S.finTab || 'pay';
     const configured = !!S.settings?.ty_seller_id;
@@ -4713,7 +4830,7 @@ PAGES.finans = {
       </div>
       <div class="seg fin-tabs">${FIN_TABS.map(([k, l]) => `<button type="button" data-act="fin-tab" data-v="${k}" class="${tab === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
     if (!st.at && !st.running && !d.records) return `${head}<div class="empty panel"><h3>Henüz veri yok</h3><p>İlk eşitlemede son 3 ayın ekstresi 14'er günlük parçalarla çekilir; birkaç dakika sürebilir. Sonra her 6 saatte bir kendiliğinden yenilenir.</p><button class="btn btn-primary" data-act="fin-sync">${icon('refresh')} Şimdi çek</button></div>`;
-    return `${head}<div id="fin-body">${tab === 'pay' ? finPayHTML() : tab === 'inv' ? finInvHTML() : tab === 'tx' ? finTxHTML() : finCargoHTML()}</div>`;
+    return `${head}<div id="fin-body">${tab === 'pay' ? finPayHTML() : tab === 'inv' ? finInvHTML() : tab === 'tx' ? finTxHTML() : tab === 'pen' ? finPenHTML() : finCargoHTML()}</div>`;
   },
   after() {
     const q = $('#fin-q');
@@ -4777,6 +4894,31 @@ function finTxHTML() {
       <label class="search sm">${icon('search')}<input class="input" id="fin-q" placeholder="Sipariş no, barkod, açıklama" value="${esc(f.q)}" autocomplete="off"></label>
       <select class="input" id="fin-type" style="width:auto"><option value="">Tüm işlemler</option>${(S.fin.types || []).map((t) => `<option value="${esc(t.type || t.label)}"${f.type === (t.type || t.label) ? ' selected' : ''}>${esc(t.label)} (${t.n})</option>`).join('')}</select></div>
     <div class="panel-b" id="fin-tx-res">${finTxRows()}</div></section>`;
+}
+// ---------- cezalar: Trendyol'un kestiği ceza faturaları + son teslimden sonra hazırlanan siparişler
+async function loadPen() { S.pen = await api('GET', '/api/finance/penalties?days=90'); }
+function finPenHTML() {
+  const d = S.pen; if (!d) return '<p class="muted">Yükleniyor…</p>';
+  const lateN = d.late.filter((x) => !x.open).length, openN = d.late.filter((x) => x.open).length;
+  const ord = (no) => `<button type="button" class="linkish mono" data-act="pen-order" data-no="${esc(no)}">${esc(no)}</button>`;
+  return `<div class="readout pen-kpi"><div><b>${fmtTL(d.total_30)}</b><span>son 30 günde ceza</span></div><div><b>${fmtTL(d.total_90)}</b><span>son 90 günde ceza</span></div>
+      <div class="${lateN ? 'neg' : ''}"><b>${lateN}</b><span>son teslimden sonra hazırlanan sipariş (90 gün)</span></div><div class="${openN ? 'neg' : ''}"><b>${openN}</b><span>şu an süresi geçmiş, hazırlanmamış</span></div></div>
+    ${d.by_type.length ? `<div class="pen-types">${d.by_type.map((g) => `<span class="pen-t">${esc(g.label)} <b>${g.n}</b> · ${fmtTL(g.amount)}</span>`).join('')}</div>` : ''}
+    <div class="two-col fin-pay">
+      <section class="panel"><div class="panel-h"><h2>Ceza faturaları</h2><span class="muted" style="font-size:13px">son 90 gün</span></div><div class="panel-b">
+        ${d.invoices.length ? `<ul class="lst pen-inv">${d.invoices.map((x) => `<li><div class="grow"><div class="t">${esc(x.label)} <span class="muted">· ${fmtDayD(x.date)}</span>${x.paid ? '' : ' <span class="tag tag-warn">henüz kesilmedi</span>'}</div>
+          ${x.desc ? `<div class="s">${esc(x.desc)}</div>` : ''}${x.orders.length ? `<div class="pen-ords">${x.orders.map(ord).join('')}</div>` : ''}</div><b class="neg-text">${fmtTL(-x.amount)}</b></li>`).join('')}</ul>`
+          : '<p class="muted" style="margin:0">Son 90 günde ceza faturası yok.</p>'}</div></section>
+      <section class="panel"><div class="panel-h"><h2>En çok geciken ürünler</h2></div><div class="panel-b">
+        ${d.late_products.length ? `<ul class="lst">${d.late_products.map((g) => `<li><div class="grow"><div class="t">${esc(g.name)}</div><div class="s">ortalama ${g.avg_h} saat geç</div></div><b>${g.n} sipariş</b></li>`).join('')}</ul>`
+          : '<p class="muted" style="margin:0">Geç hazırlanan sipariş yok.</p>'}</div></section></div>
+    <section class="panel"><div class="panel-h"><h2>Geç kalan siparişler</h2><span class="muted" style="font-size:13px">Hazırlanıyor'a çekildiği an son teslimden sonraysa</span></div><div class="panel-b">
+      ${d.late.length ? `<div class="tbl-wrap" style="border:0"><table class="tbl fin-tbl"><thead><tr><th>Sipariş</th><th>Ürünler</th><th>Son teslim</th><th>Hazırlandı</th><th class="num">Gecikme</th><th>Ceza</th></tr></thead><tbody>
+        ${d.late.map((x) => `<tr class="${x.open ? 'pen-open' : ''}"><td>${ord(x.order_number)}</td><td class="fin-desc" title="${esc(x.names)}">${esc(x.names)}${x.qty > 1 ? ` <span class="muted">· ${x.qty} adet</span>` : ''}</td>
+          <td class="nowrap">${fmtDayD(x.deadline)} ${fmtClock(x.deadline)}</td><td class="nowrap">${x.packed_at ? `${fmtDayD(x.packed_at)} ${fmtClock(x.packed_at)}` : '<b class="neg-text">henüz hazırlanmadı</b>'}</td>
+          <td class="num"><b class="${x.late_h >= 24 ? 'neg-text' : ''}">${x.late_h >= 48 ? `${Math.round(x.late_h / 24)} gün` : `${x.late_h} sa`}</b></td><td>${x.billed ? '<span class="tag tag-bad">kesildi</span>' : '<span class="muted">–</span>'}</td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="muted" style="margin:0">Son 90 günde son teslimden sonra hazırlanan sipariş yok.</p>'}
+      <p class="muted fin-note">Trendyol gecikmeyi kargoya teslim anına göre ölçer; burada siparişin Hazırlanıyor'a çekildiği an kullanılır. "Kesildi": ceza faturasının açıklamasında bu sipariş numarası geçiyor.</p></div></section>`;
 }
 function finCargoHTML() {
   const c = S.fin.cargo;
@@ -5542,6 +5684,43 @@ function stockStageHTML() {
     <small class="muted">Değiştirince daha önce düşülmüş siparişlere dokunulmaz; yeni durum değişiklikleri seçtiğiniz aşamaya göre düşer. İptal edilenler (açıksa) stoğa geri eklenir.</small>
   </div></section>`;
 }
+// ---------- Google Drive yedeği: cihaz koduyla bağlanır; her gece yedek + yeni görseller Drive'daki "Astera Yedek" klasörüne gider
+function gdHTML() {
+  const g = S.gd; if (!g) return '';
+  const head = `<div class="gd-h">${GD_LOGO}<b>Google Drive yedeği</b>${g.connected ? '<span class="tag tag-ok">bağlı</span>' : ''}</div>`;
+  const clientForm = (open) => `<details class="gd-cl"${open ? ' open' : ''}><summary>Google uygulama kimliği${g.configured ? ` <span class="muted">· ${esc(g.client_id_hint)}</span>` : ''}</summary>
+      <p class="muted" style="margin:0;font-size:13px">Programın sahibi Google Cloud'da bir kez "TV ve sınırlı girişli cihazlar" türünde istemci oluşturur (Drive API açık, kapsam drive.file). Kullananlar sadece "Bağla"ya basar.</p>
+      <label class="field"><span>Client ID</span><input class="input mono" id="gd-cid" placeholder="…apps.googleusercontent.com" autocomplete="off" spellcheck="false"></label>
+      <label class="field"><span>Client secret</span><input class="input mono" id="gd-sec" type="password" placeholder="${g.configured ? 'değiştirmek için yazın' : ''}" autocomplete="off"></label>
+      <div><button class="btn btn-sm" data-act="gd-client">Kaydet</button></div></details>`;
+  if (!g.configured) return `<div class="gd">${head}<p class="muted" style="margin:0">Yedekler Google Drive'a gitsin; bilgisayar ya da Raspberry Pi bozulsa da veriler ve görseller kaybolmasın. Başlamak için Google uygulama kimliğini girin.</p>${clientForm(true)}</div>`;
+  if (g.pending) return `<div class="gd gd-wait">${head}
+      <p style="margin:0">Telefondan ya da bilgisayardan <a href="${esc(g.pending.url)}" target="_blank" rel="noopener"><b>${esc(g.pending.url.replace(/^https?:\/\//, ''))}</b></a> adresini aç ve bu kodu gir:</p>
+      <div class="gd-code"><span class="mono">${esc(g.pending.user_code)}</span><button class="btn btn-sm" data-act="gd-copy" data-v="${esc(g.pending.user_code)}">${icon('copy')} Kopyala</button></div>
+      <p class="muted gd-spin" style="margin:0">${icon('refresh')} Google'da izin vermen bekleniyor… (kod ${Math.max(1, Math.round((g.pending.expires * 1000 - Date.now()) / 60000))} dakika geçerli)</p>
+      <div><button class="btn btn-sm btn-ghost" data-act="gd-cancel">Vazgeç</button></div></div>`;
+  if (!g.connected) return `<div class="gd">${head}${g.error ? `<div class="notice">${icon('alert')}<div>${esc(g.error)}</div></div>` : ''}
+      <p class="muted" style="margin:0">Bağlayınca her gece yedek ve yeni ürün görselleri Google Drive'ındaki <b>Astera Yedek</b> klasörüne gider; son 14 yedek saklanır. Program Drive'ında yalnızca kendi oluşturduğu dosyaları görebilir.</p>
+      <div><button class="btn btn-primary" data-act="gd-connect">${GD_LOGO} Google Drive'a bağla</button></div>${clientForm(false)}</div>`;
+  const l = g.last;
+  return `<div class="gd">${head}<p style="margin:0"><b>${esc(g.email || 'Google hesabı')}</b> <span class="muted">· Astera Yedek klasörü</span></p>
+    ${g.error ? `<div class="notice">${icon('alert')}<div>${esc(g.error)}</div></div>` : ''}
+    <p class="muted" style="margin:0">${g.busy ? `${icon('refresh')} Drive'a gönderiliyor…` : l ? `Son gönderim: <b>${fmtWhen(l.at)}</b> · ${(l.size / 1048576).toFixed(1)} MB${l.images ? ` · ${l.images} yeni görsel` : ''}` : 'Henüz gönderilmedi; ilk yedek birazdan gider.'} · her gece otomatik</p>
+    <div class="bk-btns"><button class="btn" data-act="gd-now" ${g.busy ? 'disabled' : ''}>${icon('upload')} Şimdi Drive'a yedekle</button><button class="btn" data-act="gd-list">Drive'daki yedekler</button><button class="btn btn-ghost" data-act="gd-off">Bağlantıyı kes</button></div></div>`;
+}
+const GD_LOGO = '<svg class="gd-logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="#0F9D58" d="M8.2 3h7.6l7.2 12.4-3.8 6.6z" opacity=".0"/><path fill="#FFC107" d="M8.1 3h7.8l7.1 12.3h-7.8z"/><path fill="#1E88E5" d="M23 15.3 19.1 22H4.9l3.9-6.7z"/><path fill="#43A047" d="M8.1 3 1 15.3 4.9 22l7.1-12.3z"/></svg>';
+let GDT = 0;
+function gdRefresh(poll) {
+  clearTimeout(GDT);
+  const el = $('#gd-box'); if (el) el.innerHTML = gdHTML();
+  if (poll && (S.gd?.pending || S.gd?.busy)) GDT = setTimeout(async () => {
+    if (!$('#gd-box')) return;
+    const was = S.gd; try { S.gd = await api('GET', '/api/gdrive'); } catch { /* */ }
+    if (was?.pending && S.gd.connected) { toast('Google Drive bağlandı; ilk yedek gönderiliyor'); island('ok', `<b>Google Drive bağlandı</b> · ${esc(S.gd.email || '')}`, { ms: 2500 }); }
+    if (was?.busy && !S.gd.busy && S.gd.last && !S.gd.error) toast("Yedek Drive'a gönderildi");
+    gdRefresh(true);
+  }, 2500);
+}
 function backupHTML() {
   const d = S.backups;
   const head = `<div class="panel-h"><h2>Yedekleme</h2><span class="muted" style="font-size:13px">her gün otomatik</span></div>`;
@@ -5549,6 +5728,7 @@ function backupHTML() {
   const la = d.last_auto, last = d.last;
   const today = la && new Date(la.at * 1000).toDateString() === new Date().toDateString();
   return `${head}<div class="panel-b bk">
+    <div id="gd-box">${gdHTML()}</div>
     <div class="bk-state ${today ? 'ok' : la ? 'warn' : ''}">${icon(today ? 'check' : 'clock')}<div><b>${la ? `Son otomatik yedek: ${fmtWhen(la.at)}` : 'Henüz otomatik yedek yok'}</b>
       <span class="muted">Sunucu açıkken her gün bir kez <b>data/yedek</b> klasörüne alınır; son ${d.keep} gün saklanır.${la ? '' : ' İlki açılıştan birkaç dakika sonra alınır.'}</span></div></div>
     ${last?.extra_error ? `<div class="notice">${icon('alert')}<div>${esc(last.extra_error)}</div></div>` : ''}
@@ -5669,7 +5849,7 @@ function setGroupsBind() {
   }));
 }
 PAGES.ayarlar = {
-  async load() { await loadCategories(); await loadSettings(); if ((S.settings.printers || []).some(hasLink)) await loadBambu(); S.archived = (await api('GET', '/api/products?archived=1')).filter((p) => p.archived); S.backups = await api('GET', '/api/backups').catch(() => null); S.weekly = await api('GET', '/api/weekly').catch(() => null); S.labelCfg = await api('GET', '/api/label/settings').catch(() => null); S.version = await api('GET', '/api/version').catch(() => null); S.authCfg = await api('GET', '/api/auth/settings').catch(() => null); S.upd = await api('GET', '/api/update').catch(() => null); S.ruleDraft = null; },
+  async load() { await loadCategories(); await loadSettings(); if ((S.settings.printers || []).some(hasLink)) await loadBambu(); S.archived = (await api('GET', '/api/products?archived=1')).filter((p) => p.archived); S.backups = await api('GET', '/api/backups').catch(() => null); S.gd = await api('GET', '/api/gdrive').catch(() => null); S.weekly = await api('GET', '/api/weekly').catch(() => null); S.labelCfg = await api('GET', '/api/label/settings').catch(() => null); S.version = await api('GET', '/api/version').catch(() => null); S.authCfg = await api('GET', '/api/auth/settings').catch(() => null); S.upd = await api('GET', '/api/update').catch(() => null); S.ruleDraft = null; },
   html() {
     const theme = localStorage.getItem('theme') || 'auto';
     const nsup = 'Notification' in window, secure = window.isSecureContext;
@@ -5683,6 +5863,12 @@ PAGES.ayarlar = {
       ${stockStageHTML()}
       ${rulesHTML()}
       ${tyConnHTML()}
+      <section class="panel"><div class="panel-h"><h2>Uygulama · kullanım şekli</h2></div><div class="panel-b" style="display:grid;gap:10px">
+        <p class="muted" style="margin:0;font-size:13.5px">Seçtiğin işlere göre menüde ilgili sayfalar görünür. Hiçbiri seçili değilse hepsi görünür.</p>
+        <div class="use-pick" id="use-pick">${USE_MODES.map(([v, t, , ic]) => `<button type="button" class="chip${useModes().includes(v) ? ' on' : ''}" data-v="${v}" aria-pressed="${useModes().includes(v)}">${icon(ic)} ${t}</button>`).join('')}</div>
+        <div class="hint-set"><label class="switch"><input type="checkbox" id="hints-on" ${S.settings.hints_off ? '' : 'checked'}> <span>Keşif ipuçlarını göster <small class="muted">(henüz kullanılmamış özelliklerin yanındaki turuncu noktalar)</small></span></label>
+          <button type="button" class="linkish" data-act="hints-reset">İpuçlarını baştan göster</button></div>
+        ${S.settings.demo ? `<div class="notice">${icon('alert')}<div>Örnek verilerle geziyorsun. <button class="linkish" data-act="demo-end">Örnek verileri sil</button></div></div>` : ''}</div></section>
       <section class="panel"><div class="panel-h"><h2>Uygulama</h2>${S.version?.version ? `<span class="muted" style="font-size:13px">Sürüm ${esc(S.version.version)} · ${esc(S.version.platform)}</span>` : ''}</div><div class="panel-b">
         <div class="brand-edit">
           <button class="brand-logo-drop${S.settings.app_logo ? ' has' : ''}" id="logo-drop" data-act="logo-pick" style="${S.settings.app_logo ? `--img:url('${esc(S.settings.app_logo)}')` : ''}" aria-label="Logo yükle">
@@ -5786,6 +5972,13 @@ PAGES.ayarlar = {
     $('#lp-host')?.addEventListener('input', lpPath); $('#lp-share')?.addEventListener('input', lpPath);
     $('#lp-mode')?.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; $$('#lp-mode button').forEach((x) => x.classList.toggle('on', x === b)); $$('.lp-f').forEach((f) => { f.hidden = !f.dataset.m.split(' ').includes(b.dataset.v); }); });
     $('#wk-on')?.addEventListener('change', (e) => { const on = e.target.checked; ['#wk-day', '#wk-time'].forEach((q) => { $(q).disabled = !on; }); $('.wk-when')?.classList.toggle('dim', !on); });
+    if (S.gd?.pending || S.gd?.busy) gdRefresh(true);
+    $('#hints-on')?.addEventListener('change', async (e) => { try { S.settings = await api('PUT', '/api/settings', { hints_off: !e.target.checked }); placeHints(); } catch (err) { fail(err); } });
+    $('#use-pick')?.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-v]'); if (!b) return;
+      const cur = useModes(), v = b.dataset.v, next = cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v];
+      try { S.settings = await api('PUT', '/api/settings', { use_modes: next }); renderNav(); $$('#use-pick [data-v]').forEach((x) => { const on = next.includes(x.dataset.v); x.classList.toggle('on', on); x.setAttribute('aria-pressed', on); }); } catch (err) { fail(err); }
+    });
     $('#motion-seg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; try { localStorage.setItem('motion', b.dataset.v); } catch { /* */ } applyTheme(); $$('#motion-seg button').forEach((x) => x.classList.toggle('on', x === b)); };
     $('#skin-pick').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('skin', b.dataset.v); themeSwitch(e, applyTheme); $$('#skin-pick button').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); }); };
     $('#pal-pick').onclick = (e) => {
@@ -6032,6 +6225,8 @@ const stepInput = (sel, d, min = 1, max = 9999) => { const i = $(sel); i.value =
 const ACTIONS = {
   'close': () => closeModal(),
   'diag-dl': () => diagDownload(),
+  'demo-end': () => demoEnd(),
+  'hints-reset': async () => { try { S.settings = await api('PUT', '/api/settings', { hints_reset: true, hints_off: false }); toast('İpuçları yeniden gösterilecek'); render(); } catch (e) { fail(e); } },
   'new-print': () => openNewPrint(),
   'print-product': (el) => openNewPrint(+el.dataset.id),
   'new-product': () => openProductEditor(),
@@ -6114,6 +6309,12 @@ const ACTIONS = {
     catch (e) { fail(e); el.disabled = false; }
   },
   'cl-reject': (el) => clReject(el.dataset.id),
+  'q-tpl': (el) => {
+    const t = (S.qTpl || [])[+el.dataset.i], q = S.qs?.items.find((x) => String(x.id) === el.dataset.q); if (!t) return;
+    const ta = el.closest('.q-card')?.querySelector('textarea'); if (!ta) return;
+    ta.value = t.x.replaceAll('{urun}', q?.product_name || 'ürünümüz'); ta.dispatchEvent(new Event('input')); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+  },
+  'q-tpl-edit': () => openTplEditor(),
   'q-send': async (el) => {
     const card = el.closest('.q-card'), txt = card.querySelector('textarea').value.trim();
     if (txt.length < 10) return toast('Cevap en az 10 karakter olmalı', { bad: true });
@@ -6379,7 +6580,8 @@ const ACTIONS = {
   },
   'pick-refresh': () => loadPick(true),
   'res-ignore': async (el) => { const id = +el.dataset.id; const n = S.notif?.items.find((x) => x.action?.t === 'job' && x.action.id === id && !x.resolved_at); S.promptOpen = false; if (await ignoreJob(id, n?.id)) closeModal(true); },
-  'fin-tab': async (el) => { S.finTab = el.dataset.v; if (S.finTab === 'tx' && !S.finTx?.data) { try { await loadFinTx(); } catch (e) { fail(e); } } render(); },
+  'fin-tab': async (el) => { S.finTab = el.dataset.v; try { if (S.finTab === 'tx' && !S.finTx?.data) await loadFinTx(); if (S.finTab === 'pen') await loadPen(); } catch (e) { fail(e); } render(); },
+  'pen-order': (el) => openOrderFromNotif(el.dataset.no),
   'fin-inv-f': (el) => { S.finInvF = el.dataset.v; $('#fin-body').innerHTML = finInvHTML(); },
   'fin-page': async (el) => { S.finTx.page = Math.max(0, S.finTx.page + +el.dataset.d); try { await loadFinTx(); $('#fin-tx-res').innerHTML = finTxRows(); } catch (e) { fail(e); } },
   'fin-sync': async (el) => { el.disabled = true; try { await api('POST', '/api/finance/sync'); await loadFin(); render(); } catch (e) { fail(e); el.disabled = false; } },
@@ -6454,6 +6656,28 @@ const ACTIONS = {
   },
   'dead-days': (el) => { try { localStorage.setItem('deadDays', el.dataset.v); } catch {} render(); },
   'dead-all': () => { S.deadAll = !S.deadAll; render(); },
+  'gd-client': async () => {
+    try { await api('PUT', '/api/gdrive/client', { client_id: $('#gd-cid').value.trim(), client_secret: $('#gd-sec').value.trim() }); S.gd = await api('GET', '/api/gdrive'); toast('Google uygulama kimliği kaydedildi'); gdRefresh(); } catch (e) { fail(e); }
+  },
+  'gd-connect': async (el) => { el.disabled = true; try { S.gd = await api('POST', '/api/gdrive/connect'); gdRefresh(true); } catch (e) { fail(e); el.disabled = false; } },
+  'gd-cancel': async () => { try { S.gd = await api('POST', '/api/gdrive/disconnect'); } catch { /* */ } gdRefresh(); },
+  'gd-copy': (el) => copyText(el.dataset.v, 'Kod'),
+  'gd-off': async () => { if (!confirm("Google Drive bağlantısı kesilsin mi? Drive'daki yedekler silinmez.")) return; try { S.gd = await api('POST', '/api/gdrive/disconnect'); toast('Google Drive bağlantısı kesildi'); gdRefresh(); } catch (e) { fail(e); } },
+  'gd-now': async (el) => { el.disabled = true; try { S.gd = await api('POST', '/api/gdrive/backup'); gdRefresh(true); } catch (e) { fail(e); el.disabled = false; } },
+  'gd-list': async () => {
+    let files;
+    try { files = (await api('GET', '/api/gdrive/files')).files; } catch (e) { return fail(e); }
+    openModal(`<div class="modal-h"><h2>Google Drive'daki yedekler</h2><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
+      <div class="modal-b">${files.length ? `<ul class="lst">${files.map((f) => `<li><div class="grow"><div class="t">${esc(f.name)}</div><div class="s">${f.created ? new Date(f.created).toLocaleString('tr-TR') : ''} · ${(f.size / 1048576).toFixed(1)} MB</div></div>
+        <button class="btn btn-sm btn-bad" data-act="gd-restore" data-id="${esc(f.id)}" data-name="${esc(f.name)}">Geri yükle</button></li>`).join('')}</ul>` : '<p class="muted" style="margin:0">Drive\'da henüz yedek yok.</p>'}
+      <p class="muted" style="font-size:13px;margin:12px 0 0">Geri yüklerken önce şu anki verinin yedeği alınır; eksik ürün görselleri de Drive'dan indirilir. Google Drive ve uzak erişim ayarların korunur.</p></div>`, 'narrow');
+  },
+  'gd-restore': async (el) => {
+    if (!confirm(`${el.dataset.name} geri yüklensin mi? Şu anki veriler bu yedekteki hâline döner (önce şu anki verinin yedeği alınır).`)) return;
+    el.disabled = true; el.textContent = 'İndiriliyor…';
+    try { const r = await api('POST', '/api/gdrive/restore', { id: el.dataset.id }); closeModal(true); toast(`Geri yüklendi${r.images ? ` · ${r.images} görsel indirildi` : ''}; sayfa yenileniyor`); setTimeout(() => location.reload(), 1200); }
+    catch (e) { fail(e); el.disabled = false; el.textContent = 'Geri yükle'; }
+  },
   'bk-make': async (el) => {
     el.disabled = true;
     try { const r = await api('POST', '/api/backups'); S.backups = r; toast(r.made?.extra_error ? 'Yedek alındı; ek klasöre kopyalanamadı' : 'Yedek alındı', r.made?.extra_error ? { bad: true } : undefined); backupRefresh(); }
@@ -7346,8 +7570,9 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 // ================================================================== boot
 
 // ================================================================== ilk kurulum sihirbazı
-const WZ_STEPS = [['magaza', 'Mağaza', 'Ad ve logo'], ['trendyol', 'Trendyol', 'API bağlantısı'], ['makine', 'Makineler', 'Yazıcılarınız'],
+const WZ_ALL = [['kullanim', 'Kullanım', 'Nasıl çalışıyorsunuz'], ['magaza', 'Mağaza', 'Ad ve logo'], ['trendyol', 'Trendyol', 'API bağlantısı'], ['makine', 'Makineler', 'Yazıcılarınız'],
   ['stok', 'Stok ve kargo', 'Stok düşme, kargo saati, konum'], ['kat', 'Kategoriler', 'Ürün türleri'], ['hazir', 'Hazır', 'Özet ve ilk ürün']];
+const wzSteps = () => { const m = WZ?.d.modes || []; return WZ_ALL.filter(([k]) => !['trendyol', 'stok'].includes(k) || !m.length || m.includes('ty')); };
 const WZ_PRINTERS = ['Bambu Lab P1S', 'Bambu Lab A1', 'Bambu Lab X1C', 'Prusa MK4', 'Creality K1', 'Elegoo Saturn 4 Ultra', 'Anycubic Photon'];
 const WZ_CATS = ['Kitap ayracı', 'Figür', 'Anahtarlık', 'Dekorasyon', 'Saksı', 'Oyuncak', 'Masaüstü düzenleyici', 'Yedek parça', 'Reçine figür'];
 let WZ = null;
@@ -7358,13 +7583,18 @@ function openWizard() {
     sid: st.ty_seller_id || '', key: st.ty_api_key || '', sec: '', secSet: !!st.ty_api_secret_set, ty: null,
     printers: structuredClone(st.printers || []), deduct: st.ty_deduct_at || 'picking', cut: st.ship_cutoff || '',
     city: st.store_city || '', dist: st.store_district || '',
-    catsOld: (S.categories || []).map((c) => c.name), cats: new Set((S.categories || []).map((c) => c.name)) } };
+    catsOld: (S.categories || []).map((c) => c.name), cats: new Set((S.categories || []).map((c) => c.name)),
+    modes: [...(st.use_modes || [])], demo: false } };
   let el = $('#wiz'); if (!el) { el = document.createElement('div'); el.id = 'wiz'; el.className = 'wz'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', 'Astera kurulumu'); document.body.appendChild(el); wzBind(el); }
   document.body.classList.add('wz-open'); wzRender();
 }
 function closeWizard() { $('#wiz')?.remove(); document.body.classList.remove('wz-open'); WZ = null; render(); }
 function wzStepHTML(k) {
   const d = WZ.d;
+  if (k === 'kullanim') return `<h1>Nasıl çalışıyorsunuz?</h1><p>Menüyü, ana paneli ve kurulum adımlarını buna göre hazırlayalım. Birden fazlasını seçebilirsiniz; sonradan Ayarlar → Genel'den değişir.</p>
+    <div class="wz-uses">${USE_MODES.map(([v, t, sub, ic, list], i) => `<button type="button" class="wz-use${d.modes.includes(v) ? ' on' : ''}" style="--i:${i}" data-wz="mode" data-v="${v}" aria-pressed="${d.modes.includes(v)}">
+      <span class="wz-use-chk">${icon('check')}</span><span class="wz-use-ic">${icon(ic)}</span><b>${t}</b><small>${sub}</small><ul>${list.map((x) => `<li>${x}</li>`).join('')}</ul></button>`).join('')}</div>
+    ${S.settings?.demo || (S.products || []).length ? '' : `<label class="wz-demo"><input type="checkbox" id="wz-demo" ${d.demo ? 'checked' : ''}> <span><b>Önce örnek verilerle gezmek istiyorum.</b> Örnek ürünler, siparişler ve baskılar eklenir; gerçek kullanıma geçince tek tuşla silinir.</span></label>`}`;
   if (k === 'magaza') return `<h1>Mağazanızı tanıyalım</h1><p>Panelde ve kargo etiketlerinde görünecek ad ve logo.</p>
     <div class="wz-brand"><button type="button" class="wz-logo${d.logo ? ' has' : ''}" data-wz="logo" style="${d.logo ? `background-image:url('${esc(d.logo)}')` : ''}" aria-label="Logo yükle">${d.logo ? '' : `${icon('upload')}<span>Logo</span>`}</button>
       <div class="wz-fields"><label class="field"><span>Mağaza adı</span><input class="input" id="wz-name" value="${esc(d.name)}" maxlength="40" placeholder="ör. Astera 3D"></label>
@@ -7405,12 +7635,12 @@ function wzStepHTML(k) {
 }
 function wzRender() {
   const el = $('#wiz'); if (!el || !WZ) return;
-  const k = WZ_STEPS[WZ.i][0], last = WZ.i === WZ_STEPS.length - 1;
+  const k = wzSteps()[WZ.i][0], last = WZ.i === wzSteps().length - 1;
   el.innerHTML = `<aside class="wz-side"><div class="wz-hello">${S.settings?.app_logo ? `<span class="wz-l" style="background-image:url('${esc(S.settings.app_logo)}')"></span>` : `<span class="wz-l">${esc((appName() || 'A')[0])}</span>`}<div><b>Astera'ya hoş geldiniz</b><small>Birkaç dakikada hazır</small></div></div>
-      <ol class="wz-steps">${WZ_STEPS.map(([sk, l, sub], i) => `<li class="${i === WZ.i ? 'on' : WZ.done.has(sk) ? 'd' : ''}"><button type="button" data-wz="go" data-i="${i}" ${i === WZ.i ? 'aria-current="step"' : ''}><i>${WZ.done.has(sk) && i !== WZ.i ? icon('check') : i + 1}</i><span>${l}<small>${sub}</small></span></button></li>`).join('')}</ol>
+      <ol class="wz-steps">${wzSteps().map(([sk, l, sub], i) => `<li class="${i === WZ.i ? 'on' : WZ.done.has(sk) ? 'd' : ''}"><button type="button" data-wz="go" data-i="${i}" ${i === WZ.i ? 'aria-current="step"' : ''}><i>${WZ.done.has(sk) && i !== WZ.i ? icon('check') : i + 1}</i><span>${l}<small>${sub}</small></span></button></li>`).join('')}</ol>
       <div class="wz-help">Her adım sonradan Ayarlar'dan değiştirilebilir.</div></aside>
     <main class="wz-main"><button type="button" class="wz-x" data-wz="later" title="Sonra tamamla">Sonra tamamla ${icon('x')}</button>
-      <div class="wz-k">ADIM ${WZ.i + 1} / ${WZ_STEPS.length}</div><div class="wz-body">${wzStepHTML(k)}</div>
+      <div class="wz-k">ADIM ${WZ.i + 1} / ${wzSteps().length}</div><div class="wz-body">${wzStepHTML(k)}</div>
       ${last ? '' : `<div class="wz-foot">${WZ.i ? `<button type="button" class="btn" data-wz="back">${icon('chevron-left')} Geri</button>` : ''}<button type="button" class="linkish wz-skip" data-wz="skip">Bu adımı atla</button>
         <button type="button" class="btn btn-primary wz-next" data-wz="next" ${WZ.busy ? 'disabled' : ''}>Devam ${icon('chevron-right')}</button></div>`}</main>`;
   const f = el.querySelector('.wz-body input:not([type=file]):not([type=time])'); if (f && !WZ.noFocus) f.focus(); WZ.noFocus = false;
@@ -7420,12 +7650,14 @@ function wzRead() {
   if ($('#wz-name')) { d.name = v('#wz-name').trim(); d.tag = v('#wz-tag').trim(); }
   if ($('#wz-sid')) { d.sid = v('#wz-sid').trim(); d.key = v('#wz-key').trim(); d.sec = v('#wz-sec').trim(); }
   if ($('#wz-cut')) { d.cut = v('#wz-cut'); d.city = v('#wz-city').trim(); d.dist = v('#wz-dist').trim(); }
+  if ($('#wz-demo')) d.demo = $('#wz-demo').checked;
 }
 async function wzSave(k) {
   const d = WZ.d;
   if (k === 'magaza') S.settings = await api('PUT', '/api/settings', { app_name: d.name || 'Astera', app_tagline: d.tag, app_logo: d.logo });
   if (k === 'trendyol' && d.sid && d.key) S.settings = await api('PUT', '/api/settings', { ty_seller_id: d.sid, ty_api_key: d.key, ...(d.sec ? { ty_api_secret: d.sec } : {}), ty_enabled: true });
   if (k === 'makine') S.settings = await api('PUT', '/api/settings', { printers: d.printers });
+  if (k === 'kullanim') { S.settings = await api('PUT', '/api/settings', { use_modes: d.modes }); renderNav(); }
   if (k === 'stok') S.settings = await api('PUT', '/api/settings', { ty_deduct_at: d.deduct, ship_cutoff: d.cut || '', store_city: d.city, store_district: d.dist });
   if (k === 'kat') {
     const old = S.categories || [], add = [...d.cats].filter((n) => !old.some((c) => c.name === n));
@@ -7436,11 +7668,15 @@ async function wzSave(k) {
 function wzBind(el) {
   el.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-wz]'); if (!b || !WZ || b.disabled) return;
-    const a = b.dataset.wz, d = WZ.d, k = WZ_STEPS[WZ.i][0];
+    const a = b.dataset.wz, d = WZ.d, k = wzSteps()[WZ.i][0];
     if (a !== 'later' && a !== 'finish' && a !== 'first-product') wzRead();
     if (a === 'next') {
       WZ.busy = true; wzRender();
-      try { await wzSave(k); WZ.done.add(k); WZ.i++; } catch (err) { fail(err); }
+      try {
+        await wzSave(k); WZ.done.add(k);
+        if (k === 'kullanim' && d.demo) { WZ.busy = false; return demoStart(); }
+        WZ.i++;
+      } catch (err) { fail(err); }
       WZ.busy = false; wzRender();
     } else if (a === 'skip') { WZ.i++; wzRender(); }
     else if (a === 'back') { WZ.i--; wzRender(); }
@@ -7459,6 +7695,7 @@ function wzBind(el) {
       wzRender(); $('#wz-pr')?.focus();
     } else if (a === 'pr-rm') { d.printers.splice(+b.dataset.i, 1); WZ.noFocus = true; wzRender(); }
     else if (a === 'deduct') { d.deduct = b.dataset.v; WZ.noFocus = true; wzRender(); }
+    else if (a === 'mode') { const v = b.dataset.v; d.modes = d.modes.includes(v) ? d.modes.filter((x) => x !== v) : [...d.modes, v]; WZ.noFocus = true; wzRender(); }
     else if (a === 'cat') { const n = b.dataset.v; d.cats.has(n) ? d.cats.delete(n) : d.cats.add(n); WZ.noFocus = true; wzRender(); }
     else if (a === 'cat-add') { const n = ($('#wz-cat').value || '').trim(); if (n) d.cats.add(n); wzRender(); $('#wz-cat')?.focus(); }
     else if (a === 'finish' || a === 'first-product') {

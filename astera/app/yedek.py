@@ -17,9 +17,9 @@ import time
 
 _db = _lock = _get = _set = None
 DATA_DIR = None
-KEEP = {"oto": 14, "elle": 10, "once": 5}
-KIND_TEXT = {"oto": "Otomatik", "elle": "Elle", "once": "Geri yükleme öncesi"}
-NAME_RX = re.compile(r"^atolye-(oto|elle|once)-(\d{8})-(\d{6})\.db$")
+KEEP = {"oto": 14, "elle": 10, "once": 5, "ha": 3, "drive": 3}
+KIND_TEXT = {"oto": "Otomatik", "elle": "Elle", "once": "Geri yükleme öncesi", "ha": "Home Assistant yedeği öncesi", "drive": "Google Drive'dan indirilen"}
+NAME_RX = re.compile(r"^atolye-(oto|elle|once|ha|drive)-(\d{8})-(\d{6})\.db$")
 _busy = threading.Lock()
 
 
@@ -184,7 +184,12 @@ def _loop():
         try:
             today = time.strftime("%Y%m%d")
             if not any(f["kind"] == "oto" and f["name"].split("-")[2] == today for f in _files(folder())):
-                make("oto")
+                info = make("oto")
+                try:
+                    import gdrive
+                    gdrive.upload_async(os.path.join(folder(), info["name"]))
+                except Exception as e:  # noqa
+                    print("Google Drive'a gönderilemedi:", e)
         except Exception as e:  # noqa
             print("Otomatik yedek alınamadı:", e)
         time.sleep(600)

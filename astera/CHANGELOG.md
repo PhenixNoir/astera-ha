@@ -1,5 +1,14 @@
 # Sürüm notları
 
+## 1.9.6
+- Google Drive yedeği (Ayarlar → Veri ve Yedek): cihaz koduyla bağlanılır (google.com/device); her gece veritabanı yedeği ve yeni ürün görselleri Drive'daki "Astera Yedek" klasörüne gider, son 14 yedek saklanır. Drive'daki bir yedek tek tuşla geri yüklenir, eksik görseller de indirilir. Google uygulama kimliği (Client ID / secret) Ayarlar'dan girilir.
+- İlk açılış: kurulum sihirbazı "Nasıl çalışıyorsunuz?" ile başlar (pazar yeri, özel sipariş, stok için üretim, çok makine); menü ve kurulum adımları seçime göre. Ayarlar → Genel'den değiştirilir.
+- Örnek verilerle deneme: örnek ürünler, baskılar, makaralar, özel siparişler (ve pazar yeri seçildiyse Trendyol siparişleri); üstteki şeritten tek tuşla silinir.
+- Keşif noktaları: henüz kullanılmamış özelliklerin yanında nabız gibi atan nokta ve kısa açıklama; Ayarlar'dan kapatılır ya da baştan gösterilir.
+- Finans → Cezalar: ceza faturaları, son teslimden sonra hazırlanan siparişler, en çok geciken ürünler.
+- Sorular: hazır cevaplar ({urun} ürün adıyla değişir), düzenlenebilir.
+- Home Assistant yedeği almadan önce sağlam bir veritabanı kopyası alınır.
+
 ## 1.9.5
 - Siparişler: çekmecede açık sipariş hazırlanınca çekmece listedeki sıradaki siparişe geçer (son sıradaysa bir öncekine; liste boşsa kapanır).
 - Hazırlarken uyarı: bugün verilmesi gerekmeyen bir sipariş, listede (son teslim sırasında) daha önce gelen ve henüz hazırlanmamış siparişlere ayrılan raf stoğunu alıyorsa uyarı çıkar; hangi siparişin ürünsüz kalacağını gösterir. "Yine de hazırla" ile devam edilir.

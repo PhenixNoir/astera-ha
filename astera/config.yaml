@@ -1,5 +1,5 @@
 name: Astera Management
-version: "1.9.5"
+version: "1.9.6"
 slug: astera
 description: 3D baskı stok, üretim, yazıcı ve Trendyol yönetimi
 url: https://github.com/PhenixNoir/astera-ha
@@ -18,6 +18,11 @@ ports_description:
   8080/tcp: Astera paneli
 map:
   - addon_config:rw
+backup_pre: "python3 /app/ha_yedek.py"
+backup_exclude:
+  - "eski_surum"
+  - "eski_surum/*"
+  - "_backup.db"
 watchdog: "http://[HOST]:[PORT:8080]/api/version"
 options:
   port: 8080

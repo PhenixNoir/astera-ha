@@ -50,6 +50,8 @@ import push
 import auth
 import updater
 import diag
+import gdrive
+import demo
 
 # Windows kayıt defterindeki bozuk MIME eşlemelerine karşı
 for _ext, _type in ((".js", "application/javascript"), (".css", "text/css"), (".svg", "image/svg+xml"),
@@ -3143,8 +3145,90 @@ def api_backups(req):
 
 @route("POST", "/api/backups", lock=False)
 def api_backup_make(req):
-    info = yedek.make("elle")
+    b = req.json()
+    kind = b.get("kind") if isinstance(b, dict) else None
+    info = yedek.make("ha" if kind == "ha" else "elle")
     return {**yedek.listing(), "made": info}
+
+
+# ---------- örnek veriler (kurmadan gezmek için)
+@route("POST", "/api/demo/start")
+def api_demo_start(req):
+    try:
+        return demo.start()
+    except ValueError as e:
+        raise ApiError(str(e))
+
+
+@route("POST", "/api/demo/end")
+def api_demo_end(req):
+    return demo.end()
+
+
+# ---------- Google Drive yedeği
+@route("GET", "/api/gdrive", lock=False)
+def api_gdrive(req):
+    return gdrive.status()
+
+
+@route("PUT", "/api/gdrive/client")
+def api_gdrive_client(req):
+    b = req.json()
+    cid, sec = str(b.get("client_id") or "").strip(), str(b.get("client_secret") or "").strip()
+    if cid and not cid.endswith(".apps.googleusercontent.com"):
+        raise ApiError("Client ID '.apps.googleusercontent.com' ile bitmeli")
+    set_setting("gdrive_client_id", cid)
+    if sec or not cid:
+        set_setting("gdrive_client_secret", sec)
+    return {"ok": True}
+
+
+@route("POST", "/api/gdrive/connect", lock=False)
+def api_gdrive_connect(req):
+    try:
+        return gdrive.connect()
+    except gdrive.DriveError as e:
+        raise ApiError(str(e))
+
+
+@route("POST", "/api/gdrive/disconnect", lock=False)
+def api_gdrive_disconnect(req):
+    return gdrive.disconnect()
+
+
+@route("POST", "/api/gdrive/backup", lock=False)
+def api_gdrive_backup(req):
+    if not gdrive.status()["connected"]:
+        raise ApiError("Google Drive bağlı değil")
+    threading.Thread(target=gdrive.backup_now, daemon=True, name="gdrive-now").start()
+    time.sleep(0.3)
+    return gdrive.status()
+
+
+@route("GET", "/api/gdrive/files", lock=False)
+def api_gdrive_files(req):
+    try:
+        return {"files": gdrive.list_backups()}
+    except gdrive.DriveError as e:
+        raise ApiError(str(e))
+
+
+@route("POST", "/api/gdrive/restore", lock=False)
+def api_gdrive_restore(req):
+    b = req.json()
+    fid = str(b.get("id") or "")
+    if not fid:
+        raise ApiError("Yedek seçilmedi")
+    name = time.strftime("atolye-drive-%Y%m%d-%H%M%S.db")
+    os.makedirs(yedek.folder(), exist_ok=True)
+    try:
+        gdrive.download(fid, os.path.join(yedek.folder(), name))
+        imgs = gdrive.restore_images() if b.get("images", True) else 0
+    except gdrive.DriveError as e:
+        raise ApiError(str(e))
+    with DB_LOCK:
+        res = restore_named(name)
+    return {**res, "images": imgs}
 
 
 @route("PUT", "/api/backups/settings")
@@ -3162,10 +3246,18 @@ def api_backup_settings(req):
     return yedek.listing()
 
 
+RESTORE_KEEP = ("backup_dir", "remote_pass", "gdrive_client_id", "gdrive_client_secret", "gdrive_refresh", "gdrive_email",
+                "gdrive_folder", "gdrive_up_folder", "gdrive_last")
+
+
 @route("POST", "/api/backups/restore")
 def api_backup_restore(req):
-    name = req.json().get("name") or ""
-    keep = {k: get_setting(k) for k in ("backup_dir", "remote_pass")}
+    return restore_named(req.json().get("name") or "")
+
+
+def restore_named(name):
+    """Yedeği geri yükler; bağlantı ayarları (ek klasör, uzak erişim, Google Drive) korunur."""
+    keep = {k: get_setting(k) for k in RESTORE_KEEP}
     try:
         before = yedek.restore(name)
     except ValueError as e:
@@ -3636,6 +3728,11 @@ def api_finance(req):
     return finans.overview()
 
 
+@route("GET", "/api/finance/penalties")
+def api_finance_penalties(req):
+    return finans.penalties(max(7, min(180, int(req.query.get("days") or 90))))
+
+
 @route("GET", "/api/finance/tx")
 def api_finance_tx(req):
     q = req.query
@@ -3677,6 +3774,37 @@ def api_claim_reject(req, cid):
     if not b.get("reason_id"):
         raise ApiError("Ret gerekçesini seçin")
     return musteri.reject(cid, b.get("item_ids") or [], b["reason_id"], b.get("description"), files)
+
+
+# ---------- müşteri sorularına hazır cevaplar ({urun} ürün adıyla değiştirilir)
+QNA_DEFAULT_TEMPLATES = [
+    {"t": "Ölçü", "x": "Merhaba, {urun} ürünümüzün ölçüleri ürün açıklamasında ve görsellerde yer almaktadır. Farklı bir ölçü sorunuz olursa yardımcı olmaktan memnuniyet duyarız. İyi günler dileriz."},
+    {"t": "Malzeme", "x": "Merhaba, {urun} 3D yazıcıda PLA malzemeden üretilmektedir. PLA bitki kaynaklı, kokusuz ve dayanıklı bir malzemedir. İyi günler dileriz."},
+    {"t": "Kargo süresi", "x": "Merhaba, siparişiniz ürün sayfasında belirtilen süre içinde özenle paketlenip kargoya verilmektedir. İyi günler dileriz."},
+    {"t": "Hediye paketi", "x": "Merhaba, ürünlerimizi koruyucu ve özenli bir paketle gönderiyoruz; ayrıca hediye paketi seçeneğimiz bulunmamaktadır. İyi günler dileriz."},
+    {"t": "Renk", "x": "Merhaba, {urun} için mevcut renk seçenekleri ürün sayfasında listelenmektedir. Listede olmayan renkler için şu an üretim yapamıyoruz. İyi günler dileriz."},
+    {"t": "Stok", "x": "Merhaba, {urun} sipariş üzerine üretilmektedir; ürün sayfası açık olduğu sürece sipariş verebilirsiniz. İyi günler dileriz."},
+]
+
+
+@route("GET", "/api/qna/templates")
+def api_qna_templates(req):
+    try:
+        items = json.loads(get_setting("qna_templates") or "null")
+    except ValueError:
+        items = None
+    return {"items": items if isinstance(items, list) else QNA_DEFAULT_TEMPLATES}
+
+
+@route("PUT", "/api/qna/templates")
+def api_qna_templates_put(req):
+    out = []
+    for it in (req.json().get("items") or [])[:40]:
+        t, x = str(it.get("t") or "").strip()[:40], str(it.get("x") or "").strip()[:2000]
+        if t and x:
+            out.append({"t": t, "x": x})
+    set_setting("qna_templates", json.dumps(out, ensure_ascii=False))
+    return {"items": out}
 
 
 @route("GET", "/api/questions")
@@ -4154,6 +4282,11 @@ def diag_report(client_json=""):
                                                   GROUP BY vade, kind ORDER BY vade""", (now() - 40 * 86400,))]
             o["turler"] = [dict(r) for r in db().execute("""SELECT kind, tx_type, tx_label, COUNT(*) n, SUM(payment_order_id IS NULL) odenmemis
                                                     FROM fin_tx GROUP BY kind, tx_type, tx_label ORDER BY n DESC LIMIT 60""")]
+            try:
+                pen = finans.penalties(90)
+                o["cezalar"] = {"faturalar": pen["invoices"][:30], "gec_siparisler": pen["late"][:40], "toplam_30": pen["total_30"]}
+            except Exception as e:  # noqa
+                o["cezalar"] = {"hata": str(e)}
         o.pop("invoices", None)
         o.pop("types", None)
         (o.get("cargo") or {}).pop("rows", None)
@@ -4227,6 +4360,10 @@ def main():
     notify.weekly_fn = weekly_summary
     notify.start()
     yedek.init(db, DB_LOCK, get_setting, set_setting, DATA_DIR)
+    gdrive.init(db, DB_LOCK, get_setting, set_setting, DATA_DIR)
+    with DB_LOCK:
+        demo.init(db, DB_LOCK, get_setting, set_setting, UPLOAD_DIR)
+        db().commit()
     etiket.init(db, DB_LOCK, get_setting, set_setting, DATA_DIR)
     with DB_LOCK:
         finans.init(db, DB_LOCK, get_setting, set_setting)

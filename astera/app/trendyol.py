@@ -37,6 +37,9 @@ def init(db, lock, get_setting, set_setting, change_stock, split_codes, now):
 
 # ---------------------------------------------------------------- settings
 
+USE_MODES = ("ty", "custom", "stock", "farm")   # pazar yeri, özel sipariş, stok için üretim, çok makine
+
+
 def public_settings():
     with _lock:
         secret = _get("ty_api_secret") or ""
@@ -60,6 +63,10 @@ def public_settings():
             "store_city": _get("store_city", "") or "",
             "ty_deduct_at": deduct_mode(),
             "setup_done": _get("setup_done", "") == "1",
+            "use_modes": [m for m in (_get("use_modes", "") or "").split(",") if m in USE_MODES],
+            "demo": _get("demo_on", "") == "1",
+            "hints_seen": [h for h in (_get("hints_seen", "") or "").split(",") if h],
+            "hints_off": _get("hints_off", "") == "1",
             "order_rules": _rules(),
             "store_district": _get("store_district", "") or "",
             "ship_days": int(_get("ship_days", "1") or 1),
@@ -136,6 +143,16 @@ def save_settings(b):
             _set("ty_since", int(b["ty_since"]))
         if "order_rules" in b:
             _set("order_rules", json.dumps(_clean_rules(b["order_rules"]), ensure_ascii=False))
+        if isinstance(b.get("hint_seen"), str) and b["hint_seen"].replace("-", "").isalnum():
+            seen = [h for h in (_get("hints_seen", "") or "").split(",") if h]
+            if b["hint_seen"] not in seen:
+                _set("hints_seen", ",".join(seen + [b["hint_seen"]])[:2000])
+        if b.get("hints_reset"):
+            _set("hints_seen", "")
+        if "hints_off" in b:
+            _set("hints_off", "1" if b["hints_off"] else "0")
+        if isinstance(b.get("use_modes"), list):
+            _set("use_modes", ",".join(m for m in USE_MODES if m in b["use_modes"]))
         if "setup_done" in b:
             _set("setup_done", "1" if b["setup_done"] else "0")
         if b.get("ty_deduct_at") in DEDUCT_MODES:

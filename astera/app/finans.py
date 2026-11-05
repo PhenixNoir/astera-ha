@@ -607,3 +607,67 @@ def transactions(kind=None, tx=None, q=None, page=0, size=50):
         d["label"] = r["tx_label"] or OTHER_TEXT.get(r["tx_type"]) or r["tx_type"]
         out.append(d)
     return {"items": out, "total": total, "page": int(page), "size": int(size)}
+
+
+# ---------------------------------------------------------------- cezalar
+PENALTY_WORDS = ("gecikme", "termin", "ceza", "tedarik edeme", "kusurlu", "eksik ürün", "eksik urun", "yanlış ürün", "yanlis urun")
+_ONUM = __import__("re").compile(r"(?<!\d)(\d{9,12})(?!\d)")
+
+
+def _is_penalty(r):
+    txt = f"{r['tx_label'] or ''} {r['description'] or ''}".lower().replace("İ", "i").replace("ı", "i")
+    return r["kind"] == "other" and r["tx_type"] == "DeductionInvoices" and any(w.replace("ı", "i") in txt for w in PENALTY_WORDS)
+
+
+def penalties(days=90):
+    """Trendyol'un kestiği ceza faturaları (termin gecikme, tedarik edememe, kusurlu / eksik ürün) ve
+    bizim kayıtlarımıza göre son teslimden sonra hazırlanan siparişler."""
+    t = _now()
+    since = t - days * 86400
+    inv = []
+    for r in _db().execute("SELECT * FROM fin_tx WHERE kind='other' AND tx_type='DeductionInvoices' AND tx_date >= ? ORDER BY tx_date DESC", (since,)):
+        if not _is_penalty(r):
+            continue
+        desc = r["description"] or ""
+        inv.append({"no": r["tx_id"], "date": r["tx_date"], "label": r["tx_label"] or "Ceza", "desc": desc[:400],
+                    "amount": round((r["debt"] or 0) - (r["credit"] or 0), 2), "paid": bool(r["payment_order_id"]),
+                    "orders": sorted(set(_ONUM.findall(desc)))[:30]})
+    by_type = {}
+    for x in inv:
+        g = by_type.setdefault(x["label"], {"label": x["label"], "n": 0, "amount": 0.0})
+        g["n"] += 1
+        g["amount"] = round(g["amount"] + x["amount"], 2)
+    # geç hazırlanan siparişler: hazırlanma (Hazırlanıyor'a çekilme) anı son teslimden sonra
+    late = []
+    for r in _db().execute("""SELECT order_number, MIN(order_date) od, MAX(deadline) dl, MIN(packed_at) pk, GROUP_CONCAT(DISTINCT product_name) names,
+                                     GROUP_CONCAT(DISTINCT product_id) pids, SUM(quantity) q, MAX(ty_status) st
+                              FROM ty_lines WHERE deadline IS NOT NULL AND order_date >= ? GROUP BY order_number""", (since * 1000,)):
+        dl = (r["dl"] or 0) // 1000 if (r["dl"] or 0) > 1e11 else (r["dl"] or 0)
+        if not dl:
+            continue
+        pk = r["pk"]
+        if pk and pk > dl:
+            late.append({"order_number": r["order_number"], "order_date": (r["od"] or 0) // 1000, "deadline": dl, "packed_at": pk,
+                         "late_h": round((pk - dl) / 3600, 1), "names": (r["names"] or "")[:300], "qty": r["q"], "status": r["st"]})
+        elif not pk and dl < t and r["st"] in ("Created",):
+            late.append({"order_number": r["order_number"], "order_date": (r["od"] or 0) // 1000, "deadline": dl, "packed_at": None,
+                         "late_h": round((t - dl) / 3600, 1), "names": (r["names"] or "")[:300], "qty": r["q"], "status": r["st"], "open": True})
+    billed = {o: x["no"] for x in inv for o in x["orders"]}
+    for x in late:
+        x["billed"] = billed.get(str(x["order_number"]))
+    late.sort(key=lambda x: -(x["packed_at"] or t))
+    # hangi ürünler en çok gecikiyor
+    prod = {}
+    for x in late:
+        for nm in filter(None, x["names"].split(",")):
+            g = prod.setdefault(nm, {"name": nm, "n": 0, "hours": 0.0})
+            g["n"] += 1
+            g["hours"] += x["late_h"]
+    top = sorted(prod.values(), key=lambda g: -g["n"])[:10]
+    for g in top:
+        g["avg_h"] = round(g["hours"] / g["n"], 1)
+        g.pop("hours")
+    def tot(d):
+        return round(sum(x["amount"] for x in inv if (x["date"] or 0) >= t - d * 86400), 2)
+    return {"days": days, "invoices": inv, "by_type": sorted(by_type.values(), key=lambda g: -g["amount"]), "late": late[:200],
+            "late_products": top, "total_30": tot(30), "total_90": tot(90)}
