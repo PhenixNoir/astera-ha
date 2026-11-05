@@ -646,7 +646,9 @@ def pkg_info(pkg):
     city = (addr.get("city") if isinstance(addr, dict) else None) or None
     district = ((addr.get("district") or addr.get("countyName")) if isinstance(addr, dict) else None) or None
     cno = pkg.get("cargoTrackingNumber")
-    return {"pkg_total": total, "customer": name or None, "city": city, "district": district, "deadline": pkg_deadline(pkg),
+    # paketteki indirim etiketleri (ör. "Sepette %20 İndirim", Plus'a özel fiyat); Plus siparişini tanımak için saklanır
+    disc = [{"n": str(d.get("displayName") or "")[:80], "a": _f(d.get("discountAmount"))} for d in (pkg.get("discountDisplays") or []) if isinstance(d, dict) and d.get("displayName")]
+    return {"pkg_total": total, "discounts": json.dumps(disc, ensure_ascii=False) if disc else None, "customer": name or None, "city": city, "district": district, "deadline": pkg_deadline(pkg),
             "cargo_no": str(cno) if cno not in (None, "", 0) else None,
             "cargo_provider": pkg.get("cargoProviderName") or None,
             "cargo_link": pkg.get("cargoTrackingLink") or None}
@@ -658,10 +660,11 @@ def _store_details(pkg, line, key, info=None):
     _db().execute("""UPDATE ty_lines SET unit_price=COALESCE(?, unit_price), pkg_total=COALESCE(?, pkg_total),
                      customer=COALESCE(?, customer), city=COALESCE(?, city), deadline=COALESCE(?, deadline),
                      line_id=COALESCE(?, line_id), cargo_no=COALESCE(?, cargo_no), cargo_provider=COALESCE(?, cargo_provider),
-                     cargo_link=COALESCE(?, cargo_link), commission=COALESCE(?, commission), district=COALESCE(?, district) WHERE line_key=?""",
+                     cargo_link=COALESCE(?, cargo_link), commission=COALESCE(?, commission), district=COALESCE(?, district),
+                     discounts=COALESCE(?, discounts) WHERE line_key=?""",
                   (line_unit_revenue(line), info["pkg_total"], info["customer"], info["city"], info["deadline"],
                    str(lid) if lid else None, info.get("cargo_no"), info.get("cargo_provider"), info.get("cargo_link"),
-                   _f(line.get("commission")), info.get("district"), key))
+                   _f(line.get("commission")), info.get("district"), info.get("discounts"), key))
 
 
 def _line_key(pkg, line):
@@ -961,7 +964,7 @@ def orders(month=None, start=None, end=None):
         a, b = int(start), int(end)
     with _lock:
         rows = [dict(r) for r in _db().execute(
-            """SELECT t.*, p.thumbnail, p.name || COALESCE(' — ' || NULLIF(p.variant_label,''), '') matched_name
+            """SELECT t.*, p.thumbnail, p.ty_commission usual_commission, p.name || COALESCE(' — ' || NULLIF(p.variant_label,''), '') matched_name
                FROM ty_lines t LEFT JOIN products p ON p.id=t.product_id
                ORDER BY t.order_date DESC""")]
     pk = {}
@@ -970,19 +973,29 @@ def orders(month=None, start=None, end=None):
         g = pk.setdefault(k, {"package_id": r["package_id"], "order_number": r["order_number"], "order_date": r["order_date"],
                               "customer": r["customer"], "city": r["city"], "district": r["district"], "pkg_total": r["pkg_total"], "deadline": r["deadline"],
                               "packed_at": r["packed_at"], "cargo_no": r["cargo_no"], "cargo_provider": r["cargo_provider"],
-                              "cargo_link": r["cargo_link"], "label_at": r["label_at"], "statuses": [], "lines": []})
+                              "cargo_link": r["cargo_link"], "label_at": r["label_at"], "statuses": [], "lines": [], "discounts": None})
+        if r.get("discounts") and not g["discounts"]:
+            try:
+                g["discounts"] = json.loads(r["discounts"])
+            except ValueError:
+                pass
         for f in ("customer", "city", "district", "pkg_total", "deadline", "packed_at", "cargo_no", "cargo_provider", "cargo_link", "label_at"):
             g[f] = g[f] or r[f]
         g["statuses"].append(r["ty_status"] or "")
         g["lines"].append({"line_key": r["line_key"], "product_id": r["product_id"], "name": r["matched_name"] or r["product_name"] or r["barcode"],
                            "ty_name": r["product_name"], "barcode": r["barcode"], "thumbnail": r["thumbnail"], "quantity": r["quantity"],
                            "unit_price": r["unit_price"], "state": r["state"], "status": r["ty_status"], "line_id": r["line_id"],
-                           "commission": r["commission"]})
+                           "commission": r["commission"], "usual_commission": r["usual_commission"]})
     out, counts = [], {t: 0 for t in ORDER_TABS}
     for g in pk.values():
         live = [st for st in g["statuses"] if st not in CANCEL_STATES]
         g["status"] = live[0] if live else (g["statuses"][0] if g["statuses"] else "")
         g["tab"] = _tab_of(g["status"])
+        # Trendyol Plus / indirimli komisyon: indirim etiketinde "Plus" geçiyor ya da satırın komisyonu ürünün olağan komisyonundan düşük
+        names = " ".join(d.get("n", "") for d in (g["discounts"] or [])).lower()
+        g["plus"] = "plus" in names
+        cuts = [(l["commission"], l["usual_commission"]) for l in g["lines"] if (l["commission"] or 0) > 0 and l["usual_commission"] and l["commission"] < l["usual_commission"] - 0.4]
+        g["comm_cut"] = {"rate": min(c[0] for c in cuts), "usual": max(c[1] for c in cuts)} if cuts else None
         del g["statuses"]
         if g["tab"] not in ACTIVE_TABS and not (a <= (g["order_date"] or 0) < b):
             continue

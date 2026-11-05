@@ -1,5 +1,13 @@
 # Sürüm notları
 
+## 1.9.7
+- Trendyol'dan ürün alırken aynı ürünün varyantları (renk/beden) tek ürün altında grup olarak gelir; grubun bir parçası zaten sistemdeyse yeni varyantlar o gruba eklenir.
+- Siparişler: müşteri Trendyol Plus ile ya da komisyon indirimli aldıysa siparişte turuncu rozet görünür.
+- Zaman çizelgesi: "şu an boş" yazısı ve dar baskı çubukları artık taşmıyor.
+- Açık tema: makine tablası paneli artık açık renkte.
+- Alttaki yeni sipariş bildirimi daha geniş; arkadaki dolgu kalan süreyi gösterir, fare üstündeyken durur.
+- Hata raporuna Trendyol indirim etiketleri ve komisyon dağılımı eklendi.
+
 ## 1.9.6
 - Google Drive yedeği (Ayarlar → Veri ve Yedek): cihaz koduyla bağlanılır (google.com/device); her gece veritabanı yedeği ve yeni ürün görselleri Drive'daki "Astera Yedek" klasörüne gider, son 14 yedek saklanır. Drive'daki bir yedek tek tuşla geri yüklenir, eksik görseller de indirilir. Google uygulama kimliği (Client ID / secret) Ayarlar'dan girilir.
 - İlk açılış: kurulum sihirbazı "Nasıl çalışıyorsunuz?" ile başlar (pazar yeri, özel sipariş, stok için üretim, çok makine); menü ve kurulum adımları seçime göre. Ayarlar → Genel'den değiştirilir.

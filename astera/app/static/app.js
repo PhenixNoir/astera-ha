@@ -59,15 +59,24 @@ function island(kind, text, opts = {}) {
   const el = document.createElement(opts.href ? 'button' : 'div');
   if (opts.href) el.type = 'button';
   el.className = `island k-${kind}`;
-  el.innerHTML = `<span class="is-ic">${icon(ISLAND_IC[kind] || 'bell')}</span><span class="is-t">${text}</span>`;
+  const ms = opts.ms || 5000;
+  // Arkadaki dolgu kalan süreyi gösterir: sağdan sola çekilir, bitince şerit kapanır; fare üstündeyken durur.
+  el.innerHTML = `<span class="is-bar" style="animation-duration:${ms}ms"></span><span class="is-ic">${icon(ISLAND_IC[kind] || 'bell')}</span><span class="is-t">${text}</span>${opts.href ? '<span class="is-go">Aç →</span>' : ''}`;
   if (opts.href) el.onclick = () => { location.hash = opts.href; el.remove(); };
   box.appendChild(el);
-  let left = opts.ms || 5000, t0 = Date.now(), tm;
-  const out = () => { el.classList.add('out'); setTimeout(() => el.remove(), 260); };
-  const run = () => { t0 = Date.now(); tm = setTimeout(out, left); };
-  el.addEventListener('mouseenter', () => { clearTimeout(tm); left = Math.max(1200, left - (Date.now() - t0)); });
-  el.addEventListener('mouseleave', run);
-  run();
+  let gone = false;
+  const out = () => { if (gone) return; gone = true; el.classList.add('out'); setTimeout(() => el.remove(), 260); };
+  const bar = el.querySelector('.is-bar');
+  if (REDUCED() || !bar.getAnimations) {
+    let left = ms, t0 = Date.now(), tm;
+    const run = () => { t0 = Date.now(); tm = setTimeout(out, left); };
+    el.addEventListener('mouseenter', () => { clearTimeout(tm); left = Math.max(800, left - (Date.now() - t0)); });
+    el.addEventListener('mouseleave', run);
+    run();
+  } else {
+    bar.addEventListener('animationend', out);
+    setTimeout(() => { if (!bar.getAnimations().length && !el.matches(':hover')) out(); }, ms + 600); // animasyon çalışmadıysa yedek
+  }
 }
 
 const nowS = () => Math.floor(Date.now() / 1000) + S.offset;
@@ -2317,7 +2326,8 @@ function timelineHTML() {
       const due = kind === 'act' && j.ends_at <= t;
       const cls = kind === 'past' ? `past ${j.status}` : due ? 'due' : 'run';
       const tip = `${j.product_name} ×${j.quantity} · ${fmtClock(st)}–${fmtClock(en)}${kind === 'past' ? ` · ${({ success: 'başarılı', partial: 'kısmen', failed: 'başarısız' })[j.status] || ''}` : due ? ' · sonuç bekliyor' : ` · ${fmtDur((en - t) / 60)} kaldı`}`;
-      return `<button type="button" class="tl-bar ${cls}" style="left:${X(st)}%;width:calc(${X(en)}% - ${X(st)}%)" title="${esc(tip)}" ${kind === 'act' ? `data-act="tl-job" data-id="${j.id}"` : 'tabindex="-1"'}>
+      const wpct = X(en) - X(st);
+      return `<button type="button" class="tl-bar ${cls}${wpct < 13 ? ' narrow' : ''}${wpct < 6 ? ' tiny' : ''}" style="left:${X(st)}%;width:calc(${X(en)}% - ${X(st)}%)" title="${esc(tip)}" ${kind === 'act' ? `data-act="tl-job" data-id="${j.id}"` : 'tabindex="-1"'}>
         ${miniThumb(j.thumbnail)}<span>${esc(j.product_name)}${j.quantity > 1 ? ` ×${j.quantity}` : ''}</span>${kind === 'act' ? `<small>${due ? 'sonuç bekliyor' : fmtClock(en)}</small>` : ''}</button>`;
     };
     return `<div class="tl-row">
@@ -3761,6 +3771,16 @@ async function tyProductsSync() {
   if (b) b.disabled = false;
   typRender();
 }
+// aynı ana ürünün (productMainId) sistemde olmayan renkleri tek blokta
+function typGroups(un) {
+  const m = new Map();
+  un.forEach((x) => { const k = x.main_id || 'b:' + x.barcode; if (!m.has(k)) m.set(k, { key: k, items: [], join: x.join }); m.get(k).items.push(x); });
+  return [...m.values()];
+}
+const typRow = (x) => `<label class="typ-row"><input type="checkbox" data-typ="${esc(x.barcode)}" data-mg="${esc(x.main_id || 'b:' + x.barcode)}" ${S.typSel.has(x.barcode) ? 'checked' : ''}>
+        <span class="mini-thumb" style="--img:url('${esc(x.images[0] || '')}')"></span>
+        <span class="grow"><b>${esc(x.title || x.barcode)}</b><small class="muted">${esc([x.color, x.category, x.barcode].filter(Boolean).join(' · '))}</small></span>
+        <span class="num">${x.sale_price != null ? fmtTL(x.sale_price) : ''}${x.commission != null ? `<small class="faint">%${x.commission}</small>` : ''}</span></label>`;
 function typRender() {
   const el = $('#typ-b'); if (!el || !S.typ) return;
   const it = S.typ.items, un = it.filter((x) => !x.product_id), mt = it.length - un.length;
@@ -3768,15 +3788,23 @@ function typRender() {
   el.innerHTML = `${S.typ.error ? `<p class="pf-warn">${esc(S.typ.error)}</p>` : ''}
     <p class="muted" style="margin-top:0">${it.length} Trendyol ürünü · <b>${mt}</b> tanesi ürünlerinizle barkoddan eşleşti (fiyat, komisyon ve boş görseller güncellendi).${S.typ.last_sync ? ` Son çekme ${fmtWhen(S.typ.last_sync)}.` : ''}</p>
     ${un.length ? `<div class="typ-head"><b>Sistemde olmayanlar (${un.length})</b><label class="switch sm"><input type="checkbox" id="typ-all"> Tümünü seç</label></div>
-      <div class="typ-list">${un.map((x) => `<label class="typ-row"><input type="checkbox" data-typ="${esc(x.barcode)}" ${S.typSel.has(x.barcode) ? 'checked' : ''}>
-        <span class="mini-thumb" style="--img:url('${esc(x.images[0] || '')}')"></span>
-        <span class="grow"><b>${esc(x.title || x.barcode)}</b><small class="muted">${esc([x.color, x.category, x.barcode].filter(Boolean).join(' · '))}</small></span>
-        <span class="num">${x.sale_price != null ? fmtTL(x.sale_price) : ''}${x.commission != null ? `<small class="faint">%${x.commission}</small>` : ''}</span></label>`).join('')}</div>
+      <div class="typ-list">${typGroups(un).map((g) => g.items.length > 1 || g.join ? `<div class="typ-grp" data-grp="${esc(g.key)}">
+          <label class="typ-gh"><input type="checkbox" data-typg="${esc(g.key)}" ${g.items.every((x) => S.typSel.has(x.barcode)) ? 'checked' : ''}>
+            <span class="grow"><b>${esc(g.items[0].title || '')}</b><small class="muted">${g.items.length} renk${g.join ? ` · sistemdeki <b>${esc(g.join.name)}</b> grubuna eklenecek` : ' · tek varyant grubu olarak eklenir'}</small></span>
+            <span class="typ-sw">${g.items.slice(0, 6).map((x) => `<i style="--img:url('${esc(x.images[0] || '')}')" title="${esc(x.color || '')}"></i>`).join('')}</span></label>
+          ${g.items.map(typRow).join('')}</div>` : typRow(g.items[0])).join('')}</div>
       <p class="muted" style="font-size:12.5px">Seçilenler Trendyol başlığı, görseli, barkodu ve fiyatıyla eklenir; aynı ürünün renkleri tek varyant grubunda toplanır. Gram, süre ve filamenti sonra girersiniz.</p>`
       : it.length ? '<p>Trendyol\'daki tüm ürünleriniz sistemde var.</p>' : '<p class="muted">Trendyol\'da onaylı ürün bulunamadı.</p>'}`;
   const upd = () => { const n = S.typSel.size, b = $('#typ-import'); if (b) { b.disabled = !n; b.textContent = n ? `${n} ürünü ekle` : 'Seçilenleri ekle'; } };
-  $$('[data-typ]').forEach((c) => c.addEventListener('change', () => { c.checked ? S.typSel.add(c.dataset.typ) : S.typSel.delete(c.dataset.typ); upd(); }));
-  $('#typ-all')?.addEventListener('change', (e) => { $$('[data-typ]').forEach((c) => { c.checked = e.target.checked; c.checked ? S.typSel.add(c.dataset.typ) : S.typSel.delete(c.dataset.typ); }); upd(); });
+  // bir rengi işaretlemek aynı ürünün diğer renklerini de işaretler (kaldırmak yalnız onu kaldırır)
+  const grpSync = (k) => { const all = $$(`[data-typ][data-mg="${CSS.escape(k)}"]`), h = $(`[data-typg="${CSS.escape(k)}"]`); if (h) { const n = all.filter((c) => c.checked).length; h.checked = n === all.length; h.indeterminate = n > 0 && n < all.length; } };
+  $$('[data-typ]').forEach((c) => c.addEventListener('change', () => {
+    if (c.checked) $$(`[data-typ][data-mg="${CSS.escape(c.dataset.mg)}"]`).forEach((x) => { x.checked = true; S.typSel.add(x.dataset.typ); });
+    else S.typSel.delete(c.dataset.typ);
+    grpSync(c.dataset.mg); upd();
+  }));
+  $$('[data-typg]').forEach((h) => { grpSync(h.dataset.typg); h.addEventListener('change', () => { $$(`[data-typ][data-mg="${CSS.escape(h.dataset.typg)}"]`).forEach((x) => { x.checked = h.checked; h.checked ? S.typSel.add(x.dataset.typ) : S.typSel.delete(x.dataset.typ); }); upd(); }); });
+  $('#typ-all')?.addEventListener('change', (e) => { $$('[data-typ]').forEach((c) => { c.checked = e.target.checked; c.checked ? S.typSel.add(c.dataset.typ) : S.typSel.delete(c.dataset.typ); }); $$('[data-typg]').forEach((h) => grpSync(h.dataset.typg)); upd(); });
   upd();
 }
 async function typImportSelected() {
@@ -4017,6 +4045,13 @@ function floatVars(seed) {
   return `--ax:${v(4).toFixed(1)}px;--ay:${v(3).toFixed(1)}px;--ar:${v(8).toFixed(1)}deg;--ad:${(3.2 + r() * 2.6).toFixed(2)}s;--ae:-${(r() * 4).toFixed(2)}s;`
     + `--bx:${v(4).toFixed(1)}px;--by:${v(3).toFixed(1)}px;--bd:${(2.8 + r() * 2.8).toFixed(2)}s;--be:-${(r() * 4).toFixed(2)}s`;
 }
+// Trendyol Plus siparişi ya da bu siparişte düşük komisyon (Plus'a özel komisyon indirimi)
+function plusTags(p, long) {
+  const out = [];
+  if (p.plus) out.push(`<span class="plus-tag" title="Trendyol Plus indirimiyle alınmış"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3 6.9 7.5.7-5.7 5 1.7 7.4L12 18.3 5.5 22l1.7-7.4L1.5 9.6 9 8.9z"/></svg>Plus</span>`);
+  if (p.comm_cut) out.push(`<span class="plus-tag soft" title="Bu siparişte komisyon %${p.comm_cut.rate} (ürünün olağan komisyonu %${p.comm_cut.usual})">${long ? `Komisyon %${p.comm_cut.rate} · olağanı %${p.comm_cut.usual}` : `%${p.comm_cut.rate} komisyon`}</span>`);
+  return out.length ? ' ' + out.join(' ') : '';
+}
 function tyoRow(p, r) {
   const live = p.lines.filter((l) => !TY_CANCEL.has(l.status));
   const thumbs = (live.length ? live : p.lines);
@@ -4037,7 +4072,7 @@ function tyoRow(p, r) {
       <summary>
         <span class="tyo-no"><b>${esc(p.order_number)}</b><small class="faint">${date}</small></span>
         <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l, ti) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" style="${floatVars(p.package_id + ':' + ti)}" title="${esc(l.name || '')} ×${l.quantity}${sh.by[l.product_id]?.miss ? ` · rafta ${sh.by[l.product_id].have}, baskıda ${sh.by[l.product_id].print}, ${sh.by[l.product_id].miss} eksik` : ''}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? qtyBadge(l.quantity, 'tt-qb') : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
-        <span class="tyo-who"><b>${esc(p.customer || '—')}</b><small class="muted">${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''}${orderRuleHits(p).map((h) => ` <span class="rule-tag t-${h.tone}" title="${esc(h.text)}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? ` <span class="near-tag" title="Mağazayla aynı yer: pakete not eklemeyi unutmayın">${icon('pin')} Yakın · not ekle</span>` : ''}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
+        <span class="tyo-who"><b>${esc(p.customer || '—')}</b><small class="muted">${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''}${plusTags(p)}${orderRuleHits(p).map((h) => ` <span class="rule-tag t-${h.tone}" title="${esc(h.text)}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? ` <span class="near-tag" title="Mağazayla aynı yer: pakete not eklemeyi unutmayın">${icon('pin')} Yakın · not ekle</span>` : ''}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
         <span class="tyo-amt">${r ? fmtTL(r.price) : p.pkg_total != null ? fmtTL(p.pkg_total) : '–'}</span>
         <span class="tyo-pr">${r ? `<span class="mg ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)}</span><small class="faint">${fmtPct(r.margin)}${r.missing.length ? ' · <span class="warn-text">eksik</span>' : ''}</small>` : '<span class="faint">–</span>'}</span>
         <span class="tyo-dl">${showDl && p.tab !== 'shipped' ? `<span class="tyo-term${today ? ' today' : ''}" title="Son teslim ${fmtDl(dl)}">${today ? '<b>Bugün verilmeli</b>' : ''}${dlChip(dl)}</span>` : ''}${p.can_label ? `<button type="button" class="btn btn-sm ${p.label_at ? 'btn-ghost' : ''} lbl-btn" data-act="ty-label" data-id="${esc(p.package_id)}" title="${p.label_at ? `Etiket ${fmtWhen(p.label_at)} basıldı · tekrar bas` : 'Kargo etiketini bas'}">${icon(p.label_at ? 'check' : 'print')} Barkod</button>`
@@ -4104,7 +4139,7 @@ const DRAWER_KINDS = {
       const date = new Date(p.order_date).toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
       return `<div class="drw-t"><span class="drw-no">${esc(p.order_number)}</span>${act && dl ? `${today ? '<span class="tag tag-warn">Bugün verilmeli</span>' : ''}${dlChip(dl)}` : ''}</div>
         <div class="drw-who"><b>${esc(p.customer || '—')}</b><small>${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''} · ${date}</small>
-          <span class="drw-tags">${orderRuleHits(p).map((h) => `<span class="rule-tag t-${h.tone}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? `<span class="near-tag">${icon('pin')} Yakın · not ekle</span>` : ''}</span></div>`;
+          <span class="drw-tags">${plusTags(p, true)}${orderRuleHits(p).map((h) => `<span class="rule-tag t-${h.tone}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? `<span class="near-tag">${icon('pin')} Yakın · not ekle</span>` : ''}</span></div>`;
     },
     body: (p) => tyoBody(p),
     foot(p) {

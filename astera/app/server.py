@@ -377,7 +377,7 @@ def migrate():
     tcols = _columns("ty_lines")
     for col, typ in (("unit_price", "REAL"), ("pkg_total", "REAL"), ("customer", "TEXT"), ("city", "TEXT"),
                      ("deadline", "INTEGER"), ("line_id", "TEXT"), ("cargo_no", "TEXT"), ("cargo_provider", "TEXT"),
-                     ("cargo_link", "TEXT"), ("label_at", "INTEGER"), ("commission", "REAL"), ("district", "TEXT")):
+                     ("cargo_link", "TEXT"), ("label_at", "INTEGER"), ("commission", "REAL"), ("district", "TEXT"), ("discounts", "TEXT")):
         if col not in tcols:
             c.execute(f"ALTER TABLE ty_lines ADD COLUMN {col} {typ}")
     ocols = _columns("custom_orders")
@@ -3637,6 +3637,13 @@ def api_ty_products(req):
         m = matched.get((r["barcode"] or "").lower()) or matched.get((r["stock_code"] or "").lower())
         r["product_id"], r["product_name"] = (m["id"], m["name"]) if m else (None, None)
         items.append(r)
+    # aynı ana ürünün sistemde zaten olan bir rengi varsa: yeni renkler onun varyant grubuna eklenecek
+    have = {}
+    for r in items:
+        if r["product_id"] and r["main_id"]:
+            have.setdefault(r["main_id"], {"id": r["product_id"], "name": r["product_name"]})
+    for r in items:
+        r["join"] = have.get(r["main_id"]) if not r["product_id"] and r["main_id"] else None
     return {"items": items, "last_sync": int(get_setting("ty_products_sync", "0") or 0),
             "error": get_setting("ty_products_error", "") or ""}
 
@@ -3683,18 +3690,35 @@ def api_ty_import(req):
         if r["barcode"].lower() in existing:
             continue
         groups.setdefault(r["main_id"] or r["barcode"], []).append(r)
+    # sistemde aynı ana ürünün (productMainId) bir rengi zaten varsa onun grubuna katıl
+    code_pid = {}
+    for p in db().execute("SELECT id, barcodes, group_id, variant_label FROM products WHERE archived=0"):
+        for c in split_codes(p["barcodes"]):
+            code_pid.setdefault(c, p)
+    joins = {}
+    for mid in [k for k in groups if k]:
+        for sib in db().execute("SELECT barcode, stock_code, color FROM ty_products WHERE main_id=?", (mid,)):
+            p = code_pid.get((sib["barcode"] or "").lower()) or code_pid.get((sib["stock_code"] or "").lower())
+            if p:
+                gid = p["group_id"] or p["id"]
+                if not p["group_id"]:
+                    db().execute("UPDATE products SET group_id=?, variant_label=COALESCE(NULLIF(variant_label,''), ?) WHERE id=?",
+                                 (gid, (sib["color"] or "").strip() or "#1", p["id"]))
+                joins[mid] = gid
+                break
     t, created = now(), []
-    for members in groups.values():
-        gid = None
+    for key, members in groups.items():
+        gid = joins.get(key)
+        multi = len(members) > 1 or gid is not None
         for r in members:
-            variant = (r["color"] or "").strip() if len(members) > 1 else None
+            variant = (r["color"] or "").strip() if multi else None
             cur = db().execute(
                 """INSERT INTO products(name, print_type, category, set_size, barcodes, sale_price, ty_commission, ty_title, ty_url, ty_barcode,
                                         variant_label, stock, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 ((r["title"] or r["barcode"]).strip()[:120], "FDM", cat, 1, r["barcode"], r["sale_price"], r["commission"], r["title"],
-                 r["url"], r["barcode"], variant or (f"#{len(created) + 1}" if len(members) > 1 else None), 0, t, t))
+                 r["url"], r["barcode"], variant or (f"#{len(created) + 1}" if multi else None), 0, t, t))
             pid = cur.lastrowid
-            if len(members) > 1:
+            if multi:
                 gid = gid or pid
                 db().execute("UPDATE products SET group_id=? WHERE id=?", (gid, pid))
             created.append(pid)
@@ -4260,7 +4284,17 @@ def diag_report(client_json=""):
         with DB_LOCK:
             st = {f"{r[0]}/{r[1]}": r[2] for r in db().execute("SELECT ty_status, state, COUNT(*) FROM ty_lines GROUP BY ty_status, state")}
             s = trendyol.public_settings()
-        return {"satir_durumlari": st, "son_esitleme": s.get("ty_last_sync"), "son_hata": s.get("ty_last_error"),
+        with DB_LOCK:
+            disc = {}
+            for r in db().execute("SELECT discounts FROM ty_lines WHERE discounts IS NOT NULL ORDER BY order_date DESC LIMIT 2000"):
+                try:
+                    for d in json.loads(r[0]):
+                        disc[d.get("n")] = disc.get(d.get("n"), 0) + 1
+                except ValueError:
+                    pass
+            com = [dict(r) for r in db().execute("""SELECT t.commission, p.ty_commission, COUNT(*) n FROM ty_lines t LEFT JOIN products p ON p.id=t.product_id
+                                                   WHERE t.commission IS NOT NULL GROUP BY t.commission, p.ty_commission ORDER BY n DESC LIMIT 30""")]
+        return {"indirim_etiketleri": disc, "komisyon_dagilimi": com, "satir_durumlari": st, "son_esitleme": s.get("ty_last_sync"), "son_hata": s.get("ty_last_error"),
                 "son_sonuc": s.get("ty_last_result"), "acik": s.get("ty_enabled"), "dusme_asamasi": s.get("ty_deduct_at")}
 
     def fin():
