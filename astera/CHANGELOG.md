@@ -1,5 +1,11 @@
 # Sürüm notları
 
+## 1.9.8
+- Düşük kâr uyarısı: yeni bir Trendyol siparişinin tahmini kâr marjı eşiğin altındaysa ekranda uyarı çıkar ve "Gördüm" denene kadar kapanmaz. Eşik Ayarlar → Mağaza ve Kargo'dan değişir (varsayılan %10, kapatılabilir).
+- Kurulum sihirbazı: yeni "Görünüm" (palet, açık/koyu mod, animasyon, yazı boyutu; tema dalga animasyonuyla değişir) ve "Uyarılar" (düşük kâr eşiği, sesler, keşif ipuçları) adımları.
+- Kurulum sihirbazı daha canlı: kayan adım geçişleri, ilerleme çubuğu, zıplayan tikler, son adımda konfeti.
+- Hata raporuna Trendyol paket alan adları eklendi (değerler olmadan).
+
 ## 1.9.7
 - Trendyol'dan ürün alırken aynı ürünün varyantları (renk/beden) tek ürün altında grup olarak gelir; grubun bir parçası zaten sistemdeyse yeni varyantlar o gruba eklenir.
 - Siparişler: müşteri Trendyol Plus ile ya da komisyon indirimli aldıysa siparişte turuncu rozet görünür.

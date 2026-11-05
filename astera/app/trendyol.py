@@ -67,6 +67,8 @@ def public_settings():
             "demo": _get("demo_on", "") == "1",
             "hints_seen": [h for h in (_get("hints_seen", "") or "").split(",") if h],
             "hints_off": _get("hints_off", "") == "1",
+            "low_margin": float(_get("low_margin", "10") or 0),
+            "low_margin_seen": [h for h in (_get("low_margin_seen", "") or "").split(",") if h],
             "order_rules": _rules(),
             "store_district": _get("store_district", "") or "",
             "ship_days": int(_get("ship_days", "1") or 1),
@@ -151,6 +153,17 @@ def save_settings(b):
             _set("hints_seen", "")
         if "hints_off" in b:
             _set("hints_off", "1" if b["hints_off"] else "0")
+        if "low_margin" in b:   # düşük kâr uyarısı eşiği (%); 0 = kapalı
+            try:
+                v = float(b["low_margin"] or 0)
+            except (TypeError, ValueError):
+                raise TrendyolError("Kâr eşiği sayı olmalı")
+            _set("low_margin", f"{max(0.0, min(90.0, v)):g}")
+        if isinstance(b.get("low_margin_seen_add"), list):   # görüldü işaretlenen paketler (son 800)
+            seen = [h for h in (_get("low_margin_seen", "") or "").split(",") if h]
+            add = [str(x)[:40] for x in b["low_margin_seen_add"] if re.fullmatch(r"[\w-]{1,40}", str(x))]
+            seen = [h for h in seen if h not in add] + add
+            _set("low_margin_seen", ",".join(seen[-800:]))
         if isinstance(b.get("use_modes"), list):
             _set("use_modes", ",".join(m for m in USE_MODES if m in b["use_modes"]))
         if "setup_done" in b:
@@ -634,8 +647,26 @@ def line_unit_revenue(line):
     return None
 
 
+PKG_SHAPE = {}   # hata raporu için: son görülen paketlerdeki alan adları ve evet/hayır bayrakları (değer yok)
+
+
+def _shape(d):
+    return {k: (v if isinstance(v, bool) else type(v).__name__) for k, v in d.items()} if isinstance(d, dict) else {}
+
+
 def pkg_info(pkg):
     """Paket düzeyinde saklanan bilgiler: müşterinin ödediği toplam, müşteri, şehir, son teslim."""
+    try:
+        sh = _shape(pkg)
+        for k, v in sh.items():
+            if v is True or k not in PKG_SHAPE:
+                PKG_SHAPE[k] = v
+        ln = (pkg.get("lines") or [None])[0]
+        for k, v in _shape(ln).items():
+            if v is True or ("line." + k) not in PKG_SHAPE:
+                PKG_SHAPE["line." + k] = v
+    except Exception:
+        pass
     total = _f(pkg.get("packageTotalPrice"))
     if total is None:
         total = _f(pkg.get("totalPrice"))

@@ -705,6 +705,7 @@ async function loadNotifs() {
     if (tyNew && !fresh.includes(tyNew)) fresh.push(tyNew);
     S.notif = d; renderNotifs(); renderNav();
     if (fresh.length) notifIslands(fresh);
+    if (tyNew) setTimeout(() => checkLowMargin(), 1500);
     if (fresh.length) {
       const bell = $('#notif-bell'); bell?.classList.remove('ring'); void bell?.offsetWidth; bell?.classList.add('ring');
       const hid = U('nf.hide') || [], has = (k) => fresh.some((n) => n.kind === k && !hid.includes(k));
@@ -3862,6 +3863,7 @@ function rangeOf(key, from, to) {
 async function loadTyOrders() {
   const r = rangeOf(S.tyo.rD, S.tyo.from, S.tyo.to) || [1, Date.now() + 86400000];
   S.tyOrders = await api('GET', `/api/trendyol/orders?from=${r[0]}&to=${r[1]}`);
+  checkLowMargin(S.tyOrders);
 }
 // sekmeden bağımsız filtreler: arama, kategori, ürün; Yeni/Hazırlanıyor için ayrıca tarih
 function tyoBase(p) {
@@ -3910,6 +3912,79 @@ function orderProfit(pkg) {
   r.net = P - r.costs; r.profit = r.net / v; r.vat = r.net - r.profit; r.margin = r.profit / P;
   r.missing = [...missing]; r.grams = grams;
   return r;
+}
+// ---------- Düşük kâr uyarısı: yeni bir siparişin marjı eşiğin altındaysa "Gördüm" denene kadar kapanmayan pencere
+const lowMarginPct = () => Math.max(0, +(S.settings?.low_margin ?? 10) || 0);
+const LM = { items: new Map(), busy: false };
+async function checkLowMargin(data) {
+  const lim = lowMarginPct(); if (!lim || LM.busy) return;
+  LM.busy = true;
+  try {
+    await loadProfit();
+    const d = data || await api('GET', '/api/trendyol/orders?from=1&to=2');   // yalnız Yeni / Hazırlanıyor
+    const seen = new Set(S.settings.low_margin_seen || []);
+    let added = 0;
+    for (const p of d.packages || []) {
+      const k = String(p.package_id || p.order_number);
+      if (p.tab !== 'new' || seen.has(k) || LM.items.has(k)) continue;
+      const r = orderProfit(p); if (!r || r.margin * 100 >= lim) continue;
+      LM.items.set(k, { p, r }); added++;
+    }
+    if (added) lowMarginShow(true);
+  } catch { /* Trendyol kapalı ya da sunucuya ulaşılamadı */ }
+  LM.busy = false;
+}
+const lmExample = (v) => v ? `Örnek: 200 ₺'lik bir siparişte kâr ${fmtTL(200 * v / 100)} altına düşerse uyarır.` : '';
+function lowMarginHTML() {
+  const lim = lowMarginPct(), list = [...LM.items.entries()];
+  const n = list.length;
+  return `<div class="lm-back"></div>
+    <section class="lm-card" role="alertdialog" aria-modal="true" aria-labelledby="lm-t" aria-describedby="lm-d">
+      <div class="lm-ic" aria-hidden="true"><i></i><i></i>${icon('alert')}</div>
+      <div class="lm-k">KÂR UYARISI</div>
+      <h2 id="lm-t">${n > 1 ? `${n} düşük kârlı sipariş geldi` : 'Düşük kârlı sipariş geldi'}</h2>
+      <p id="lm-d">Kâr marjı <b>%${lim.toLocaleString('tr-TR')}</b>'in altında. Fiyatta farkında olmadan bir indirim ya da kampanya olabilir; kontrol edin.</p>
+      <ul class="lm-list">${list.map(([k, { p, r }], i) => {
+        const live = p.lines.filter((l) => !TY_CANCEL.has(l.status));
+        const names = live.map((l) => `${esc(l.name || '')}${l.quantity > 1 ? ` ×${l.quantity}` : ''}`).join(', ');
+        return `<li style="--i:${i}" data-lm="${esc(k)}">${miniThumb(live[0]?.thumbnail)}
+          <div class="lm-w"><b>${esc(p.order_number || '')}</b><small title="${names}">${names}</small></div>
+          <div class="lm-n"><span>${fmtTL(r.price)}</span><b class="${r.profit < 0 ? 'neg' : ''}">${fmtTL(r.profit)} <em>${fmtPct(r.margin)}</em></b></div>
+          <button type="button" class="btn btn-sm" data-lm-open="${esc(k)}">Aç</button></li>`; }).join('')}</ul>
+      <div class="lm-foot"><small class="muted">Eşik Ayarlar → Mağaza ve Kargo'dan değişir.</small><button type="button" class="btn btn-primary" data-lm-ok>${icon('check')} Gördüm</button></div>
+    </section>`;
+}
+function lowMarginShow(fresh) {
+  if (!LM.items.size) return lowMarginClose();
+  let el = $('#lowm');
+  if (!el) {
+    el = document.createElement('div'); el.id = 'lowm'; el.className = 'lm'; document.body.appendChild(el);
+    el.addEventListener('click', async (e) => {
+      const o = e.target.closest('[data-lm-open]');
+      if (o) {
+        const k = o.dataset.lmOpen; lowMarginSeen([k]); LM.items.delete(k);
+        const li = o.closest('li'); li?.classList.add('gone');
+        setTimeout(() => (LM.items.size ? lowMarginShow() : lowMarginClose()), REDUCED() ? 0 : 260);
+        if (route() !== 'siparisler') location.hash = '#/siparisler';
+        const go = () => (S.tyOrders?.packages.some((p) => String(p.package_id) === k) ? drawerOpen('ty', k) : null);
+        setTimeout(go, 500);
+        return;
+      }
+      if (e.target.closest('[data-lm-ok]')) { lowMarginSeen([...LM.items.keys()]); LM.items.clear(); lowMarginClose(); }
+      else if (e.target.classList.contains('lm-back')) { const c = el.querySelector('.lm-card'); c?.classList.remove('nudge'); void c?.offsetWidth; c?.classList.add('nudge'); }
+    });
+    el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); } }, true);
+  }
+  el.innerHTML = lowMarginHTML();
+  if (fresh) { el.classList.remove('ring'); void el.offsetWidth; el.classList.add('ring'); try { if (U('nf.sound')) soundClaim(); } catch { /* */ } }
+  el.querySelector('[data-lm-ok]')?.focus({ preventScroll: true });
+}
+function lowMarginClose() {
+  const el = $('#lowm'); if (!el) return;
+  el.classList.add('out'); setTimeout(() => el.remove(), REDUCED() ? 0 : 280);
+}
+async function lowMarginSeen(keys) {
+  try { S.settings = await api('PUT', '/api/settings', { low_margin_seen_add: keys }); } catch (e) { fail(e); }
 }
 const TYO_SORTS = [['auto', 'Varsayılan (açıkta son teslim, diğerlerinde yeni)'], ['date_desc', 'Tarih: yeniden eskiye'], ['date_asc', 'Tarih: eskiden yeniye'],
   ['dl', 'Son teslim: en yakın'], ['price_desc', 'Tutar: yüksekten'], ['price_asc', 'Tutar: düşükten'], ['items_desc', 'Kalem / adet: çoktan'],
@@ -5861,7 +5936,7 @@ function labelSetHTML() {
 // Ayarlar grupları: her panel başlığına göre bir gruba düşer
 const SET_GROUPS = [['genel', 'Genel', 'gear'], ['magaza', 'Mağaza ve Kargo', 'pack'], ['trendyol', 'Trendyol', 'cart'], ['uretim', 'Üretim', 'layers'],
   ['bildirim', 'Bildirimler', 'bell'], ['uzak', 'Uzaktan erişim', 'lock'], ['veri', 'Veri ve Yedek', 'download']];
-const SET_MAP = [[/^Uygulama|^Tema|^Görünüm/, 'genel'], [/^Kargo|^Stok ne zaman|^Sipariş notları/, 'magaza'], [/^Trendyol/, 'trendyol'], [/^Kategoriler|^Makineler/, 'uretim'],
+const SET_MAP = [[/^Uygulama|^Tema|^Görünüm/, 'genel'], [/^Kargo|^Stok ne zaman|^Sipariş notları|^Düşük kâr/, 'magaza'], [/^Trendyol/, 'trendyol'], [/^Kategoriler|^Makineler/, 'uretim'],
   [/^Bildirimler|^Haftalık/, 'bildirim'], [/^Telefon|^Uzak/, 'uzak'], [/^Yedek|^Arşiv|^Hata raporu/, 'veri']];
 const setGroup = () => { try { const g = localStorage.getItem('setGrp'); return SET_GROUPS.some((x) => x[0] === g) ? g : 'genel'; } catch { return 'genel'; } };
 function setGroupsBind() {
@@ -5954,6 +6029,13 @@ PAGES.ayarlar = {
           <button class="btn btn-sm" data-act="store-loc-save">Kaydet</button></div>
       </div></section>
 
+      <section class="panel"><div class="panel-h"><h2>Düşük kâr uyarısı</h2></div><div class="panel-b" style="display:grid;gap:12px">
+        <p class="muted" style="margin:0">Yeni bir Trendyol siparişinin tahmini kâr marjı bu oranın altındaysa ekranda bir uyarı çıkar ve siz "Gördüm" diyene kadar kapanmaz. Farkında olmadan yapılan indirimleri yakalamak için.</p>
+        <div class="lm-set"><label class="switch"><input type="checkbox" id="lm-on" ${lowMarginPct() ? 'checked' : ''}> Uyarı açık</label>
+          <label class="field lm-pct"><span>Marj eşiği</span><div class="input-group"><input class="input" type="number" id="lm-pct" min="1" max="90" step="0.5" value="${lowMarginPct() || 10}" ${lowMarginPct() ? '' : 'disabled'}><span class="suffix">%</span></div></label>
+          <small class="muted" id="lm-ex">${lmExample(lowMarginPct() || 10)}</small></div>
+      </div></section>
+
       <section class="panel"><div class="panel-h"><h2>Makineler</h2></div><div class="panel-b" style="display:grid;gap:14px">
         <p class="muted" style="margin:0">Baskı başlatırken makineyi tek dokunuşla seçersiniz; aktif baskılarda makinenin görseli görünür. Fotoğraf yüklemezseniz türüne göre bir ikon kullanılır.</p>
         <div class="machines">${(S.settings.printers || []).map((p, i) => `<div class="machine">
@@ -6008,6 +6090,10 @@ PAGES.ayarlar = {
     $('#lp-mode')?.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; $$('#lp-mode button').forEach((x) => x.classList.toggle('on', x === b)); $$('.lp-f').forEach((f) => { f.hidden = !f.dataset.m.split(' ').includes(b.dataset.v); }); });
     $('#wk-on')?.addEventListener('change', (e) => { const on = e.target.checked; ['#wk-day', '#wk-time'].forEach((q) => { $(q).disabled = !on; }); $('.wk-when')?.classList.toggle('dim', !on); });
     if (S.gd?.pending || S.gd?.busy) gdRefresh(true);
+    const lmSave = async (v) => { try { S.settings = await api('PUT', '/api/settings', { low_margin: v }); toast(v ? `Düşük kâr uyarısı: marj %${v} altında` : 'Düşük kâr uyarısı kapalı'); if (v) checkLowMargin(); } catch (e) { fail(e); } };
+    $('#lm-on')?.addEventListener('change', (e) => { const i = $('#lm-pct'); i.disabled = !e.target.checked; lmSave(e.target.checked ? (+i.value || 10) : 0); });
+    $('#lm-pct')?.addEventListener('input', (e) => { $('#lm-ex').textContent = lmExample(+e.target.value || 0); });
+    $('#lm-pct')?.addEventListener('change', (e) => { const v = Math.min(90, Math.max(1, +e.target.value || 10)); e.target.value = v; lmSave(v); });
     $('#hints-on')?.addEventListener('change', async (e) => { try { S.settings = await api('PUT', '/api/settings', { hints_off: !e.target.checked }); placeHints(); } catch (err) { fail(err); } });
     $('#use-pick')?.addEventListener('click', async (e) => {
       const b = e.target.closest('[data-v]'); if (!b) return;
@@ -7605,21 +7691,23 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 // ================================================================== boot
 
 // ================================================================== ilk kurulum sihirbazı
-const WZ_ALL = [['kullanim', 'Kullanım', 'Nasıl çalışıyorsunuz'], ['magaza', 'Mağaza', 'Ad ve logo'], ['trendyol', 'Trendyol', 'API bağlantısı'], ['makine', 'Makineler', 'Yazıcılarınız'],
-  ['stok', 'Stok ve kargo', 'Stok düşme, kargo saati, konum'], ['kat', 'Kategoriler', 'Ürün türleri'], ['hazir', 'Hazır', 'Özet ve ilk ürün']];
+const WZ_ALL = [['kullanim', 'Kullanım', 'Nasıl çalışıyorsunuz'], ['magaza', 'Mağaza', 'Ad ve logo'], ['gorunum', 'Görünüm', 'Tema, renk, animasyon'], ['trendyol', 'Trendyol', 'API bağlantısı'], ['makine', 'Makineler', 'Yazıcılarınız'],
+  ['stok', 'Stok ve kargo', 'Stok düşme, kargo saati, konum'], ['uyari', 'Uyarılar', 'Düşük kâr, ses, ipuçları'], ['kat', 'Kategoriler', 'Ürün türleri'], ['hazir', 'Hazır', 'Özet ve ilk ürün']];
 const wzSteps = () => { const m = WZ?.d.modes || []; return WZ_ALL.filter(([k]) => !['trendyol', 'stok'].includes(k) || !m.length || m.includes('ty')); };
+const WZ_MODES = [['auto', 'Sistem', 'Bilgisayarın ayarına uyar'], ['light', 'Açık', 'Gündüz için'], ['dark', 'Koyu', 'Göz yormaz']];
 const WZ_PRINTERS = ['Bambu Lab P1S', 'Bambu Lab A1', 'Bambu Lab X1C', 'Prusa MK4', 'Creality K1', 'Elegoo Saturn 4 Ultra', 'Anycubic Photon'];
 const WZ_CATS = ['Kitap ayracı', 'Figür', 'Anahtarlık', 'Dekorasyon', 'Saksı', 'Oyuncak', 'Masaüstü düzenleyici', 'Yedek parça', 'Reçine figür'];
 let WZ = null;
 function openWizard() {
   const st = S.settings || {};
-  WZ = { i: 0, done: new Set(), busy: false, d: {
+  WZ = { i: 0, first: true, done: new Set(), busy: false, d: {
     name: appName(), tag: st.app_tagline ?? 'Management', logo: st.app_logo || null,
     sid: st.ty_seller_id || '', key: st.ty_api_key || '', sec: '', secSet: !!st.ty_api_secret_set, ty: null,
     printers: structuredClone(st.printers || []), deduct: st.ty_deduct_at || 'picking', cut: st.ship_cutoff || '',
     city: st.store_city || '', dist: st.store_district || '',
     catsOld: (S.categories || []).map((c) => c.name), cats: new Set((S.categories || []).map((c) => c.name)),
-    modes: [...(st.use_modes || [])], demo: false } };
+    modes: [...(st.use_modes || [])], demo: false,
+    lmOn: (st.low_margin ?? 10) > 0, lm: st.low_margin > 0 ? st.low_margin : 10, sound: U('nf.sound') !== false, hints: !st.hints_off } };
   let el = $('#wiz'); if (!el) { el = document.createElement('div'); el.id = 'wiz'; el.className = 'wz'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', 'Astera kurulumu'); document.body.appendChild(el); wzBind(el); }
   document.body.classList.add('wz-open'); wzRender();
 }
@@ -7635,6 +7723,24 @@ function wzStepHTML(k) {
       <div class="wz-fields"><label class="field"><span>Mağaza adı</span><input class="input" id="wz-name" value="${esc(d.name)}" maxlength="40" placeholder="ör. Astera 3D"></label>
       <label class="field"><span>Alt yazı <span class="faint">(isteğe bağlı)</span></span><input class="input" id="wz-tag" value="${esc(d.tag)}" maxlength="40" placeholder="ör. Management"></label></div></div>
     <input type="file" id="wz-logo-in" accept="image/*" hidden><small class="muted">Kare bir logo en iyi görünür. Kargo etiketi logosu Ayarlar'dan ayrıca seçilebilir.</small>`;
+  if (k === 'gorunum') {
+    const th = themeOpt('theme'), pal = uiOpt('palette', ''), mo = MOTION(), sz = uiOpt('uisize', '100');
+    return `<h1>Nasıl görünsün?</h1><p>Renk paletini, açık ya da koyu modu ve animasyonları seçin; değişiklik hemen uygulanır. Sonra Ayarlar → Tema ve görünüm'den değişir.</p>
+    <div class="wz-pals">${THEME_PALETTES.map(([v, l, dsc, , c], i) => `<button type="button" class="wz-pal${pal === v ? ' on' : ''}" style="--i:${i};--p1:${c[0]};--p2:${c[1]};--p3:${c[2]};--p4:${c[3]}" data-wz="pal" data-v="${v}" aria-pressed="${pal === v}">
+      <span class="pal-prev wz-pal-prev"><i></i><span><em></em><em></em><em></em></span></span><b>${l}</b><small>${dsc}</small></button>`).join('')}</div>
+    <div class="wz-row2"><div class="field"><span>Mod</span><div class="wz-seg">${WZ_MODES.map(([v, l, t]) => `<button type="button" class="${th === v ? 'on' : ''}" data-wz="theme" data-v="${v}" aria-pressed="${th === v}" title="${t}">${icon(v === 'dark' ? 'moon' : v === 'light' ? 'sun' : 'monitor')}${l}</button>`).join('')}</div></div>
+      <div class="field"><span>Animasyonlar</span><div class="wz-seg">${[['full', 'Tam'], ['calm', 'Sade'], ['off', 'Kapalı']].map(([v, l]) => `<button type="button" class="${mo === v ? 'on' : ''}" data-wz="motion" data-v="${v}" aria-pressed="${mo === v}">${l}</button>`).join('')}</div></div></div>
+    <div class="field"><span>Yazı ve arayüz boyutu</span><div class="wz-seg">${UI_SIZES.map(([v, l]) => `<button type="button" class="${sz === v ? 'on' : ''}" data-wz="uisize" data-v="${v}" aria-pressed="${sz === v}">${l}</button>`).join('')}</div></div>
+    <small class="muted">Bu seçimler bu cihaza kaydedilir; telefonda ya da başka bilgisayarda ayrıca seçilebilir.</small>`;
+  }
+  if (k === 'uyari') return `<h1>Neyi kaçırmayalım?</h1><p>Astera'nın sizi hangi durumlarda uyaracağını seçin.</p>
+    <div class="wz-alert${d.lmOn ? ' on' : ''}"><div class="wz-alert-h"><span class="wz-alert-ic">${icon('alert')}</span><div><b>Düşük kârlı sipariş uyarısı</b><small>Yeni siparişin tahmini kâr marjı eşiğin altındaysa ekranda uyarı çıkar; "Gördüm" denene kadar kapanmaz. Farkında olmadan yapılan indirimleri yakalar.</small></div>
+      <label class="wz-tg"><input type="checkbox" id="wz-lm-on" ${d.lmOn ? 'checked' : ''}><i></i><span class="sr">Açık</span></label></div>
+      <div class="wz-lm"${d.lmOn ? '' : ' hidden'}><div class="wz-lm-v"><span>Marj eşiği</span><b id="wz-lm-out">%${d.lm}</b></div>
+        <input type="range" id="wz-lm" min="1" max="40" step="1" value="${d.lm}" style="--v:${(d.lm - 1) / 39 * 100}%">
+        <small class="muted" id="wz-lm-ex">${lmExample(d.lm)}</small></div></div>
+    <label class="wz-line"><span><b>Uyarı sesleri</b><small>Yeni sipariş, iade, soru ve biten baskıda kısa ses</small></span><span class="wz-tg"><input type="checkbox" id="wz-sound" ${d.sound ? 'checked' : ''}><i></i></span></label>
+    <label class="wz-line"><span><b>Keşif ipuçları</b><small>Henüz kullanılmamış özelliklerin yanında turuncu nokta ve kısa açıklama</small></span><span class="wz-tg"><input type="checkbox" id="wz-hints" ${d.hints ? 'checked' : ''}><i></i></span></label>`;
   if (k === 'trendyol') return `<h1>Trendyol mağazanızı bağlayın</h1><p>Siparişler, stok, iade ve sorular otomatik gelsin. Trendyol'da satış yapmıyorsanız bu adımı atlayın.</p>
     <ol class="wz-how"><li>Trendyol Satıcı Paneli → sağ üstte hesap adı → <b>Hesap Bilgilerim</b></li><li><b>Entegrasyon Bilgileri</b> sayfasındaki üç değeri aşağıya yapıştırın</li></ol>
     <div class="wz-row3"><label class="field"><span>Satıcı ID</span><input class="input" id="wz-sid" value="${esc(d.sid)}" inputmode="numeric" autocomplete="off"></label>
@@ -7665,20 +7771,31 @@ function wzStepHTML(k) {
       ${row(!!(d.sid && d.key), 'Trendyol', d.sid && d.key ? (d.ty === true ? 'Bağlandı' : 'Bilgiler kaydedildi') : 'Bağlanmadı')}
       ${row(d.printers.length > 0, 'Makineler', d.printers.length ? d.printers.map((p) => esc(p.name)).join(', ') : 'Eklenmedi')}
       ${row(true, 'Stok', esc(deduct || ''))}
+      ${row(d.lmOn, 'Düşük kâr uyarısı', d.lmOn ? `Marj %${d.lm} altında uyarır` : 'Kapalı')}
+      ${row(true, 'Görünüm', `${esc((THEME_PALETTES.find((x) => x[0] === uiOpt('palette', '')) || [, 'Varsayılan'])[1])} · ${WZ_MODES.find((x) => x[0] === themeOpt('theme'))?.[1] || 'Sistem'} mod`)}
       ${row(d.cats.size > 0, 'Kategoriler', d.cats.size ? [...d.cats].map(esc).join(', ') : 'Eklenmedi')}</ul>
     <div class="wz-final"><button type="button" class="btn btn-primary" data-wz="first-product">${icon('plus')} İlk ürünü ekle</button><button type="button" class="btn" data-wz="finish">Panele git</button></div>`;
 }
 function wzRender() {
   const el = $('#wiz'); if (!el || !WZ) return;
   const k = wzSteps()[WZ.i][0], last = WZ.i === wzSteps().length - 1;
+  const enter = WZ.shown !== WZ.i;
+  if (enter) WZ.dir = WZ.shown == null || WZ.i > WZ.shown ? 1 : -1;
+  el.classList.toggle('wz-moved', enter);
   el.innerHTML = `<aside class="wz-side"><div class="wz-hello">${S.settings?.app_logo ? `<span class="wz-l" style="background-image:url('${esc(S.settings.app_logo)}')"></span>` : `<span class="wz-l">${esc((appName() || 'A')[0])}</span>`}<div><b>Astera'ya hoş geldiniz</b><small>Birkaç dakikada hazır</small></div></div>
       <ol class="wz-steps">${wzSteps().map(([sk, l, sub], i) => `<li class="${i === WZ.i ? 'on' : WZ.done.has(sk) ? 'd' : ''}"><button type="button" data-wz="go" data-i="${i}" ${i === WZ.i ? 'aria-current="step"' : ''}><i>${WZ.done.has(sk) && i !== WZ.i ? icon('check') : i + 1}</i><span>${l}<small>${sub}</small></span></button></li>`).join('')}</ol>
       <div class="wz-help">Her adım sonradan Ayarlar'dan değiştirilebilir.</div></aside>
     <main class="wz-main"><button type="button" class="wz-x" data-wz="later" title="Sonra tamamla">Sonra tamamla ${icon('x')}</button>
-      <div class="wz-k">ADIM ${WZ.i + 1} / ${wzSteps().length}</div><div class="wz-body">${wzStepHTML(k)}</div>
+      <div class="wz-k"><span>ADIM ${WZ.i + 1} / ${wzSteps().length}</span><span class="wz-prog"><i style="--from:${(WZ.shown ?? WZ.i) / (wzSteps().length - 1) * 100}%;--to:${WZ.i / (wzSteps().length - 1) * 100}%"></i></span></div><div class="wz-body${enter ? ' enter' : ''}" style="--dir:${WZ.dir || 1}">${wzStepHTML(k)}</div>
       ${last ? '' : `<div class="wz-foot">${WZ.i ? `<button type="button" class="btn" data-wz="back">${icon('chevron-left')} Geri</button>` : ''}<button type="button" class="linkish wz-skip" data-wz="skip">Bu adımı atla</button>
         <button type="button" class="btn btn-primary wz-next" data-wz="next" ${WZ.busy ? 'disabled' : ''}>Devam ${icon('chevron-right')}</button></div>`}</main>`;
-  const f = el.querySelector('.wz-body input:not([type=file]):not([type=time])'); if (f && !WZ.noFocus) f.focus(); WZ.noFocus = false;
+  el.querySelectorAll('.wz-body > *').forEach((c, i) => c.style.setProperty('--n', i));
+  if (WZ.pop) { el.querySelector(WZ.pop)?.classList.add('pop'); WZ.pop = null; }
+  if (enter && last && FX()) setTimeout(() => WZ && confetti(), 350);
+  WZ.shown = WZ.i;
+  el.querySelectorAll('.wz-steps li').forEach((li, i) => li.style.setProperty('--li', i));
+  if (WZ.first) { el.classList.add('wz-first'); WZ.first = false; setTimeout(() => el.classList.remove('wz-first'), 1200); }
+  const f = el.querySelector('.wz-body input:not([type=file]):not([type=time]):not([type=range]):not([type=checkbox])'); if (f && !WZ.noFocus && enter) f.focus({ preventScroll: true }); WZ.noFocus = false;
 }
 function wzRead() {
   const d = WZ.d, v = (id) => $(id)?.value;
@@ -7686,12 +7803,14 @@ function wzRead() {
   if ($('#wz-sid')) { d.sid = v('#wz-sid').trim(); d.key = v('#wz-key').trim(); d.sec = v('#wz-sec').trim(); }
   if ($('#wz-cut')) { d.cut = v('#wz-cut'); d.city = v('#wz-city').trim(); d.dist = v('#wz-dist').trim(); }
   if ($('#wz-demo')) d.demo = $('#wz-demo').checked;
+  if ($('#wz-lm-on')) { d.lmOn = $('#wz-lm-on').checked; d.lm = +$('#wz-lm').value || 10; d.sound = $('#wz-sound').checked; d.hints = $('#wz-hints').checked; }
 }
 async function wzSave(k) {
   const d = WZ.d;
   if (k === 'magaza') S.settings = await api('PUT', '/api/settings', { app_name: d.name || 'Astera', app_tagline: d.tag, app_logo: d.logo });
   if (k === 'trendyol' && d.sid && d.key) S.settings = await api('PUT', '/api/settings', { ty_seller_id: d.sid, ty_api_key: d.key, ...(d.sec ? { ty_api_secret: d.sec } : {}), ty_enabled: true });
   if (k === 'makine') S.settings = await api('PUT', '/api/settings', { printers: d.printers });
+  if (k === 'uyari') { S.settings = await api('PUT', '/api/settings', { low_margin: d.lmOn ? d.lm : 0, hints_off: !d.hints }); uipSet('nf.sound', d.sound); }
   if (k === 'kullanim') { S.settings = await api('PUT', '/api/settings', { use_modes: d.modes }); renderNav(); }
   if (k === 'stok') S.settings = await api('PUT', '/api/settings', { ty_deduct_at: d.deduct, ship_cutoff: d.cut || '', store_city: d.city, store_district: d.dist });
   if (k === 'kat') {
@@ -7729,9 +7848,19 @@ function wzBind(el) {
       if (!d.printers.some((p) => p.name === n)) d.printers.push({ name: n, kind: /saturn|photon|mars|form/i.test(n) ? 'resin' : /p1s|x1|k1|core/i.test(n) ? 'enclosed' : 'open' });
       wzRender(); $('#wz-pr')?.focus();
     } else if (a === 'pr-rm') { d.printers.splice(+b.dataset.i, 1); WZ.noFocus = true; wzRender(); }
-    else if (a === 'deduct') { d.deduct = b.dataset.v; WZ.noFocus = true; wzRender(); }
-    else if (a === 'mode') { const v = b.dataset.v; d.modes = d.modes.includes(v) ? d.modes.filter((x) => x !== v) : [...d.modes, v]; WZ.noFocus = true; wzRender(); }
-    else if (a === 'cat') { const n = b.dataset.v; d.cats.has(n) ? d.cats.delete(n) : d.cats.add(n); WZ.noFocus = true; wzRender(); }
+    else if (a === 'deduct') { d.deduct = b.dataset.v; WZ.noFocus = true; WZ.pop = `[data-wz="deduct"][data-v="${b.dataset.v}"]`; wzRender(); }
+    else if (a === 'pal' || a === 'theme' || a === 'motion' || a === 'uisize') {
+      const v = b.dataset.v;
+      try {
+        if (a === 'pal') { const cfg = THEME_PALETTES.find((x) => x[0] === v)?.[3] || {}; localStorage.setItem('palette', v); Object.entries(cfg).forEach(([k2, v2]) => (v2 ? localStorage.setItem(k2, v2) : localStorage.removeItem(k2))); }
+        else localStorage.setItem(a, v);
+      } catch { /* */ }
+      WZ.noFocus = true; WZ.pop = `[data-wz="${a}"][data-v="${v}"]`;
+      if (a === 'motion' || a === 'uisize') { applyTheme(); wzRender(); }
+      else themeSwitch(e, () => { applyTheme(); wzRender(); });
+    }
+    else if (a === 'mode') { const v = b.dataset.v; d.modes = d.modes.includes(v) ? d.modes.filter((x) => x !== v) : [...d.modes, v]; WZ.noFocus = true; WZ.pop = `[data-wz="mode"][data-v="${v}"]`; wzRender(); }
+    else if (a === 'cat') { const n = b.dataset.v; d.cats.has(n) ? d.cats.delete(n) : d.cats.add(n); WZ.noFocus = true; WZ.pop = `[data-wz="cat"][data-v="${CSS.escape(n)}"]`; wzRender(); }
     else if (a === 'cat-add') { const n = ($('#wz-cat').value || '').trim(); if (n) d.cats.add(n); wzRender(); $('#wz-cat')?.focus(); }
     else if (a === 'finish' || a === 'first-product') {
       try { S.settings = await api('PUT', '/api/settings', { setup_done: true }); } catch { /* */ }
@@ -7742,6 +7871,14 @@ function wzBind(el) {
     if (e.target.id === 'wz-logo-in' && e.target.files[0]) {
       try { const r = await api('POST', '/api/upload-image', { data: await resizeImage(e.target.files[0], 256, true) }); wzRead(); WZ.d.logo = r.url; WZ.noFocus = true; wzRender(); } catch (err) { fail(err); }
     } else if (e.target.dataset.wzKind != null) WZ.d.printers[+e.target.dataset.wzKind].kind = e.target.value;
+    else if (e.target.id === 'wz-lm-on') { WZ.d.lmOn = e.target.checked; const box = el.querySelector('.wz-lm'); el.querySelector('.wz-alert')?.classList.toggle('on', WZ.d.lmOn); if (box) { box.hidden = !WZ.d.lmOn; box.classList.remove('in'); void box.offsetWidth; box.classList.add('in'); } }
+  });
+  el.addEventListener('input', (e) => {
+    if (e.target.id !== 'wz-lm') return;
+    const v = +e.target.value; WZ.d.lm = v;
+    e.target.style.setProperty('--v', `${(v - 1) / 39 * 100}%`);
+    const o = $('#wz-lm-out'); if (o) { o.textContent = `%${v}`; o.classList.remove('tick'); void o.offsetWidth; o.classList.add('tick'); }
+    const x = $('#wz-lm-ex'); if (x) x.textContent = lmExample(v);
   });
   el.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || e.target.tagName !== 'INPUT') return;
@@ -7767,4 +7904,5 @@ function wzBind(el) {
   if (S.settings && !S.settings.setup_done && !(S.products || []).length && !S.settings.ty_seller_id) openWizard();
   S.lastJobsSig = S.jobs.map((j) => j.id + ':' + j.ends_at).join(',');
   checkDue();
+  if (!$('#wiz')) setTimeout(() => checkLowMargin(), 1200);
 })();
