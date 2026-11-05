@@ -3287,3 +3287,13 @@ body.drw-on .tyo-row:not(.dr-cur), body.drw-on .dr-row:not(.dr-cur) { opacity: .
 .fin-ol > div:nth-child(odd) { background: var(--sheet-2); }
 .fin-ol small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 760px) { .fin-ol > div { grid-template-columns: 1fr auto; } .fin-ol small { grid-column: 1 / -1; } }
+/* hazırlarken atlanan siparişin ürünü uyarısı */
+.rsv { border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line)); background: color-mix(in srgb, var(--warn) 8%, var(--sheet)); border-radius: 12px; padding: 10px 12px; display: grid; gap: 6px; }
+.rsv-h { display: flex; gap: 10px; align-items: center; } .rsv-h > div { display: grid; } .rsv-h small { font-size: 12.5px; }
+.rsv ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; font-size: 13.5px; }
+.rsv-print { display: flex; gap: 10px; align-items: flex-start; margin-top: 4px; padding: 9px 11px; border-radius: 10px; background: color-mix(in srgb, var(--info, #2F6FD6) 10%, var(--sheet)); border: 1px solid color-mix(in srgb, var(--info, #2F6FD6) 35%, transparent); }
+.rsv-print > svg { width: 18px; height: 18px; flex: none; margin-top: 2px; color: var(--info, #2F6FD6); }
+.rsv-print > div { display: grid; gap: 5px; font-size: 13.5px; } .rsv-print small { color: var(--ink-2); font-size: 12.5px; }
+.rsv-job { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.rsv-cut { font-size: 12px; font-weight: 800; padding: 2px 9px; border-radius: 99px; }
+.rsv-cut.ok { background: var(--ok-wash); color: var(--ok); } .rsv-cut.no { background: var(--bad-wash); color: var(--bad); } .rsv-cut.past { background: var(--sheet-2); color: var(--ink-2); }

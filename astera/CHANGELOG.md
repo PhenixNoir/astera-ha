@@ -1,5 +1,10 @@
 # Sürüm notları
 
+## 1.9.5
+- Siparişler: çekmecede açık sipariş hazırlanınca çekmece listedeki sıradaki siparişe geçer (son sıradaysa bir öncekine; liste boşsa kapanır).
+- Hazırlarken uyarı: bugün verilmesi gerekmeyen bir sipariş, listede (son teslim sırasında) daha önce gelen ve henüz hazırlanmamış siparişlere ayrılan raf stoğunu alıyorsa uyarı çıkar; hangi siparişin ürünsüz kalacağını gösterir. "Yine de hazırla" ile devam edilir.
+- Uyarıda o ürün baskıdaysa: makine, adet, kalan süre, tahmini bitiş saati ve kargo saatine (Ayarlar → Kargo, boşsa 17:00) yetişip yetişmeyeceği; baskı bitince öndeki siparişlerin karşılanıp karşılanmayacağı.
+
 ## 1.9.4
 - Finans: Trendyol bir kaydı vade gününden önceki son ödeme gününde öder (Pazartesi ödemesi Pazartesi–Çarşamba vadelerini, Perşembe ödemesi Perşembe–Pazar vadelerini kapsar). Gelecek ödemeler artık günlere bu kurala göre dağıtılır; kural geçmiş ödemelerden doğrulanır.
 - Finans: komisyon faturaları gelecek ödemeden ayrıca düşülmez (komisyon satış kayıtlarında zaten var).

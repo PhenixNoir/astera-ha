@@ -4426,16 +4426,86 @@ async function tyLabel(ids, btn) {
 }
 // bugün kargoya verilmesi gereken, henüz çıkarılmamış sipariş sayısı
 const dueTodayLeft = () => (S.tyOrders?.packages || []).filter((p) => p.tab === 'new' && dueToday(effDeadline(p.deadline))).length;
+// Atlanan siparişin ürününü koru: bugün verilmesi gerekmeyen bir sipariş hazırlanırken, listede (son teslim sırasında)
+// daha önce gelen ve henüz hazırlanmamış siparişlere ayrılan raf stoğu bu siparişe gidiyorsa listeler.
+// Yalnızca raftaki stok sayılır (baskıdakiler değil).
+function tyoReserveConflicts(ids) {
+  const set = new Set(ids.map(String));
+  const dl = (p) => effDeadline(p.deadline) || 9e12;
+  const queue = (S.tyOrders?.packages || []).filter((p) => p.tab === 'new').sort((a, b) => dl(a) - dl(b) || a.order_date - b.order_date);
+  const needOf = (p) => { const n = {}; p.lines.filter((l) => !TY_CANCEL.has(l.status) && l.product_id && l.state !== 'deducted').forEach((l) => { n[l.product_id] = (n[l.product_id] || 0) + l.quantity; }); return n; };
+  const used = {}, out = [];   // used: bu toplu hazırlamada önceki siparişlerin aldığı adet
+  queue.forEach((p, idx) => {
+    if (!set.has(String(p.package_id))) return;
+    const need = needOf(p), today = dueToday(effDeadline(p.deadline));
+    for (const [pid, n] of Object.entries(need)) {
+      const pr = productById(+pid); if (!pr) continue;
+      const shelf = Math.max(0, pr.stock || 0) - (used[pid] || 0);
+      if (!today) {
+        const before = queue.slice(0, idx).filter((q) => !set.has(String(q.package_id)) && needOf(q)[pid]);
+        const reserved = before.reduce((a, q) => a + needOf(q)[pid], 0);
+        if (before.length && shelf > 0 && Math.max(0, shelf - n) < Math.min(shelf, reserved)) {
+          // bu sipariş olmasa öndekilerin alacağı ile bu siparişten sonra alacağı karşılaştırılır; eksilenler listelenir
+          let a1 = shelf, a2 = Math.max(0, shelf - n); const hit = [];
+          for (const q of before) { const k = needOf(q)[pid], g1 = Math.min(a1, k), g2 = Math.min(a2, k); a1 -= g1; a2 -= g2; if (g2 < g1) hit.push({ q, k, pos: queue.indexOf(q) + 1 }); }
+          // baskıdakiler: bitince rafa gelir; öndeki siparişleri kurtarıyor mu, kargo saatine yetişiyor mu
+          const jobs = (S.jobs || []).filter((j) => j.status === 'printing' && j.product_id === +pid && !j.is_order)
+            .map((j) => { const live = bambuLive(j.printer), end = live?.remaining_min != null ? nowS() + live.remaining_min * 60 : j.ends_at; return { j, end, units: j.parts?.length ? 0 : j.quantity }; })
+            .sort((a, b) => a.end - b.end);
+          const pu = jobs.reduce((a, x) => a + x.units, 0);
+          let b2 = Math.max(0, shelf - n) + pu; const still = [];
+          for (const h of hit) { const g = Math.min(b2, h.k); b2 -= g; if (g < h.k) still.push(h); }
+          out.push({ p, pos: idx + 1, pr, n, shelf: Math.max(0, shelf), hit, jobs, pu, still });
+        }
+      }
+      used[pid] = (used[pid] || 0) + n;
+    }
+  });
+  return out;
+}
+function tyoReserveAsk(list) {
+  return new Promise((ok) => {
+    let res = false;
+    const fmtD = (q) => { const d = effDeadline(q.deadline); return d ? (dueToday(d) ? 'bugün verilmeli' : `son teslim ${fmtDl(d)}`) : ''; };
+    // kargo çıkış saati (Ayarlar → Kargo; boşsa 17:00)
+    const cut = S.settings?.ship_cutoff || '17:00', [ch, cm] = cut.split(':').map(Number), cd = new Date(); cd.setHours(ch, cm || 0, 0, 0);
+    const cutT = Math.floor(cd.getTime() / 1000), cutPast = nowS() > cutT;
+    openModal(`<div class="modal-h"><h2>${icon('alert')} Atlanan siparişin ürünü</h2><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
+      <div class="modal-b" style="display:grid;gap:12px">
+        <p style="margin:0">Hazırladığın sipariş, listede daha önce gelen ve henüz hazırlanmamış siparişler için ayrılan ürünü alıyor. Hazırlarsan o siparişlere rafta ürün kalmaz.</p>
+        <p class="muted" style="margin:0;font-size:13px">"Yine de hazırla" dersen sipariş Trendyol'da Hazırlanıyor'a çekilir ve stoktan düşülür (Trendyol'da geri alınamaz).</p>
+        ${list.map((c) => `<div class="rsv">
+          <div class="rsv-h">${miniThumb(c.pr.thumbnail)}<div><b>${esc(c.pr.name)}</b><small class="muted">rafta ${c.shelf} · bu sipariş (${c.pos}. sıra, #${esc(c.p.order_number)}) ${c.n} adet alıyor</small></div></div>
+          <ul>${c.hit.map((h) => `<li><b>${h.pos}. sıra</b> · #${esc(h.q.order_number)} · ${esc(h.q.customer || '')} · ${h.k} adet lazım <span class="muted">· ${fmtD(h.q)}</span></li>`).join('')}</ul>
+          ${c.jobs.length ? `<div class="rsv-print">${icon('layers')}<div><b>Baskıda${c.pu ? ` ${c.pu} adet` : ''}</b>${c.jobs.map((x) => {
+              const left = Math.max(0, Math.round((x.end - nowS()) / 60)), ok = x.end <= cutT;
+              return `<div class="rsv-job"><span>${esc(x.j.printer || 'makinesiz')}${x.units ? ` · ${x.units} adet` : ' · parça baskısı'} · <b>${x.end < nowS() - 300 ? 'süresi doldu, sonucu girilmedi' : left ? `${fmtDur(left)} kaldı` : 'bitmek üzere'}</b>${x.end < nowS() - 300 ? '' : ` · ~${fmtClock(x.end)}'te biter`}</span>
+                <span class="rsv-cut ${cutPast ? 'past' : ok ? 'ok' : 'no'}">${cutPast ? `bugünkü ${cut} kargosu geçti` : ok ? `${cut} kargosuna yetişir` : `${cut} kargosuna yetişmez`}</span></div>`; }).join('')}
+              <small>${c.still.length ? `Baskı bitse de ${c.still.map((h) => `${h.pos}. sıra`).join(', ')} eksik kalır.` : 'Baskı bitince öndeki siparişler de karşılanır.'}</small></div></div>` : ''}</div>`).join('')}
+      </div>
+      <div class="modal-f"><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" id="rsv-go">${icon('check')} Yine de hazırla</button></div></div>`, 'narrow', () => ok(res));
+    $('#rsv-go').onclick = () => { res = true; closeModal(); };
+  });
+}
 async function tyoPick(ids) {
   const pk = S.tyOrders.packages.filter((p) => ids.includes(p.package_id));
+  const rsv = tyoReserveConflicts(ids);
+  if (rsv.length && !(await tyoReserveAsk(rsv))) return;
+  const asked = rsv.length > 0;
   const dueBefore = dueTodayLeft();
+  // çekmecede açık sipariş hazırlanıyorsa: listedeki sıradaki siparişe geçilecek (son sıradaysa bir öncekine)
+  let drwNext = null;
+  if (DRW.kind === 'ty' && ids.map(String).includes(DRW.key)) {
+    const keys = DRAWER_KINDS.ty.rows().map(DRAWER_KINDS.ty.keyOf), i = keys.indexOf(DRW.key), done = new Set(ids.map(String));
+    drwNext = keys.slice(i + 1).find((k) => !done.has(k)) ?? keys.slice(0, Math.max(0, i)).reverse().find((k) => !done.has(k)) ?? '';
+  }
   const unm = pk.filter((p) => p.lines.some((l) => !l.product_id && !TY_CANCEL.has(l.status))).length;
   // rafta görünenden fazlası paketleniyorsa uyar (baskı kaydı eksik olabilir)
   const needBy = {};
   pk.forEach((p) => p.lines.forEach((l) => { if (l.product_id && !TY_CANCEL.has(l.status) && l.state !== 'deducted') needBy[l.product_id] = (needBy[l.product_id] || 0) + l.quantity; }));
   const short = Object.entries(needBy).map(([pid, n]) => ({ p: productById(+pid), n })).filter((x) => x.p && x.n > x.p.stock);
   const warn = short.length ? `\n\nDİKKAT: Şu ürünler sistemde paketlenecek adetten az görünüyor:\n${short.map((x) => `• ${x.p.name}: sistemde ${x.p.stock}, paketlenecek ${x.n}`).join('\n')}\nRafta gerçekten varsa bir baskı kaydı eksik olabilir. Devam ederseniz stok 0'da durur ve fark panoda "Kontrol edilecekler"e düşer.` : '';
-  if (!confirm(`${pk.length} sipariş Trendyol'da Hazırlanıyor durumuna çekilecek ve ürünler stoktan düşülecek.${unm ? `\n${unm} siparişte eşleşmeyen ürün var; onların stoğu düşülemez.` : ''}${warn}\n\nBu işlem Trendyol'da geri alınamaz. Devam edilsin mi?`)) return;
+  if (!asked && !confirm(`${pk.length} sipariş Trendyol'da Hazırlanıyor durumuna çekilecek ve ürünler stoktan düşülecek.${unm ? `\n${unm} siparişte eşleşmeyen ürün var; onların stoğu düşülemez.` : ''}${warn}\n\nBu işlem Trendyol'da geri alınamaz. Devam edilsin mi?`)) return;
   try {
     if (!S.labelCfg) S.labelCfg = await api('GET', '/api/label/settings').catch(() => null);
     const r = await api('POST', '/api/trendyol/picking', { package_ids: ids });
@@ -4444,7 +4514,11 @@ async function tyoPick(ids) {
     if (r.errors.length) toast(`${r.errors.length} sipariş çekilemedi: ${r.errors.slice(0, 3).map((e) => `${e.order_number || e.package_id} (${e.error})`).join('; ')}`, { bad: true });
     if (r.labels) labelToast(r.labels);
     else if (r.done.length && S.labelCfg?.auto && !labelServerMode()) await browserLabels(r.done).catch(fail);
-    await Promise.all([loadTyOrders(), loadProducts()]); render();
+    await Promise.all([loadTyOrders(), loadProducts()]); await render();
+    if (drwNext !== null && r.done.length) setTimeout(() => {
+      const ok = drwNext && DRAWER_KINDS.ty.rows().some((x) => x.dataset.pkg === drwNext);
+      if (ok) drawerOpen('ty', drwNext, 1); else drawerClose();
+    }, 80);
     if (dueBefore > 0 && dueTodayLeft() === 0) dayDone();
   } catch (e) { fail(e); }
 }
