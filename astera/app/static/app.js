@@ -2135,6 +2135,12 @@ function npEnds() {
   const el = $('#np-ends span');
   const picked = NP.mode === 'order' ? S.orders.find((o) => o.id === NP.oid) : NP.mode === 'comp' || NP.mode === 'misc' ? compById(NP.cid) : productById(NP.pid);
   if (!picked) { el.innerHTML = NP.mode === 'order' ? 'Listeden bir sipariş seçin.' : NP.mode === 'comp' ? 'Listeden bir ortak parça seçin.' : NP.mode === 'misc' ? 'Listeden seçin ya da yeni bir ad yazıp ekleyin.' : 'Listeden bir ürün seçin.'; $('#np-start').disabled = true; return; }
+  if (NP.finished) {   // yazıcı çoktan bitirmiş: süre gerekmez, kaydedince sonuç (sağlam / sorunlu) sorulur ve stoğa işlenir
+    const sel = NP.mode === 'product' && NP.parts ? Object.values(NP.parts).reduce((a, b) => a + b, 0) : 1;
+    $('#np-start').disabled = !sel;
+    el.innerHTML = sel ? `Baskı <b>bitmiş</b>. Kaydedince sonucu soracağım; sağlam çıkanlar ${NP.mode === 'misc' ? 'kayda geçer (stoğa eklenmez)' : NP.mode === 'order' ? 'siparişe işlenir' : NP.mode === 'comp' ? 'havuza eklenir' : 'stoğa eklenir'}.` : 'En az bir parça seçin.';
+    return;
+  }
   $('#np-start').disabled = min < 1;
   if (min < 1) { el.innerHTML = 'Baskı süresini girin.'; return; }
   if (NP.mode === 'product' && NP.parts) {
@@ -2161,8 +2167,9 @@ function npEnds() {
 async function openFromBambu(ev) {
   await openNewPrint(ev.component_id ? { bambuObjects: ev.objects || 0, componentId: ev.component_id } : { bambuObjects: ev.objects || 0, pid: ev.product_id || null });
   if (!NP) return;
-  NP.bambuEvent = ev.id;
+  NP.bambuEvent = ev.id; NP.finished = !!ev.done;
   npSetPrinter(ev.printer); npRememberUI();
+  if (NP.finished) { $('#np-time-field')?.classList.add('hidden'); const st = $('#np-start'); if (st) st.innerHTML = `${icon('check')} Kaydet, sonucu gir`; npEnds(); }
   if (ev.remaining_min) { NP.timeTouched = true; $('#np-h').value = Math.floor(ev.remaining_min / 60); $('#np-m').value = ev.remaining_min % 60; npEnds(); }
   const box = $('.modal-b');
   if (ev.reason === 'confirm') {
@@ -2181,6 +2188,7 @@ async function startPrint() {
   else if (NP.mode === 'comp' || NP.mode === 'misc') body.component_id = NP.cid;
   else body.product_id = NP.pid;
   if (NP.bambuEvent) body.bambu_event = NP.bambuEvent;
+  if (NP.finished) { body.finished = true; body.duration_minutes = 0; }
   if (NP.mode === 'misc' && $('#np-remember-in') && !$('#np-remember-in').checked) body.remember_file = false;
   body.spools = (NP.slots || []).filter((x) => x.spool_id).map((x) => ({ spool_id: x.spool_id, grams: x.grams }));
   if (NP.mode === 'product' && NP.parts) body.parts = Object.entries(NP.parts).filter(([, q]) => q > 0).map(([id, q]) => ({ part_id: +id, quantity: q }));
@@ -2196,6 +2204,7 @@ async function startPrint() {
     if (S.printQueue?.length) setTimeout(printQueueNext, 350);
     if (NP.bambuEvent && S.bambu?.events) { S.bambu.events = S.bambu.events.filter((e) => e.id !== NP.bambuEvent); renderBambuEvents(); }
     closeModal();
+    if (body.finished) { markNotified(j.id); await loadJobs(); render(); setTimeout(() => openResult(j.id), 250); return; }   // bitmiş baskı: sonucu hemen sor
     toast(NP.mode === 'order' ? `${j.product_name} baskıya alındı` : j.parts?.length ? `${j.product_name}: ${j.quantity} parça üretime alındı` : `${j.product_name} ×${j.quantity} üretime alındı`);
     askNotifyOnce();
     await loadJobs(); render();
@@ -4147,7 +4156,7 @@ function tyoRow(p, r) {
       <summary>
         <span class="tyo-no"><b>${esc(p.order_number)}</b><small class="faint">${date}</small></span>
         <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l, ti) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" style="${floatVars(p.package_id + ':' + ti)}" title="${esc(l.name || '')} ×${l.quantity}${sh.by[l.product_id]?.miss ? ` · rafta ${sh.by[l.product_id].have}, baskıda ${sh.by[l.product_id].print}, ${sh.by[l.product_id].miss} eksik` : ''}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? qtyBadge(l.quantity, 'tt-qb') : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
-        <span class="tyo-who"><b>${esc(p.customer || '—')}</b><small class="muted">${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''}${plusTags(p)}${orderRuleHits(p).map((h) => ` <span class="rule-tag t-${h.tone}" title="${esc(h.text)}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? ` <span class="near-tag" title="Mağazayla aynı yer: pakete not eklemeyi unutmayın">${icon('pin')} Yakın · not ekle</span>` : ''}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
+        <span class="tyo-who"><b>${esc(p.customer || '—')}</b>${p.note ? `<span class="tn-pin" title="${esc(p.note)}">📝 ${esc(p.note)}</span>` : ''}<small class="muted">${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''}${plusTags(p)}${orderRuleHits(p).map((h) => ` <span class="rule-tag t-${h.tone}" title="${esc(h.text)}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? ` <span class="near-tag" title="Mağazayla aynı yer: pakete not eklemeyi unutmayın">${icon('pin')} Yakın · not ekle</span>` : ''}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
         <span class="tyo-amt">${r ? fmtTL(r.price) : p.pkg_total != null ? fmtTL(p.pkg_total) : '–'}</span>
         <span class="tyo-pr">${r ? `<span class="mg ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)}</span><small class="faint">${fmtPct(r.margin)}${r.missing.length ? ' · <span class="warn-text">eksik</span>' : ''}</small>` : '<span class="faint">–</span>'}</span>
         <span class="tyo-dl">${showDl && p.tab !== 'shipped' ? `<span class="tyo-term${today ? ' today' : ''}" title="Son teslim ${fmtDl(dl)}">${today ? '<b>Bugün verilmeli</b>' : ''}${dlChip(dl)}</span>` : ''}${p.can_label ? `<button type="button" class="btn btn-sm ${p.label_at ? 'btn-ghost' : ''} lbl-btn" data-act="ty-label" data-id="${esc(p.package_id)}" title="${p.label_at ? `Etiket ${fmtWhen(p.label_at)} basıldı · tekrar bas` : 'Kargo etiketini bas'}">${icon(p.label_at ? 'check' : 'print')} Barkod</button>`
@@ -4156,6 +4165,38 @@ function tyoRow(p, r) {
       <div class="tyo-body"></div>
     </details></div>`;
 }
+// ---------- Sipariş notu: hediye paketi, renk değişikliği gibi sonradan gelen istekler; listede sarı not, panelin üstünde yapışkan kâğıt
+const TN_QUICK = [['🎁 Hediye paketi', '🎁 Hediye paketi'], ['🎨 Farklı renk', '🎨 Renk: '], ['✉️ Not kartı', '✉️ Not kartı: '], ['⚡ Acele', '⚡ Acele']];
+function tyNoteHTML(p) {
+  const no = esc(p.order_number), edit = S.tyNoteEdit === p.order_number;
+  if (p.note && !edit) return `<div class="tn-sticky${S.tyNoteNew === p.order_number ? ' fresh' : ''}"><span class="tn-ic" aria-hidden="true">📝</span>
+    <div class="tn-tx"><b>${esc(p.note).replace(/\n/g, '<br>')}</b><small>${p.note_at ? `${fmtWhen(p.note_at)} eklendi` : ''}</small></div>
+    <span class="tn-acts"><button type="button" class="linkish" data-act="tn-edit" data-no="${no}">Düzenle</button><button type="button" class="linkish" data-act="tn-del" data-no="${no}">Sil</button></span></div>`;
+  return `<div class="tn-add${edit ? ' edit' : ''}">
+    <div class="tn-quick">${TN_QUICK.map(([l, v]) => `<button type="button" class="chip-btn" data-act="tn-q" data-v="${esc(v)}">${l}</button>`).join('')}</div>
+    <div class="tn-in"><textarea class="input" rows="1" maxlength="500" id="tn-ta" data-no="${no}" placeholder="Not yazın: hediye paketi, farklı renk…">${edit ? esc(p.note || '') : ''}</textarea>
+      <button type="button" class="btn btn-sm btn-primary" data-act="tn-save" data-no="${no}">${edit ? 'Kaydet' : 'Not ekle'}</button>${edit ? '<button type="button" class="btn btn-sm btn-ghost" data-act="tn-cancel">Vazgeç</button>' : ''}</div></div>`;
+}
+async function tyNoteSave(no, note) {
+  try {
+    const r = await api('PUT', `/api/trendyol/notes/${encodeURIComponent(no)}`, { note });
+    (S.tyOrders?.packages || []).forEach((p) => { if (p.order_number === no) { p.note = r.note; p.note_at = r.note_at; } });
+    S.tyNoteEdit = null; S.tyNoteNew = r.note ? no : null;
+    document.activeElement?.blur();
+    render(); if (DRW.kind === 'ty' && DRW.key) drawerOpen('ty', DRW.key);
+    S.tyNoteNew = null;
+    toast(r.note ? 'Not kaydedildi' : 'Not silindi');
+  } catch (e) { fail(e); }
+}
+const tnRedraw = () => { document.activeElement?.blur(); if (DRW.kind === 'ty' && DRW.key) drawerOpen('ty', DRW.key); setTimeout(() => { const t = $('#tn-ta'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); tnGrow(t); } }, 30); };
+const tnGrow = (t) => { t.style.height = 'auto'; t.style.height = Math.min(160, t.scrollHeight + 2) + 'px'; };
+const TN_ACTIONS = {
+  'tn-q': (el) => { const t = $('#tn-ta'); if (!t) return; const v = el.dataset.v; t.value = t.value.trim() ? `${t.value.trim()} · ${v}` : v; t.focus(); t.setSelectionRange(t.value.length, t.value.length); tnGrow(t); },
+  'tn-save': (el) => { const t = $('#tn-ta'); const v = (t?.value || '').trim(); if (!v && !S.tyNoteEdit) { t?.focus(); return; } tyNoteSave(el.dataset.no, v); },
+  'tn-edit': (el) => { S.tyNoteEdit = el.dataset.no; tnRedraw(); },
+  'tn-cancel': () => { S.tyNoteEdit = null; document.activeElement?.blur(); if (DRW.key) drawerOpen('ty', DRW.key); },
+  'tn-del': (el) => tyNoteSave(el.dataset.no, ''),
+};
 function tyoBody(p) {
   const r = p.tab === 'cancelled' ? null : orderProfit(p);
   const sh = ordShort(p);
@@ -4186,6 +4227,7 @@ function tyoBody(p) {
     ${p.can_label ? `<button class="oc-btn${p.tab !== 'new' && !p.label_at ? ' pri' : ''}" data-act="ty-label" data-id="${esc(p.package_id)}">${icon(p.label_at ? 'check' : 'print')} ${p.label_at ? 'Barkodu tekrar bas' : 'Barkodu bas'}</button>${p.label_at ? `<small class="faint oc-lbl">${fmtWhen(p.label_at)} basıldı</small>` : ''}` : ''}`;
   const hits = orderRuleHits(p);
   return `<div class="oc">
+    ${tyNoteHTML(p)}
     ${hits.length ? `<div class="oc-rules">${hits.map((h) => `<span class="oc-rule t-${h.tone}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}</div>` : ''}
     <div class="oc-items">${lines}
       <p class="muted oc-foot">${p.pkg_total != null ? `Müşterinin ödediği <b>${fmtTL(p.pkg_total)}</b>` : ''}${dl ? ` · son teslim ${fmtDl(dl)}` : ''} · paket ${esc(p.package_id || '')}</p></div>
@@ -4221,7 +4263,16 @@ const DRAWER_KINDS = {
       return `<button type="button" class="btn btn-ghost btn-sm" data-drw-copy="${esc(p.order_number)}">${icon('copy')} Sipariş no</button>${p.customer ? `<button type="button" class="btn btn-ghost btn-sm" data-drw-copy="${esc(p.customer)}" data-what="Müşteri adı">${icon('copy')} Müşteri</button>` : ''}
         <span class="spacer"></span><span class="faint drw-keys"><kbd>↑</kbd><kbd>↓</kbd> gez · <kbd>Esc</kbd></span>`;
     },
-    bind(root) { root.querySelector('.oc-pf')?.addEventListener('toggle', (e) => { try { localStorage.setItem('tyoPf', e.target.open ? '1' : '0'); } catch { /* */ } }); },
+    bind(root) {
+      const ta = root.querySelector('#tn-ta');
+      if (ta) {
+        ta.oninput = () => tnGrow(ta);
+        ta.onkeydown = (e) => {
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); root.querySelector('[data-act="tn-save"]')?.click(); }
+          else if (e.key === 'Escape' && S.tyNoteEdit) { e.stopPropagation(); ACTIONS['tn-cancel'](); }
+        };
+      }
+      root.querySelector('.oc-pf')?.addEventListener('toggle', (e) => { try { localStorage.setItem('tyoPf', e.target.open ? '1' : '0'); } catch { /* */ } }); },
   },
   claim: {
     rows: () => $$('.cl-row[data-key]'), keyOf: (r) => r.dataset.key,
@@ -6344,6 +6395,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (PAL)
 // ================================================================== actions
 const stepInput = (sel, d, min = 1, max = 9999) => { const i = $(sel); i.value = clamp((parseInt(i.value) || 0) + d, min, max); i.dispatchEvent(new Event('input')); };
 const ACTIONS = {
+  ...TN_ACTIONS,
   'close': () => closeModal(),
   'diag-dl': () => diagDownload(),
   'demo-end': () => demoEnd(),

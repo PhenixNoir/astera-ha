@@ -1,5 +1,10 @@
 # Sürüm notları
 
+## 1.9.9
+- Sipariş notu: Trendyol siparişine not eklenebilir (hediye paketi, farklı renk, not kartı, acele hazır seçenekleriyle). Listede sarı not etiketi, sipariş panelinin üstünde yapışkan not olarak görünür; düzenlenir, silinir.
+- Yazıcının bitirdiği ama ürünü girilmemiş baskıda artık süre istenmez: ürünü seçip "Kaydet, sonucu gir" ile sonuç girilir, sağlam çıkanlar stoğa eklenir.
+- Ürün görselini büyütünce uzun görseller ekrandan taşmıyor, pencereye sığdırılıyor.
+
 ## 1.9.8
 - Düşük kâr uyarısı: yeni bir Trendyol siparişinin tahmini kâr marjı eşiğin altındaysa ekranda uyarı çıkar ve "Gördüm" denene kadar kapanmaz. Eşik Ayarlar → Mağaza ve Kargo'dan değişir (varsayılan %10, kapatılabilir).
 - Kurulum sihirbazı: yeni "Görünüm" (palet, açık/koyu mod, animasyon, yazı boyutu; tema dalga animasyonuyla değişir) ve "Uyarılar" (düşük kâr eşiği, sesler, keşif ipuçları) adımları.

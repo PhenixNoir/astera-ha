@@ -197,6 +197,11 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+CREATE TABLE IF NOT EXISTS ty_notes (
+    order_number TEXT PRIMARY KEY,
+    note TEXT NOT NULL,
+    updated_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS ty_lines (
     line_key TEXT PRIMARY KEY,
     order_number TEXT,
@@ -1785,7 +1790,7 @@ def _create_job(req):
         if qty < 1:
             raise ApiError("Adet en az 1 olmalı")
         minutes = int(minutes) if minutes not in (None, "") else int(c["print_minutes"] or 0) * qty
-        if minutes < 1:
+        if minutes < 1 and not b.get("finished"):
             raise ApiError("Baskı süresi girin")
         cur = db().execute(
             """INSERT INTO print_jobs(component_id,print_type,quantity,printer,note,started_at,ends_at,status)
@@ -1804,7 +1809,7 @@ def _create_job(req):
         if o["status"] in ("delivered", "cancelled"):
             raise ApiError("Teslim edilmiş veya iptal edilmiş sipariş basılamaz")
         minutes = int(minutes) if minutes not in (None, "") else int(o["print_minutes"] or 0)
-        if minutes < 1:
+        if minutes < 1 and not b.get("finished"):
             raise ApiError("Baskı süresi girin")
         alloc = [{"leaf": str(a.get("leaf"))[:16], "qty": max(0, int(a.get("qty") or 0))}
                  for a in (b.get("order_items") or [])[:200] if isinstance(a, dict) and a.get("leaf")]
@@ -1850,7 +1855,7 @@ def _create_job(req):
             raise ApiError("Bu baskıda hangi parçaları bastığınızı seçin")
         qty = sum(q for _, q in chosen)
     minutes = int(minutes) if minutes not in (None, "") else int(p["print_minutes"] or 0)
-    if minutes < 1:
+    if minutes < 1 and not b.get("finished"):   # yazıcı çoktan bitirdiyse süre gerekmez; sonuç hemen sorulur
         raise ApiError("Baskı süresi girin")
     cur = db().execute(
         "INSERT INTO print_jobs(product_id,print_type,quantity,printer,note,started_at,ends_at,status) VALUES(?,?,?,?,?,?,?, 'printing')",
@@ -3287,6 +3292,13 @@ def api_settings_save(req):
     if "printers" in b:
         bambu.reload()
     return {**trendyol.public_settings(), "lan_ips": lan_addresses()}
+
+
+@route("PUT", "/api/trendyol/notes/{no}", lock=False)
+def api_ty_note(req, no):
+    if not re.fullmatch(r"[\w-]{1,40}", no or ""):
+        raise ApiError("Sipariş numarası geçersiz")
+    return trendyol.set_note(no, (req.json() or {}).get("note"))
 
 
 @route("POST", "/api/trendyol/test", lock=False)

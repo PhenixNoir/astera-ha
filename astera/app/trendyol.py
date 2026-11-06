@@ -1018,7 +1018,10 @@ def orders(month=None, start=None, end=None):
                            "unit_price": r["unit_price"], "state": r["state"], "status": r["ty_status"], "line_id": r["line_id"],
                            "commission": r["commission"], "usual_commission": r["usual_commission"]})
     out, counts = [], {t: 0 for t in ORDER_TABS}
+    with _lock:
+        notes = {r["order_number"]: (r["note"], r["updated_at"]) for r in _db().execute("SELECT * FROM ty_notes")}
     for g in pk.values():
+        g["note"], g["note_at"] = notes.get(g["order_number"], (None, None))
         live = [st for st in g["statuses"] if st not in CANCEL_STATES]
         g["status"] = live[0] if live else (g["statuses"][0] if g["statuses"] else "")
         g["tab"] = _tab_of(g["status"])
@@ -1654,3 +1657,20 @@ def check_buybox():
         _set("ty_buybox_error", "")
         _db().commit()
     return {"checked": len(info), "multi": multi, "lost": lost}
+
+
+def set_note(order_number, note):
+    """Siparişe elle yazılan not (hediye paketi, renk değişikliği…); boş not siler."""
+    order_number = str(order_number or "").strip()
+    if not re.fullmatch(r"[\w-]{1,40}", order_number):
+        raise TrendyolError("Sipariş numarası geçersiz")
+    note = (note or "").strip()[:500]
+    with _lock:
+        if note:
+            _db().execute("INSERT INTO ty_notes(order_number,note,updated_at) VALUES(?,?,?) "
+                          "ON CONFLICT(order_number) DO UPDATE SET note=excluded.note, updated_at=excluded.updated_at",
+                          (order_number, note, _now()))
+        else:
+            _db().execute("DELETE FROM ty_notes WHERE order_number=?", (order_number,))
+        _db().commit()
+    return {"order_number": order_number, "note": note or None, "note_at": _now() if note else None}
