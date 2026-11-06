@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.9.11
+- Rekor gün şeridi panonun en üstüne taşındı ve büyüdü: ortalanmış büyük yazı, akan altın arka plan, dönen ışınlar, yıldızlar, sallanan taçlar; ilk görüşte konfeti, tıklayınca yine konfeti.
+
 ## 1.9.10
 - Sipariş listesinde bir siparişin üzerine gelince altında ürünlerin büyük görselleri, adetleri ve eksikleri çıkar.
 - Sipariş paneli küçük ekranlarda daha geniş açılır; ürünler ve işlemler panel genişliğine göre yan yana ya da alt alta dizilir.

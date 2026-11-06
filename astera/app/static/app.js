@@ -552,7 +552,7 @@ PAGES[''] = {
   },
   html() {
     const layout = dashLayout(), editing = !!S.dashEdit;
-    return `<div class="dash-tools">${editing
+    return `${editing ? '' : recordHTML()}<div class="dash-tools">${editing
         ? `<span class="muted">Bölümleri sürükleyin ya da oklarla taşıyın. Düzen bu cihaza kaydedilir.</span><span class="spacer"></span><button class="btn btn-sm btn-ghost" data-act="dash-reset">Varsayılana dön</button><button class="btn btn-sm btn-primary" data-act="dash-edit">Bitti</button>`
         : `<span class="spacer"></span><button class="btn btn-sm btn-ghost" data-act="dash-edit">${icon('edit')} Panoyu düzenle</button>`}</div>
       ${editing ? '' : issuesHTML()}
@@ -629,10 +629,28 @@ function bindDashDrag() {
   }, { passive: true });
   document.addEventListener('pointerleave', () => { if (cur) { reset(cur); cur = null; } });
 })();
+// ---------- Rekor gün: panonun en üstünde altın şerit; ilk görüşte (ve rekor her büyüdüğünde) konfeti
+function recordHTML() {
+  const d = S.dash || {};
+  if (!(d.orders_best > 0 && d.orders_today > d.orders_best && d.orders_today >= 3)) return '';
+  const key = `${new Date().toDateString()}:${d.orders_today}`, fresh = S.recSeen !== key;
+  if (fresh) {
+    S.recSeen = key;
+    let last = ''; try { last = localStorage.getItem('rec-cf') || ''; } catch { /* */ }
+    if (last !== key && FX()) { setTimeout(() => { confetti(); setTimeout(confetti, 700); }, 450); try { localStorage.setItem('rec-cf', key); } catch { /* */ } }
+  }
+  const sp = Array.from({ length: 14 }, (_, i) => `<i class="rec-sp" style="--x:${(i * 73) % 100}%;--y:${(i * 37) % 100}%;--d:${(i % 7) * 0.35}s;--s:${0.7 + (i % 4) * 0.25}"></i>`).join('');
+  return `<section class="rec-hero${fresh ? ' fresh' : ''}" role="status" data-act="rec-party" title="Kutlamaya tıkla">
+    <span class="rec-rays" aria-hidden="true"></span>${sp}
+    <div class="rec-c"><span class="rec-crown">${icon('crown')}</span>
+      <div><h2>Rekor gün!</h2><p>Bugün <b>${d.orders_today}</b> sipariş geldi · önceki en iyi gün <b>${d.orders_best}</b> · <span class="rec-up">+${d.orders_today - d.orders_best}</span></p></div>
+      <span class="rec-crown r">${icon('crown')}</span></div>
+  </section>`;
+}
+const REC_ACTIONS = { 'rec-party': (el) => { if (!FX()) return; confetti(); el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); } };
 function readoutHTML() {
   const d = S.dash || {};
-  const rec = d.orders_best > 0 && d.orders_today > d.orders_best && d.orders_today >= 3;
-  return `${rec ? `<div class="rec-badge" role="status"><i>${icon('crown')}</i><b>Rekor gün!</b> Bugün ${d.orders_today} sipariş geldi · önceki en iyi gün ${d.orders_best}</div>` : ''}<div class="readout">
+  return `<div class="readout">
     <div><b>${d.stock_total ?? 0}</b><span>Stoktaki ürün adedi</span></div>
     <div><b>${d.in_production ?? 0}</b><span>Şu an üretimde</span></div>
     <div><b>${d.sold_24h ?? 0}</b><span>Son 24 saatte satılan</span></div>
@@ -6430,6 +6448,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (PAL)
 const stepInput = (sel, d, min = 1, max = 9999) => { const i = $(sel); i.value = clamp((parseInt(i.value) || 0) + d, min, max); i.dispatchEvent(new Event('input')); };
 const ACTIONS = {
   ...TN_ACTIONS,
+  ...REC_ACTIONS,
   'close': () => closeModal(),
   'diag-dl': () => diagDownload(),
   'demo-end': () => demoEnd(),
