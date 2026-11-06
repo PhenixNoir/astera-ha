@@ -2605,8 +2605,8 @@ button.island:hover{background:#1f2226}
 .island .is-t b{font-weight:700}
 .island .is-more{opacity:.6;font-size:13px}
 .island .is-bar{position:absolute;inset:0;z-index:-1;pointer-events:none;transform-origin:left;
-  background:linear-gradient(90deg,color-mix(in srgb,var(--ic,#888) 30%,transparent),color-mix(in srgb,var(--ic,#888) 15%,transparent));animation:is-drain 5s linear forwards}
-.island:hover .is-bar{animation-play-state:paused}
+  background:linear-gradient(90deg,color-mix(in srgb,var(--ic,#888) 30%,transparent),color-mix(in srgb,var(--ic,#888) 15%,transparent));transform:scaleX(1)}
+
 @keyframes is-drain{from{transform:scaleX(1)}to{transform:scaleX(0)}}
 .island .is-go{margin-left:auto;flex:none;font-size:13px;font-weight:700;color:color-mix(in srgb,var(--ic,#888) 55%,#fff)}
 .island .is-ic{flex:none;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:var(--ic,#555);color:#fff}
@@ -3199,7 +3199,7 @@ body.k-dragging .kanban .kcol.drop-on { outline-color: var(--pei); background: v
 :root[data-motion="calm"] .pb.heat-up > i, :root[data-motion="calm"] .hc.up, :root[data-motion="calm"] .hc.up svg .w, :root[data-motion="calm"] .hp-haze, :root[data-motion="calm"] .hp-st.up::before { animation: none !important; }
 
 /* ================= 4. aşama: sağ çekmece + kart → çekmece ================= */
-.drw { position: fixed; top: 12px; right: 12px; bottom: 12px; width: min(clamp(520px, 44vw, 720px), calc(100vw - 24px)); z-index: 45; display: flex; flex-direction: column; overflow: hidden;
+.drw { position: fixed; top: 12px; right: 12px; bottom: 12px; width: min(calc(100vw - 24px), 780px, max(66vw, 520px)); z-index: 45; display: flex; flex-direction: column; overflow: hidden;
   background: var(--sheet); border: 1px solid var(--line); border-radius: 18px; box-shadow: -28px 0 70px -24px rgba(0,0,0,.42), 0 0 0 1px rgba(0,0,0,.02);
   animation: drw-in .55s cubic-bezier(.2, 1.12, .3, 1) both; }
 .drw.out { animation: drw-out .3s cubic-bezier(.5, 0, .75, 0) both; pointer-events: none; }
@@ -3215,7 +3215,7 @@ body.k-dragging .kanban .kcol.drop-on { outline-color: var(--pei); background: v
 .drw-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; } .drw-tags:empty { display: none; }
 .drw-nav { display: flex; gap: 2px; flex: none; margin-top: -4px; }
 .drw-nav [data-drw="-1"] svg { transform: rotate(180deg); }
-.drw-b { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px 18px; display: grid; gap: 12px; align-content: start; }
+.drw-b { container: drwb / inline-size; flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px 18px; display: grid; gap: 12px; align-content: start; }
 .drw-f { display: flex; gap: 8px; align-items: center; padding: 12px 14px; border-top: 1px solid var(--line-2); background: var(--sheet); flex-wrap: wrap; }
 .drw-f .spacer { flex: 1; }
 /* içerik sırayla gelir; satırlar arası geçişte yön gösterir */
@@ -3272,11 +3272,12 @@ body.drw-on .tyo-row:not(.dr-cur), body.drw-on .dr-row:not(.dr-cur) { opacity: .
 .drw .oc-rules { padding: 0; }
 .drw-keys { font-size: 12px; } .drw-keys kbd { font: 600 11px var(--ui); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; margin: 0 1px; background: var(--sheet); color: var(--ink-2); }
 /* geniş çekmecede sipariş ayrıntısı: solda ürünler, sağda kargo ve işlemler */
-@media (min-width: 1500px) {
+@container drwb (min-width: 640px) {
   .drw .oc { grid-template-columns: minmax(0, 1fr) 220px; column-gap: 18px; }
   .drw .oc-rules, .drw .oc-pf { grid-column: 1 / -1; }
   .drw .oc-acts { display: grid; }
 }
+@media (max-width: 1100px) and (min-width: 761px) { .drw { width: min(calc(100vw - 24px), 88vw); } }
 /* gelecek ödemeler: gün açılınca siparişler */
 .fin-up { display: grid; }
 .fin-d { border-bottom: 1px solid var(--line-2); } .fin-d:last-child { border-bottom: 0; }
@@ -3571,3 +3572,24 @@ tr.pen-open td { background: color-mix(in srgb, var(--bad) 7%, transparent); }
 .tyo-who .tn-pin { justify-self: start; margin: 3px 0 2px 0; max-width: 100%; }
 .oc > .tn-sticky, .oc > .tn-add { grid-column: 1 / -1; margin: 12px 16px 0; }
 .drw .oc > .tn-sticky, .drw .oc > .tn-add { margin: 0 0 14px; }
+
+/* ---------- Sipariş listesinde üzerine gelince ürün önizlemesi */
+.tpv { position: fixed; z-index: 60; pointer-events: none; opacity: 0; transform: translateY(-6px) scale(.97); transform-origin: var(--ax, 20px) 0;
+  transition: opacity .16s ease, transform .22s cubic-bezier(.2, 1.2, .4, 1); }
+.tpv.up { transform-origin: var(--ax, 20px) 100%; transform: translateY(6px) scale(.97); }
+.tpv.on { opacity: 1; transform: none; }
+.tpv-in { position: relative; display: flex; gap: 10px; align-items: flex-start; padding: 10px; border-radius: 14px; background: var(--sheet); border: 1px solid var(--line);
+  box-shadow: 0 22px 50px -18px rgba(0, 0, 0, .45), 0 2px 6px rgba(0, 0, 0, .06); max-width: min(800px, calc(100vw - 16px)); }
+.tpv-in::before { content: ""; position: absolute; left: calc(var(--ax, 20px) - 6px); top: -7px; width: 12px; height: 12px; background: var(--sheet); border-left: 1px solid var(--line); border-top: 1px solid var(--line); transform: rotate(45deg); }
+.tpv.up .tpv-in::before { top: auto; bottom: -7px; transform: rotate(225deg); }
+.tpv-it { width: 120px; display: grid; gap: 5px; }
+.tpv.on .tpv-it { animation: tpv-it .32s calc(var(--i, 0) * 40ms) cubic-bezier(.2, 1.1, .4, 1) both; }
+.tpv-im { position: relative; width: 120px; height: 120px; border-radius: 12px; background: var(--sheet-2) var(--img) center / cover no-repeat; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .06); }
+.tpv-im.none { background-image: none; }
+.tpv-im i { position: absolute; left: 6px; bottom: 6px; font-style: normal; font: 800 12.5px/1 var(--ui); background: rgba(0, 0, 0, .66); color: #fff; border-radius: 8px; padding: 4px 8px; backdrop-filter: blur(4px); }
+.tpv-im em { position: absolute; right: 6px; top: 6px; font-style: normal; font: 800 11px/1 var(--ui); background: var(--bad); color: #fff; border-radius: 7px; padding: 3px 6px; }
+.tpv-it b { font-size: 12.5px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--ink); }
+.tpv-more { align-self: center; font: 800 15px var(--ui); color: var(--ink-2); padding: 0 6px; }
+@keyframes tpv-it { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .tpv, .tpv-it { transition: none !important; animation: none !important; } }
+:root[data-motion="off"] .tpv, :root[data-motion="off"] .tpv-it { transition: none !important; animation: none !important; }

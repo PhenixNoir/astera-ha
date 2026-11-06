@@ -1,5 +1,10 @@
 # Sürüm notları
 
+## 1.9.10
+- Sipariş listesinde bir siparişin üzerine gelince altında ürünlerin büyük görselleri, adetleri ve eksikleri çıkar.
+- Sipariş paneli küçük ekranlarda daha geniş açılır; ürünler ve işlemler panel genişliğine göre yan yana ya da alt alta dizilir.
+- Alttaki bildirim şeridi artık takılı kalmıyor: imlecin altında açılsa da süresi dolunca kapanır, en geç 12 sn fazladan bekler.
+
 ## 1.9.9
 - Sipariş notu: Trendyol siparişine not eklenebilir (hediye paketi, farklı renk, not kartı, acele hazır seçenekleriyle). Listede sarı not etiketi, sipariş panelinin üstünde yapışkan not olarak görünür; düzenlenir, silinir.
 - Yazıcının bitirdiği ama ürünü girilmemiş baskıda artık süre istenmez: ürünü seçip "Kaydet, sonucu gir" ile sonuç girilir, sağlam çıkanlar stoğa eklenir.

@@ -61,22 +61,23 @@ function island(kind, text, opts = {}) {
   el.className = `island k-${kind}`;
   const ms = opts.ms || 5000;
   // Arkadaki dolgu kalan süreyi gösterir: sağdan sola çekilir, bitince şerit kapanır; fare üstündeyken durur.
-  el.innerHTML = `<span class="is-bar" style="animation-duration:${ms}ms"></span><span class="is-ic">${icon(ISLAND_IC[kind] || 'bell')}</span><span class="is-t">${text}</span>${opts.href ? '<span class="is-go">Aç →</span>' : ''}`;
-  if (opts.href) el.onclick = () => { location.hash = opts.href; el.remove(); };
+  el.innerHTML = `<span class="is-bar"></span><span class="is-ic">${icon(ISLAND_IC[kind] || 'bell')}</span><span class="is-t">${text}</span>${opts.href ? '<span class="is-go">Aç →</span>' : ''}`;
+  if (opts.href) el.onclick = () => { location.hash = opts.href; out(); };
   box.appendChild(el);
-  let gone = false;
-  const out = () => { if (gone) return; gone = true; el.classList.add('out'); setTimeout(() => el.remove(), 260); };
+  // Süreyi JS saati tutar, bar yalnız gösterir. Fare gerçekten üzerinde gezinirse durur (şerit imlecin altında açılınca durmaz);
+  // ne olursa olsun en geç süre + 12 sn sonra kapanır.
+  let gone = false, left = ms, t0 = Date.now(), tm = 0, held = false;
+  function out() { if (gone) return; gone = true; clearTimeout(tm); clearTimeout(cap); el.classList.add('out'); setTimeout(() => el.remove(), 260); }
+  const cap = setTimeout(out, ms + 12000);
   const bar = el.querySelector('.is-bar');
-  if (REDUCED() || !bar.getAnimations) {
-    let left = ms, t0 = Date.now(), tm;
-    const run = () => { t0 = Date.now(); tm = setTimeout(out, left); };
-    el.addEventListener('mouseenter', () => { clearTimeout(tm); left = Math.max(800, left - (Date.now() - t0)); });
-    el.addEventListener('mouseleave', run);
-    run();
-  } else {
-    bar.addEventListener('animationend', out);
-    setTimeout(() => { if (!bar.getAnimations().length && !el.matches(':hover')) out(); }, ms + 600); // animasyon çalışmadıysa yedek
-  }
+  let anim = null;
+  try { if (!REDUCED() && bar.animate) anim = bar.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: ms, easing: 'linear', fill: 'forwards' }); } catch { /* */ }
+  const run = () => { t0 = Date.now(); clearTimeout(tm); tm = setTimeout(out, left); anim?.play(); };
+  const hold = () => { if (held || gone) return; held = true; clearTimeout(tm); left = Math.max(1200, left - (Date.now() - t0)); anim?.pause(); };
+  const release = () => { if (!held || gone) return; held = false; run(); };
+  el.addEventListener('pointermove', hold);
+  el.addEventListener('pointerleave', release);
+  run();
 }
 
 const nowS = () => Math.floor(Date.now() / 1000) + S.offset;
@@ -4136,6 +4137,39 @@ function plusTags(p, long) {
   if (p.comm_cut) out.push(`<span class="plus-tag soft" title="Bu siparişte komisyon %${p.comm_cut.rate} (ürünün olağan komisyonu %${p.comm_cut.usual})">${long ? `Komisyon %${p.comm_cut.rate} · olağanı %${p.comm_cut.usual}` : `%${p.comm_cut.rate} komisyon`}</span>`);
   return out.length ? ' ' + out.join(' ') : '';
 }
+// ---------- Siparişin üzerine gelince altta ürün görselleri (büyük görsel, adet, kısa ad); dokunmatikte ve panel açıkken yok
+const TPV = { t: 0, key: null };
+function tyoPreviewHide() { clearTimeout(TPV.t); TPV.key = null; const el = $('#tpv'); if (el) { el.classList.remove('on'); } }
+function tyoPreviewShow(row) {
+  const p = (S.tyOrders?.packages || []).find((x) => String(x.package_id) === row.dataset.pkg); if (!p) return;
+  const live = p.lines.filter((l) => !TY_CANCEL.has(l.status)), lines = live.length ? live : p.lines;
+  const sh = ordShort(p), show = lines.slice(0, 6);
+  let el = $('#tpv');
+  if (!el) { el = document.createElement('div'); el.id = 'tpv'; el.className = 'tpv'; el.setAttribute('aria-hidden', 'true'); document.body.appendChild(el); }
+  el.innerHTML = `<div class="tpv-in">${show.map((l, i) => { const miss = sh.by[l.product_id]?.miss;
+    return `<div class="tpv-it" style="--i:${i}"><span class="tpv-im${l.thumbnail ? '' : ' none'}" style="${thumbStyle(l.thumbnail)}"><i>×${l.quantity}</i>${miss ? `<em>${miss} eksik</em>` : ''}</span><b>${esc(l.name || 'Eşleşmemiş ürün')}</b></div>`; }).join('')}
+    ${lines.length > show.length ? `<div class="tpv-more">+${lines.length - show.length}</div>` : ''}</div>`;
+  const rr = row.getBoundingClientRect(), th = row.querySelector('.tyo-thumbs')?.getBoundingClientRect() || rr;
+  el.classList.remove('on', 'up'); el.style.left = '0px'; el.style.top = '0px';
+  const w = el.offsetWidth, h = el.offsetHeight, z = ZF();
+  let x = Math.max(8, Math.min(th.left / z - 14, innerWidth / z - w - 8)), y = rr.bottom / z + 8;
+  if (y + h > innerHeight / z - 8) { y = rr.top / z - h - 8; el.classList.add('up'); }
+  el.style.left = `${x}px`; el.style.top = `${y}px`; el.style.setProperty('--ax', `${Math.max(16, th.left / z + 18 - x)}px`);
+  void el.offsetWidth; el.classList.add('on');
+}
+if (matchMedia('(hover: hover) and (pointer: fine)').matches) {
+  document.addEventListener('mouseover', (e) => {
+    const row = e.target.closest?.('.tyo-row');
+    if (!row) { if (TPV.key) tyoPreviewHide(); return; }
+    if (row.dataset.pkg === TPV.key || e.target.closest('input,button,select,a,.chk')) { if (e.target.closest('input,button,select,a,.chk')) tyoPreviewHide(); return; }
+    tyoPreviewHide(); if ($('#drw') || $('.drw') || document.querySelector('.modal-back')) return;
+    TPV.key = row.dataset.pkg;
+    TPV.t = setTimeout(() => { if (TPV.key === row.dataset.pkg && row.isConnected && row.matches(':hover')) tyoPreviewShow(row); }, 300);
+  });
+  addEventListener('scroll', tyoPreviewHide, true);
+  addEventListener('mousedown', tyoPreviewHide, true);
+  addEventListener('hashchange', tyoPreviewHide);
+}
 function tyoRow(p, r) {
   const live = p.lines.filter((l) => !TY_CANCEL.has(l.status));
   const thumbs = (live.length ? live : p.lines);
@@ -4155,7 +4189,7 @@ function tyoRow(p, r) {
     <details class="tyo" ${S.tyo.open.has(p.package_id) ? 'open' : ''} data-tyo-open="${esc(p.package_id)}">
       <summary>
         <span class="tyo-no"><b>${esc(p.order_number)}</b><small class="faint">${date}</small></span>
-        <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l, ti) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" style="${floatVars(p.package_id + ':' + ti)}" title="${esc(l.name || '')} ×${l.quantity}${sh.by[l.product_id]?.miss ? ` · rafta ${sh.by[l.product_id].have}, baskıda ${sh.by[l.product_id].print}, ${sh.by[l.product_id].miss} eksik` : ''}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? qtyBadge(l.quantity, 'tt-qb') : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
+        <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l, ti) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" style="${floatVars(p.package_id + ':' + ti)}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? qtyBadge(l.quantity, 'tt-qb') : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
         <span class="tyo-who"><b>${esc(p.customer || '—')}</b>${p.note ? `<span class="tn-pin" title="${esc(p.note)}">📝 ${esc(p.note)}</span>` : ''}<small class="muted">${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''}${plusTags(p)}${orderRuleHits(p).map((h) => ` <span class="rule-tag t-${h.tone}" title="${esc(h.text)}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? ` <span class="near-tag" title="Mağazayla aynı yer: pakete not eklemeyi unutmayın">${icon('pin')} Yakın · not ekle</span>` : ''}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
         <span class="tyo-amt">${r ? fmtTL(r.price) : p.pkg_total != null ? fmtTL(p.pkg_total) : '–'}</span>
         <span class="tyo-pr">${r ? `<span class="mg ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)}</span><small class="faint">${fmtPct(r.margin)}${r.missing.length ? ' · <span class="warn-text">eksik</span>' : ''}</small>` : '<span class="faint">–</span>'}</span>
