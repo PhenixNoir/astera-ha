@@ -4306,7 +4306,7 @@ def diag_report(client_json=""):
                     pass
             com = [dict(r) for r in db().execute("""SELECT t.commission, p.ty_commission, COUNT(*) n FROM ty_lines t LEFT JOIN products p ON p.id=t.product_id
                                                    WHERE t.commission IS NOT NULL GROUP BY t.commission, p.ty_commission ORDER BY n DESC LIMIT 30""")]
-        return {"indirim_etiketleri": disc, "paket_alanlari": dict(trendyol.PKG_SHAPE), "komisyon_dagilimi": com, "satir_durumlari": st, "son_esitleme": s.get("ty_last_sync"), "son_hata": s.get("ty_last_error"),
+        return {"indirim_etiketleri": disc, "paket_alanlari": dict(trendyol.PKG_SHAPE), "soru_alanlari": dict(musteri.Q_SHAPE), "komisyon_dagilimi": com, "satir_durumlari": st, "son_esitleme": s.get("ty_last_sync"), "son_hata": s.get("ty_last_error"),
                 "son_sonuc": s.get("ty_last_result"), "acik": s.get("ty_enabled"), "dusme_asamasi": s.get("ty_deduct_at")}
 
     def fin():

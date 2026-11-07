@@ -163,14 +163,15 @@ def _eff_deadline(ms):
 def _trendyol():
     if not (_get("ty_seller_id") or ""):
         return
-    rows = _db().execute("""SELECT t.package_id, t.order_number, t.order_date, t.deadline, t.quantity, t.state, t.barcode,
+    rows = _db().execute("""SELECT t.package_id, t.order_number, t.order_date, t.deadline, t.quantity, t.state, t.barcode, p.thumbnail,
                                    COALESCE(p.name || COALESCE(' — ' || NULLIF(p.variant_label,''), ''), t.product_name) name
                             FROM ty_lines t LEFT JOIN products p ON p.id=t.product_id
                             WHERE t.ty_status IN ('Created','Awaiting')""").fetchall()
     pk = {}
     for r in rows:
-        g = pk.setdefault(r["package_id"] or r["order_number"], {"no": r["order_number"], "date": r["order_date"] or 0, "dl": r["deadline"], "names": []})
+        g = pk.setdefault(r["package_id"] or r["order_number"], {"no": r["order_number"], "date": r["order_date"] or 0, "dl": r["deadline"], "names": [], "imgs": []})
         g["names"].append(f"{r['name']} ×{r['quantity']}")
+        g["imgs"].append([r["thumbnail"] or "", int(r["quantity"] or 1)])
     # yeni siparişler: son görülenden sonra gelenler tek bildirimde toplanır
     seen = int(_get("nf_ty_seen", "0") or 0)
     if not seen:
@@ -186,15 +187,21 @@ def _trendyol():
         pkgs = ([g["key"] for g in sorted(new, key=lambda g: -g["date"])] + (prev_act.get("pkgs") or []))[:30]
         n = prev + len(new)
         names = "; ".join(x for g in new for x in g["names"])[:160]
+        # bildirim şeridindeki küçük görseller: aynı görsel tek kez, adetler toplanır; en yeniler önde
+        imgs = {}
+        for g in sorted(new, key=lambda g: -g["date"]):
+            for u, q in g["imgs"]:
+                imgs[u] = imgs.get(u, 0) + q
+        imgs = ([[u, q] for u, q in imgs.items()] + [x for x in (prev_act.get("imgs") or []) if x[0] not in imgs])[:12]
         t = _now()
         if cur and cur["resolved_at"] is None:
             _db().execute("UPDATE notifications SET title=?, body=?, action=?, updated_at=?, created_at=? WHERE id=?",
-                          (f"{n} yeni Trendyol siparişi", names, json.dumps({"t": "order", "href": "#/siparisler", "n": n, "pkgs": pkgs}), t, t, cur["id"]))
+                          (f"{n} yeni Trendyol siparişi", names, json.dumps({"t": "order", "href": "#/siparisler", "n": n, "pkgs": pkgs, "imgs": imgs}), t, t, cur["id"]))
             nid = cur["id"]
         else:
             nid = _db().execute("""INSERT INTO notifications(key,kind,level,title,body,action,created_at,updated_at,cleared)
                              VALUES('tynew','trendyol','info',?,?,?,?,?,1)""",
-                          (f"{n} yeni Trendyol siparişi", names, json.dumps({"t": "order", "href": "#/siparisler", "n": n, "pkgs": pkgs}), t, t)).lastrowid
+                          (f"{n} yeni Trendyol siparişi", names, json.dumps({"t": "order", "href": "#/siparisler", "n": n, "pkgs": pkgs, "imgs": imgs}), t, t)).lastrowid
         _set("nf_ty_seen", max(g["date"] for g in new))
         global _push
         _push = True

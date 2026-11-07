@@ -1,5 +1,12 @@
 # Sürüm notları
 
+## 1.9.12
+- Yeni sipariş bildirim şeridinde siparişteki ürünlerin küçük görselleri (adetleriyle) görünür.
+- Siparişler sayfasının üst kısmı sıkılaştı: sekmeler tek satırda, arama ve filtreler tek satırda, özet çubuğu ince; laptop ekranlarında başlık küçülür.
+- Müşteri soruları: müşterinin sorunun ürün sayfasında yayınlanmasını isteyip istemediği görünür.
+- İadeler: müşterinin yeni açtığı talepler artık "Yolda" değil "Talep açıldı" olarak görünür; sekmenin adı "Gelecek", uzun bekleyenlerde kaç gündür beklendiği yazar.
+- Hata raporuna Trendyol soru kaydının alan adları eklendi (değerler olmadan).
+
 ## 1.9.11
 - Rekor gün şeridi panonun en üstüne taşındı ve büyüdü: ortalanmış büyük yazı, akan altın arka plan, dönen ışınlar, yıldızlar, sallanan taçlar; ilk görüşte konfeti, tıklayınca yine konfeti.
 

@@ -54,7 +54,7 @@ CREATE INDEX IF NOT EXISTS idx_q_status ON ty_questions(status);
 
 # Kalem durumlarından iadenin genel durumu: işlem bekleyen varsa o, yoksa yolda olan, yoksa sonuç
 STATUS_ORDER = ["WaitingInAction", "WaitingFraudCheck", "Created", "InAnalysis", "Unresolved", "Rejected", "Accepted", "Cancelled"]
-STATUS_TR = {"WaitingInAction": "İşlem bekliyor", "WaitingFraudCheck": "Kontrol ediliyor", "Created": "Yolda", "InAnalysis": "Analizde",
+STATUS_TR = {"WaitingInAction": "İşlem bekliyor", "WaitingFraudCheck": "Kontrol ediliyor", "Created": "Talep açıldı", "InAnalysis": "Analizde",
              "Unresolved": "Çözümsüz", "Rejected": "Reddedildi", "Accepted": "Onaylandı", "Cancelled": "İptal"}
 NO_FILE_REASONS = {1651, 451, 2101}
 Q_STATUS_TR = {"WAITING_FOR_ANSWER": "Cevap bekliyor", "WAITING_FOR_APPROVE": "Cevap onayda", "ANSWERED": "Cevaplandı",
@@ -68,6 +68,12 @@ def init(db, lock, get_setting, set_setting, change_stock, code_map):
 
 def migrate(c):
     c.executescript(SCHEMA)
+    cols = {r[1] for r in c.execute("PRAGMA table_info(ty_questions)")}
+    if "public" not in cols:   # müşteri sorusunun ürün sayfasında yayınlanmasını isteyip istemediği (1/0; bilinmiyorsa boş)
+        c.execute("ALTER TABLE ty_questions ADD COLUMN public INTEGER")
+
+
+Q_SHAPE = {}   # hata raporu için: Trendyol'un soru kaydında gelen alan adları (değer yok)
 
 
 def _now():
@@ -310,6 +316,10 @@ def sync_questions(days=14, status=None):
                 qid = q.get("id")
                 if qid is None:
                     continue
+                for k, v in q.items():
+                    Q_SHAPE.setdefault(k, v if isinstance(v, bool) else type(v).__name__)
+                pub = q.get("public")
+                pub = None if pub is None else (1 if pub else 0)
                 ans = q.get("answer") or {}
                 rej = q.get("rejectedAnswer") or {}
                 vals = (q.get("productName"), q.get("imageUrl"), q.get("webUrl"), q.get("text"),
@@ -319,10 +329,10 @@ def sync_questions(days=14, status=None):
                         json.dumps({"text": rej.get("text"), "reason": rej.get("reason") or q.get("reason")}, ensure_ascii=False) if rej else None)
                 if _db().execute("SELECT 1 FROM ty_questions WHERE id=?", (int(qid),)).fetchone():
                     _db().execute("""UPDATE ty_questions SET product_name=?, image_url=?, web_url=?, text=?, user_name=?, status=?, created=?,
-                                     answer=?, answer_date=?, rejected=? WHERE id=?""", (*vals, int(qid)))
+                                     answer=?, answer_date=?, rejected=?, public=? WHERE id=?""", (*vals, pub, int(qid)))
                 else:
                     _db().execute("""INSERT INTO ty_questions(product_name, image_url, web_url, text, user_name, status, created, answer,
-                                     answer_date, rejected, id, first_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""", (*vals, int(qid), _now()))
+                                     answer_date, rejected, public, id, first_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", (*vals, pub, int(qid), _now()))
                 got += 1
             _db().commit()
         page += 1

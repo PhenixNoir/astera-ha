@@ -52,6 +52,12 @@ function diagDownload() {
 
 // Alt orta şerit: yeni sipariş / iade / soru ve kısa onaylar. Aynı anda en çok 3 şerit, tıklayınca ilgili sayfa.
 const ISLAND_IC = { order: 'cart', claim: 'return', question: 'chat', ok: 'check' };
+// yeni sipariş şeridinde yazının sağında ürün görselleri (en çok 3, kalanı +N; adet köşede)
+function islandImgs(imgs) {
+  const list = (imgs || []).filter((x) => Array.isArray(x)); if (!list.length) return '';
+  const show = list.slice(0, 3), more = list.length - show.length;
+  return `<span class="is-imgs">${show.map(([u, q], i) => `<span class="is-im${u ? '' : ' none'}" style="--i:${i};${u ? thumbStyle(u) : ''}">${q > 1 ? `<i>×${q}</i>` : ''}</span>`).join('')}${more > 0 ? `<span class="is-imore">+${more}</span>` : ''}</span>`;
+}
 function island(kind, text, opts = {}) {
   let box = $('#islands');
   if (!box) { box = document.createElement('div'); box.id = 'islands'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
@@ -61,7 +67,7 @@ function island(kind, text, opts = {}) {
   el.className = `island k-${kind}`;
   const ms = opts.ms || 5000;
   // Arkadaki dolgu kalan süreyi gösterir: sağdan sola çekilir, bitince şerit kapanır; fare üstündeyken durur.
-  el.innerHTML = `<span class="is-bar"></span><span class="is-ic">${icon(ISLAND_IC[kind] || 'bell')}</span><span class="is-t">${text}</span>${opts.href ? '<span class="is-go">Aç →</span>' : ''}`;
+  el.innerHTML = `<span class="is-bar"></span><span class="is-ic">${icon(ISLAND_IC[kind] || 'bell')}</span><span class="is-t">${text}</span>${islandImgs(opts.imgs)}${opts.href ? '<span class="is-go">Aç →</span>' : ''}`;
   if (opts.href) el.onclick = () => { location.hash = opts.href; out(); };
   box.appendChild(el);
   // Süreyi JS saati tutar, bar yalnız gösterir. Fare gerçekten üzerinde gezinirse durur (şerit imlecin altında açılınca durmaz);
@@ -741,7 +747,7 @@ function notifIslands(list) {
     const body = esc((n.body || '').split(';')[0].trim());
     if (n.key === 'tynew') {
       const k = n.action?.n || 1, more = (n.body || '').split(';').length - 1;
-      island('order', `<b>${k > 1 ? `${k} yeni sipariş` : 'Yeni sipariş'}</b>${body ? ` · ${body}` : ''}${more > 0 ? ` <span class="is-more">+${more}</span>` : ''}`, { href: '#/siparisler' });
+      island('order', `<b>${k > 1 ? `${k} yeni sipariş` : 'Yeni sipariş'}</b>${body ? ` · ${body}` : ''}${more > 0 ? ` <span class="is-more">+${more}</span>` : ''}`, { href: '#/siparisler', imgs: n.action?.imgs });
     } else if (n.kind === 'claim') island('claim', `<b>${esc(n.title || 'Yeni iade')}</b>${body ? ` · ${body}` : ''}`, { href: '#/iadeler', ms: 7000 });
     else if (n.kind === 'question') island('question', `<b>${esc(n.title || 'Yeni soru')}</b>${body ? ` · ${body}` : ''}`, { href: '#/sorular' });
   }
@@ -2810,7 +2816,7 @@ PAGES.siparisler = {
     const tyN = S.tyOrders ? (S.tyOrders.counts.new || 0) : null;
     const cuN = S.orders.filter((o) => ['new', 'printing', 'ready'].includes(o.status)).length;
     const src = `<div class="seg src-seg"><button class="${S.oSrc === 'ty' ? 'on' : ''}" data-act="osrc" data-v="ty">Trendyol${tyN != null ? ` <span class="faint">${tyN} yeni</span>` : ''}</button><button class="${S.oSrc === 'custom' ? 'on' : ''}" data-act="osrc" data-v="custom">Özel siparişler <span class="faint">${cuN}</span></button></div>`;
-    if (S.oSrc === 'ty') return `<div class="toolbar">${src}</div>${tyoPage()}`;
+    if (S.oSrc === 'ty') return tyoPage(src);
     return customOrdersHTML(src);
   },
   after() {
@@ -4037,7 +4043,7 @@ function tyoFiltered() {
   else list.sort((a, b) => b.order_date - a.order_date);
   return list;
 }
-function tyoPage() {
+function tyoPage(src = '') {
   const d = S.tyOrders, t = S.tyo.tab;
   if (!d) return '';
   const active = TYO_ACTIVE.has(t), f = S.tyo;
@@ -4046,21 +4052,21 @@ function tyoPage() {
   const rk = active ? f.rA : f.rD;
   const pname = f.pid ? productById(f.pid)?.name || '' : '';
   const cats = catNames();
-  return `<div class="tyo-stick"><div class="seg tyo-tabs" role="tablist">${TYO_TABS.map(([k, l]) => `<button class="${t === k ? 'on' : ''}" data-act="tyo-tab" data-v="${k}" role="tab">${l} <span class="faint">${counts[k]}</span></button>`).join('')}</div>
-    <div class="toolbar tyo-tools">
-      <label class="search">${icon('search')}<input class="input" id="tyo-q" placeholder="Sipariş no, müşteri, şehir veya ürün" value="${esc(f.q)}" autocomplete="off"></label>
+  // Sıkı düzen: 1. satır kaynak + sekmeler + yenile, 2. satır arama + filtreler (etiketler yalnız ekran okuyucuya)
+  return `<div class="tyo-stick"><div class="toolbar tyo-tools">${src}<div class="seg tyo-tabs" role="tablist">${TYO_TABS.map(([k, l]) => `<button class="${t === k ? 'on' : ''}" data-act="tyo-tab" data-v="${k}" role="tab">${l} <span class="faint">${counts[k]}</span></button>`).join('')}</div>
       <span class="spacer"></span>
+      <label class="switch tyo-det-sw"><input type="checkbox" id="tyo-det" ${tyoDet() ? 'checked' : ''}><span>Ayrıntılı</span></label>
       <span class="faint tyo-sync-t" style="font-size:12.5px">${d.last_sync ? `Son eşitleme ${fmtWhen(d.last_sync)}` : 'Henüz eşitlenmedi'}</span>
-      <button class="btn btn-sm" data-act="tyo-sync">${icon('refresh')} Yenile</button>
+      <button class="btn btn-sm" data-act="tyo-sync" title="${d.last_sync ? `Son eşitleme ${fmtWhen(d.last_sync)}` : 'Henüz eşitlenmedi'}">${icon('refresh')} Yenile</button>
     </div></div>
     <div class="toolbar tyo-filters">
+      <label class="search tyo-search">${icon('search')}<input class="input" id="tyo-q" placeholder="Sipariş no, müşteri, şehir veya ürün" aria-label="Sipariş ara" value="${esc(f.q)}" autocomplete="off"></label>
       <label class="flt"><span>Tarih${active ? '' : ' (sipariş)'}</span><select class="input" id="tyo-range">${RANGES.map(([k, l]) => `<option value="${k}"${rk === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
       ${rk === 'custom' ? `<label class="flt"><span>Başlangıç</span><input class="input" type="date" id="tyo-from" value="${esc(f.from)}"></label><label class="flt"><span>Bitiş</span><input class="input" type="date" id="tyo-to" value="${esc(f.to)}"></label>` : ''}
       <label class="flt"><span>Kategori</span><select class="input" id="tyo-cat"><option value="all">Tüm kategoriler</option>${cats.map((c) => `<option${f.cat === c ? ' selected' : ''}>${esc(c)}</option>`).join('')}<option value="__none"${f.cat === '__none' ? ' selected' : ''}>Eşleşmeyen ürünler</option></select></label>
       <label class="flt flt-p"><span>Ürün</span><input class="input" id="tyo-prod" list="tyo-prods" placeholder="Tüm ürünler" value="${esc(pname)}" autocomplete="off"><datalist id="tyo-prods">${S.products.map((x) => `<option value="${esc(x.name)}">`).join('')}</datalist></label>
       <label class="flt"><span>Sırala</span><select class="input" id="tyo-sort">${TYO_SORTS.map(([k, l]) => `<option value="${k}"${(f.sort || 'auto') === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
       ${tyoFilterOn() ? '<button class="btn btn-ghost btn-sm" data-act="tyo-clear">Filtreleri temizle</button>' : ''}
-      <label class="switch tyo-det-sw"><input type="checkbox" id="tyo-det" ${tyoDet() ? 'checked' : ''}><span>Ayrıntılı göster</span></label>
     </div>
     ${!d.tracking_enabled ? `<div class="notice">${icon('bell')}<div>Trendyol takibi kapalı. Siparişlerin buraya gelmesi için <a href="#/satis">Satış</a> sayfasından takibi açın.</div></div>` : ''}
     <div id="tyo-res">${tyoResults()}</div>`;
@@ -4869,7 +4875,7 @@ function confetti() {
 }
 
 // ================================================================== İADELER
-const CLAIM_TABS = [['action', 'İşlem bekleyen'], ['transit', 'Yolda'], ['done', 'Sonuçlanan']];
+const CLAIM_TABS = [['action', 'İşlem bekleyen'], ['transit', 'Gelecek'], ['done', 'Sonuçlanan']];
 function tabFromHash(def) { const m = /[?&]tab=([\w-]+)/.exec(location.hash); return m ? m[1] : def; }
 function syncLine(st, label) {
   if (!st || !st.at) return `<span class="muted">Henüz eşitlenmedi · Trendyol'dan 5 dakikada bir çekilir</span>`;
@@ -4885,8 +4891,9 @@ PAGES.iadeler = {
     const d = S.claims, t = S.clTab;
     return `<div class="toolbar"><div class="seg">${CLAIM_TABS.map(([k, l]) => `<button type="button" data-act="cl-tab" data-v="${k}" class="${t === k ? 'on' : ''}">${l}${d.counts[k] ? ` <span class="faint">${d.counts[k]}</span>` : ''}</button>`).join('')}</div>
       <span class="spacer"></span>${syncLine(d.sync, 'Son kontrol')}<button class="btn btn-sm" data-act="mu-sync">${icon('refresh')} Yenile</button></div>
+      ${t === 'transit' ? '<p class="muted cl-hint">Müşteri iade talebi açtı; paketi henüz kargoya vermemiş ya da yolda olabilir. Trendyol bu ikisini ayırmıyor; kargo numarasına tıklayıp takipten bakabilirsiniz. Paket size ulaşınca iade "İşlem bekleyen"e geçer.</p>' : ''}
       ${t === 'action' ? '<p class="muted cl-hint">İade paketi elinize ulaştı; ürünü kontrol edip onaylayın ya da gerekçesiyle reddedin. Trendyol belirli bir süre içinde işlem yapılmazsa iadeyi kendiliğinden onaylar.</p>' : ''}
-      <div class="cl-list dr-list">${d.items.length ? d.items.map(claimRow).join('') : `<div class="empty panel"><h3>${t === 'action' ? 'İşlem bekleyen iade yok' : t === 'transit' ? 'Yolda iade yok' : 'Son 30 günde sonuçlanan iade yok'}</h3></div>`}</div>`;
+      <div class="cl-list dr-list">${d.items.length ? d.items.map(claimRow).join('') : `<div class="empty panel"><h3>${t === 'action' ? 'İşlem bekleyen iade yok' : t === 'transit' ? 'Gelecek iade yok' : 'Son 30 günde sonuçlanan iade yok'}</h3></div>`}</div>`;
   },
   after() { drawerSync(); },
 };
@@ -4896,13 +4903,17 @@ function claimRow(c) {
   return `<button type="button" class="dr-row cl-row st-${esc(c.status)}" data-drk="claim" data-key="${esc(c.claim_id)}">${miniThumb(i0.thumbnail)}
     <span class="grow"><b>${esc(c.customer || '—')}</b><small class="muted">${esc(c.order_number)} · ${esc(i0.our_name || i0.product || 'Ürün')}${c.items.length > 1 ? ` +${c.items.length - 1}` : ''}</small></span>
     <span class="cl-reason">${icon('return')} ${esc(i0.reason || 'Gerekçe yok')}</span>
-    <span class="dr-row-end">${act ? `<span class="tag tag-warn">${act} işlem bekliyor</span>` : `<span class="cl-st">${esc(c.status_tr)}</span>`}<small class="faint">${c.claim_date ? fmtWhen(c.claim_date) : ''}</small></span></button>`;
+    <span class="dr-row-end">${act ? `<span class="tag tag-warn">${act} işlem bekliyor</span>` : `<span class="cl-st">${esc(c.status_tr)}</span>`}<small class="faint">${c.status === 'Created' && c.claim_date && nowS() - c.claim_date > 86400 ? `${Math.floor((nowS() - c.claim_date) / 86400)} gündür bekleniyor` : c.claim_date ? fmtWhen(c.claim_date) : ''}</small></span></button>`;
 }
+// müşterinin "sorum ürün sayfasında yayınlansın" seçimi
+const qPub = (q, long) => q.public == null ? '' : q.public
+  ? `<span class="q-pub on" title="Müşteri sorusunun ve cevabınızın ürün sayfasında herkese görünmesini istedi">${icon('eye')} ${long ? 'Ürün sayfasında yayınlanacak' : 'Yayında'}</span>`
+  : `<span class="q-pub off" title="Müşteri sorusunun ürün sayfasında görünmesini istemedi; soru ve cevap yalnız ona görünür">${icon('lock')} ${long ? 'Yayınlanmayacak · yalnız müşteriye görünür' : 'Gizli'}</span>`;
 function qRow(q) {
   const wait = q.status === 'WAITING_FOR_ANSWER';
   return `<button type="button" class="dr-row q-row${wait ? ' wait' : ''}" data-drk="q" data-key="${q.id}">${q.image_url ? `<span class="mini-thumb" style="--img:url('${esc(q.image_url)}')"></span>` : miniThumb('')}
     <span class="grow"><b class="q-row-t">${esc(q.text || '')}</b><small class="muted">${esc(q.product_name || 'Ürün')} · ${esc(q.user_name || 'Müşteri')}</small></span>
-    <span class="dr-row-end">${wait ? '<span class="tag tag-warn">Cevap bekliyor</span>' : `<span class="q-st">${esc(q.status_tr)}</span>`}<small class="faint">${q.created ? fmtWhen(q.created) : ''}</small></span></button>`;
+    <span class="dr-row-end">${qPub(q)}${wait ? '<span class="tag tag-warn">Cevap bekliyor</span>' : `<span class="q-st">${esc(q.status_tr)}</span>`}<small class="faint">${q.created ? fmtWhen(q.created) : ''}</small></span></button>`;
 }
 function claimCard(c) {
   const act = c.items.filter((i) => i.status === 'WaitingInAction');
@@ -5003,6 +5014,7 @@ function qCard(q) {
     <div class="q-prod">${q.image_url ? `<span class="mini-thumb" style="--img:url('${esc(q.image_url)}')"></span>` : ''}
       <div class="grow">${q.web_url ? `<a href="${esc(q.web_url)}" target="_blank" rel="noopener">${esc(q.product_name || 'Ürün')}</a>` : esc(q.product_name || 'Ürün')}
       <small class="muted">${esc(q.user_name || 'Müşteri')} · ${q.created ? fmtWhen(q.created) : ''}</small></div><span class="q-st">${esc(q.status_tr)}</span></div>
+    ${q.public == null ? '' : `<div class="q-pubrow">${qPub(q, true)}</div>`}
     <p class="q-text">${icon('chat')} ${esc(q.text || '')}</p>
     ${q.answer ? `<div class="q-a"><small>Cevabınız${q.answer_date ? ` · ${fmtWhen(q.answer_date)}` : ''}</small>${esc(q.answer)}</div>` : ''}
     ${q.rejected?.text ? `<div class="q-a rej"><small>Reddedilen cevap${q.rejected.reason ? ` · ${esc(q.rejected.reason)}` : ''}</small>${esc(q.rejected.text)}</div>` : ''}
