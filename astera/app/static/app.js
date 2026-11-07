@@ -152,7 +152,7 @@ async function loadCategories() { try { S.categories = await api('GET', '/api/ca
 // ------------------------------------------------------------------ state
 const S = {
   offset: 0, products: [], jobs: [], orders: [], dash: null, settings: null, brands: [], log: [], colors: [],
-  pf: { q: '', type: 'all', st: 'all', cat: 'all', sort: (() => { try { return localStorage.getItem('pSort') || 'name'; } catch { return 'name'; } })(), view: localStorage.getItem('pview') || 'grid' },
+  pf: { q: '', type: 'all', st: 'all', cat: 'all', sort: (() => { try { return localStorage.getItem('pSort') || 'name'; } catch { return 'name'; } })(), view: localStorage.getItem('pview') || 'grid', sec: localStorage.getItem('pSec') !== '0' },
   ordersTab: 'new', showCancelled: false,
   dismissed: {}, promptOpen: false, lastJobsSig: '',
 };
@@ -944,6 +944,9 @@ PAGES.urunler = {
     $('#pq')?.addEventListener('input', (e) => { S.pf.q = e.target.value; $('#plist').innerHTML = productListHTML(); });
     $('#psort')?.addEventListener('change', (e) => { S.pf.sort = e.target.value; lsSet('pSort', S.pf.sort); $('#plist').innerHTML = productListHTML(); });
     pselBind();
+    if (S.pf.sec && S.settings?.ty_seller_id && (!S.pick || Date.now() - (S.pickAt || 0) > 120000)) {
+      api('GET', '/api/trendyol/pick-list').then((d) => { S.pick = d; S.pickAt = Date.now(); if (route() === 'urunler' && $('#plist') && !$('#plist').contains(document.activeElement)) $('#plist').innerHTML = productListHTML(); }).catch(() => null);
+    }
   },
 };
 
@@ -1062,7 +1065,7 @@ function pfMenuHTML() {
   return `<div class="fm-g"><span class="fm-l">Durum</span><div class="chips">${chip('st', 'all', 'Tümü', cnt.all)}${chip('st', 'low', 'Azalan', cnt.low)}${chip('st', 'prod', 'Baskıda', cnt.prod)}</div></div>
     <div class="fm-g"><span class="fm-l">Tür</span><div class="chips">${chip('type', 'all', 'Hepsi', cnt.all)}${chip('type', 'FDM', 'FDM', cnt.FDM)}${chip('type', 'SLA', 'SLA', cnt.SLA)}</div></div>
     ${cats.length ? `<div class="fm-g"><span class="fm-l">Kategori</span><div class="chips">${chip('cat', 'all', 'Her tür', cnt.all)}${cats.map((c) => chip('cat', c, c, P.filter((p) => p.category === c).length)).join('')}</div></div>` : ''}
-    <div class="fm-g fm-view"><span class="fm-l">Görünüm</span><div class="chips"><button type="button" class="chip${f.view === 'grid' ? ' on' : ''}" data-act="pf-view" data-v="grid">Kart</button><button type="button" class="chip${f.view === 'list' ? ' on' : ''}" data-act="pf-view" data-v="list">Liste</button></div></div>
+    <div class="fm-g fm-view"><span class="fm-l">Görünüm</span><div class="chips"><button type="button" class="chip${f.view === 'grid' ? ' on' : ''}" data-act="pf-view" data-v="grid">Kart</button><button type="button" class="chip${f.view === 'list' ? ' on' : ''}" data-act="pf-view" data-v="list">Liste</button><button type="button" class="chip${f.sec ? ' on' : ''}" data-act="pf-sec" title="Üstte siparişler için gerekenler, altta kategori kategori">Kategorilere ayır</button></div></div>
     <div class="fm-foot"><button type="button" class="btn btn-sm btn-ghost" data-act="pf-clear"${pfCount() ? '' : ' disabled'}>Temizle</button><button type="button" class="btn btn-sm btn-primary" data-act="pf-close">Tamam</button></div>`;
 }
 function pfActiveHTML() {
@@ -1125,9 +1128,13 @@ function productListHTML() {
         <td><div class="qbtns"><button class="minus" data-act="stock" data-id="${p.id}" data-d="-1" aria-label="Stoktan 1 düş">${icon('minus')}</button><button data-act="stock" data-id="${p.id}" data-d="1" aria-label="Stoğa 1 ekle">${icon('plus')}</button></div></td>
       </tr>`).join('')}</tbody></table></div>`;
   }
-  // Renk varyantları tek kartta: grup sırası, grubun ilk görünen üyesinin yerindedir
-  const seen = new Set(), cards = [];
   if (S.psel) return `<div class="pgrid">${list.map(productCard).join('')}</div>`;
+  if (S.pf.sec && !S.pf.q.trim() && !pfCount()) return productSectionsHTML(list);
+  return `<div class="pgrid">${productCardsHTML(list).join('')}</div>`;
+}
+// Renk varyantları tek kartta: grup sırası, grubun ilk görünen üyesinin yerindedir
+function productCardsHTML(list) {
+  const seen = new Set(), cards = [];
   for (const p of list) {
     if (p.group_id) {
       if (seen.has(p.group_id)) continue;
@@ -1136,7 +1143,51 @@ function productListHTML() {
       cards.push(members.length > 1 ? variantCard(members) : productCard(p));
     } else cards.push(productCard(p));
   }
-  return `<div class="pgrid">${cards.join('')}</div>`;
+  return cards;
+}
+// ---------- Bölümlü görünüm: üstte açık siparişler için gerekenler (kategorisiz), altta kategori kategori tüm ürünler
+const PSEC_KEY = 'pSecClosed';
+const psecClosed = () => { try { return new Set(JSON.parse(localStorage.getItem(PSEC_KEY) || '[]')); } catch { return new Set(); } };
+function psecHead(k, title, meta, extra = '') {
+  const closed = psecClosed().has(k);
+  return `<button type="button" class="psec-h" data-act="psec" data-k="${esc(k)}" aria-expanded="${!closed}"><span class="psec-chev">${icon('chevron-down')}</span>${extra}<span class="psec-t"><b>${title}</b>${meta ? `<small>${meta}</small>` : ''}</span><span class="psec-line"></span>`;
+}
+function needItems() {
+  return (S.pick?.items || []).filter((i) => i.product_id && i.quantity > 0).map((i) => {
+    const p = productById(i.product_id); if (!p) return null;
+    const off = (i.on_shelf ?? i.stock ?? 0) - (i.stock ?? 0);   // Yeni'de düşülmüş adetler: raftaki = stok + bunlar
+    const ii = { ...i, p, on_shelf: (p.stock || 0) + off };
+    const q = ii.quantity, shelf = Math.min(Math.max(0, ii.on_shelf), q), ip = inPrintInfo(p), prn = ip && !ip.partsOnly ? Math.min(ip.qty, q - shelf) : 0;
+    return { ...ii, shelf, prn, miss: Math.max(0, q - shelf - prn) };
+  }).filter(Boolean).sort((a, b) => b.miss - a.miss || b.quantity - a.quantity || a.p.name.localeCompare(b.p.name, 'tr'));
+}
+function needCard(i, k) {
+  const p = i.p;
+  return `<article class="pcard need-card" data-npid="${p.id}" style="--i:${k}">
+    <button class="thumb${p.thumbnail ? '' : ' none'}" style="${thumbStyle(p.thumbnail)}" data-initial="${esc((p.name || '?')[0].toLocaleUpperCase('tr'))}" data-act="edit-product" data-id="${p.id}" aria-label="${esc(p.name)} düzenle">
+      <span class="tag tag-${p.print_type}">${p.print_type}</span><span class="need-n">${i.order_count} siparişte · ${i.quantity} adet</span>
+    </button>
+    <div class="body"><a class="name" href="#/urun?id=${p.id}" title="Ürün sayfası">${esc(p.name)}</a>${p.category ? `<span class="cat-label">${esc(p.category)}</span>` : ''}${pickBar(i)}</div></article>`;
+}
+function productSectionsHTML(list) {
+  const closed = psecClosed(), out = [];
+  const need = needItems();
+  if (need.length) {
+    const miss = need.reduce((a, i) => a + i.miss, 0), prn = need.reduce((a, i) => a + i.prn, 0), shelf = need.reduce((a, i) => a + i.shelf, 0);
+    const pills = `${miss ? `<span class="psec-pill bad">${miss} adet eksik</span>` : ''}${prn ? `<span class="psec-pill info">${prn} baskıda</span>` : ''}${shelf ? `<span class="psec-pill ok">${shelf} rafta hazır</span>` : ''}`;
+    out.push(`<section class="psec psec-need${closed.has('__need') ? ' closed' : ''}">${psecHead('__need', 'Siparişler için gerekenler', `açık Trendyol siparişlerindeki ${need.length} ürün`, `<span class="psec-ic">${icon('cart')}</span>`)}${pills}</button>
+      <div class="psec-b"><div><div class="pgrid need-grid">${need.map(needCard).join('')}</div></div></div></section>`);
+  }
+  const cats = catNames(), by = new Map();
+  for (const p of list) { const c = p.category && cats.includes(p.category) ? p.category : (p.category || ''); if (!by.has(c)) by.set(c, []); by.get(c).push(p); }
+  const order = [...cats.filter((c) => by.has(c)), ...[...by.keys()].filter((c) => c && !cats.includes(c)).sort((a, b) => a.localeCompare(b, 'tr')), ...(by.has('') ? [''] : [])];
+  for (const c of order) {
+    const ps = by.get(c), k = c || '__none';
+    const stock = ps.reduce((a, p) => a + Math.max(0, p.stock || 0), 0), low = ps.filter((p) => stockClass(p)).length;
+    out.push(`<section class="psec${closed.has(k) ? ' closed' : ''}${c ? '' : ' psec-none'}">${psecHead(k, esc(c || 'Kategorisiz'), `${ps.length} ürün · ${stock} stokta${low ? ` · <span class="psec-low">${low} azaldı</span>` : ''}`)}</button>
+      <div class="psec-b"><div><div class="pgrid">${productCardsHTML(ps).join('')}</div></div></div></section>`);
+  }
+  return out.join('');
 }
 function variantCard(members) {
   const gid = members[0].group_id;
@@ -1254,6 +1305,7 @@ async function quickStock(id, d) {
     const card = p && rerenderProductCard(p);
     if (card) $('.stocknum', card)?.classList.add('bump', d > 0 ? 'up' : 'down');
     else if ($('#plist')) $('#plist').innerHTML = productListHTML();
+    const ng = $('.need-grid'); if (ng) ng.innerHTML = needItems().map(needCard).join('');
     toast(`${p?.name}: stok ${r.stock}`, { action: 'Geri al', onAction: () => quickStock(id, -d) });
   } catch (e) { fail(e); }
 }
@@ -1302,6 +1354,12 @@ async function openProductEditor(id) {
           ${ED.group_id ? `<div class="variant-box"><label class="field"><span>Varyant (renk)</span><input class="input" id="f-vlabel" value="${esc(ED.variant_label || '')}" placeholder="Örn. Siyah"></label>
             <div class="vsibs">${S.products.filter((x) => x.group_id === ED.group_id && x.id !== ED.id).map((x) => `<button type="button" class="chip" data-act="edit-product" data-id="${x.id}">${esc(x.variant_label || x.name)}</button>`).join('')}</div>
             <small>Ad, süre, gram, dosya, kategori ve parça yapısı tüm varyantlarda ortaktır; renk, görsel, stok ve barkod bu varyanta özeldir.</small></div>` : ''}
+          <div class="ed-stock">
+            <div class="field"><span>${id ? 'Stok' : 'Açılış stoğu'}${ED.group_id && ED.variant_label ? ` <span class="faint">· ${esc(ED.variant_label)}</span>` : ''}</span>
+              <div class="stepper big"><button type="button" data-act="stk-step" data-d="-1" aria-label="Stoktan 1 düş">${icon('minus')}</button><input id="f-stock" type="number" inputmode="numeric" value="${ED.stock ?? 0}" aria-label="Stok"><button type="button" data-act="stk-step" data-d="1" aria-label="Stoğa 1 ekle">${icon('plus')}</button></div>
+              ${id && ED.in_production ? `<small class="inprod">+${ED.in_production} baskıda</small>` : ''}</div>
+            <label class="field"><span>En az stok</span><input class="input" id="f-min" type="number" inputmode="numeric" min="0" value="${ED.min_stock || 0}"><small>Altına düşünce uyarır</small></label>
+          </div>
           <div class="field"><span>Ürün türü</span>
             <div class="seg cat" id="f-cat" style="flex-wrap:wrap">${catNames().map((c) => `<button type="button" data-v="${c}" class="${ED.category === c ? 'on' : ''}">${c}</button>`).join('')}</div></div>
           <div class="field"><span>Baskı türü</span>
@@ -1332,11 +1390,7 @@ async function openProductEditor(id) {
         <input type="file" id="model-file" accept=".3mf,.chitubox,.ctb,.cbddlp,.lys,.stl,.gcode,.photon,.pwmx,.goo" hidden>
       </div></details>
 
-      <details class="ed-sec" data-sec="stock" ${edSecOpen('stock') ? 'open' : ''}><summary><span>Stok ve barkod</span><small class="ed-sum">stok ${ED.stock ?? 0}${ED.min_stock ? ` · en az ${ED.min_stock}` : ''}${ED.barcodes ? ' · ' + esc(ED.barcodes) : ''}</small></summary>
-      <div class="row">
-        <label class="field"><span>${id ? 'Güncel stok' : 'Açılış stoğu'}</span><input class="input" id="f-stock" type="number" inputmode="numeric" value="${ED.stock ?? 0}"></label>
-        <label class="field"><span>En az stok</span><input class="input" id="f-min" type="number" inputmode="numeric" min="0" value="${ED.min_stock || 0}"><small>Altına düşünce uyarır</small></label>
-      </div>
+      <details class="ed-sec" data-sec="stock" ${edSecOpen('stock') ? 'open' : ''}><summary><span>Barkod</span><small class="ed-sum">${ED.barcodes ? esc(ED.barcodes) : ''}</small></summary>
       <label class="field"><span>Trendyol barkodu / stok kodu</span><input class="input" id="f-barcodes" value="${esc(ED.barcodes || '')}" placeholder="8680000000001, SAKSI-ALT-M"><small>Birden fazla varsa virgülle ayırın. Trendyol siparişleri bu kodlarla eşleşip stoktan düşer.</small></label>
       </details>
       <details class="ed-sec" data-sec="price" ${edSecOpen('price') ? 'open' : ''}><summary><span>Fiyat ve kâr <span class="faint">(Trendyol satış fiyatı, KDV dahil)</span></span><small class="ed-sum">${ED.sale_price ? fmtTL(ED.sale_price) : ''}</small></summary>
@@ -6480,6 +6534,7 @@ const ACTIONS = {
   'add-mat': () => { if (ED.materials.length < 6) { const last = ED.materials[ED.materials.length - 1]; ED.materials.push({ color_hex: '#1A1A1A', color_name: 'Siyah', brand: last?.brand || '' }); renderMats(); $$('#mats .mat-wrap').at(-1)?.classList.add('row-in'); } },
   'rm-mat': (el) => { if (ED.materials.length > 1) { ED.materials.splice(+el.dataset.i, 1); renderMats(); } },
   'pick-file': () => $('#model-file').click(),
+  'stk-step': (el) => { const i = $('#f-stock'); i.value = (parseInt(i.value) || 0) + +el.dataset.d; i.classList.remove('bump'); void i.offsetWidth; i.classList.add('bump'); },
   'set-step': (el) => { const i = $('#f-set'); i.value = clamp((parseInt(i.value) || 1) + +el.dataset.d, 1, 99); applyCategoryUI(); },
   'add-part': () => { ED.parts.push({ name: '', per_unit: 1, stock: 0 }); renderParts(); $$('#parts-box .part-row').at(-1)?.classList.add('row-in'); $$('#parts-box [data-pf="name"]').at(-1).focus(); },
   'rm-part': (el) => { if (ED.parts.length > 2) { ED.parts.splice(+el.dataset.i, 1); renderParts(); } },
@@ -6683,6 +6738,12 @@ const ACTIONS = {
   },
   'print-comp': (el) => openNewPrint({ componentId: +el.dataset.id }),
   'pf-cat': (el) => { S.pf.cat = el.dataset.v; pfApply(); },
+  'pf-sec': () => { S.pf.sec = !S.pf.sec; lsSet('pSec', S.pf.sec ? '1' : '0'); pfApply(); },
+  psec: (el) => {
+    const k = el.dataset.k, set = psecClosed(); set.has(k) ? set.delete(k) : set.add(k);
+    lsSet(PSEC_KEY, JSON.stringify([...set]));
+    const sec = el.closest('.psec'); sec?.classList.toggle('closed', set.has(k)); el.setAttribute('aria-expanded', String(!set.has(k)));
+  },
   'pf-view': (el) => { S.pf.view = el.dataset.v; localStorage.setItem('pview', S.pf.view); render(); },
   'np-pick': (el) => npPickProduct(+el.dataset.id),
   'np-pick-order': (el) => npPickOrder(+el.dataset.id),

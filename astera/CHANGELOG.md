@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.9.13
+- Ürünler bölümlü: en üstte açılır kapanır "Siparişler için gerekenler" (açık Trendyol siparişlerindeki ürünler; rafta / baskıda / eksik çubuğuyla), altında kategori kategori tüm ürünler. Bölümlerin açık / kapalı hali hatırlanır; arama veya filtrede düz liste. Filtre menüsünden "Kategorilere ayır" kapatılabilir.
+- Ürün düzenlemede stok en üste taşındı: büyük sayı, −/+ düğmeleri ve en az stok yan yana.
+
 ## 1.9.12
 - Yeni sipariş bildirim şeridinde siparişteki ürünlerin küçük görselleri (adetleriyle) görünür.
 - Siparişler sayfasının üst kısmı sıkılaştı: sekmeler tek satırda, arama ve filtreler tek satırda, özet çubuğu ince; laptop ekranlarında başlık küçülür.
