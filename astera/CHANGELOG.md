@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.9.15
+- Tekrar eden müşteri: siparişte "↻ 2. siparişi" etiketi; sipariş panelinde "Bu müşterinin 5. siparişi" ve tıklanabilir diğer siparişleri. Müşteri Trendyol müşteri numarasıyla (eski siparişlerde ad + şehir) tanınır, iptaller sayılmaz.
+- Hazırla: sipariş numarasının üzerine gelince mini sipariş kartı (müşteri, şehir, teslim durumu, ürün görselleri, not, tutar ve kâr).
+
 ## 1.9.14
 - Hazırla: bir ürünün altındaki sipariş numarasına tıklayınca Siparişler sayfası açılır ve o sipariş panelde açılır.
 

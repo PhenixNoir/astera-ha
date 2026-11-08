@@ -679,7 +679,9 @@ def pkg_info(pkg):
     cno = pkg.get("cargoTrackingNumber")
     # paketteki indirim etiketleri (ör. "Sepette %20 İndirim", Plus'a özel fiyat); Plus siparişini tanımak için saklanır
     disc = [{"n": str(d.get("displayName") or "")[:80], "a": _f(d.get("discountAmount"))} for d in (pkg.get("discountDisplays") or []) if isinstance(d, dict) and d.get("displayName")]
-    return {"pkg_total": total, "discounts": json.dumps(disc, ensure_ascii=False) if disc else None, "customer": name or None, "city": city, "district": district, "deadline": pkg_deadline(pkg),
+    cid = pkg.get("customerId")
+    return {"pkg_total": total, "discounts": json.dumps(disc, ensure_ascii=False) if disc else None, "customer": name or None,
+            "customer_id": str(cid) if cid not in (None, "", 0) else None, "city": city, "district": district, "deadline": pkg_deadline(pkg),
             "cargo_no": str(cno) if cno not in (None, "", 0) else None,
             "cargo_provider": pkg.get("cargoProviderName") or None,
             "cargo_link": pkg.get("cargoTrackingLink") or None}
@@ -692,10 +694,10 @@ def _store_details(pkg, line, key, info=None):
                      customer=COALESCE(?, customer), city=COALESCE(?, city), deadline=COALESCE(?, deadline),
                      line_id=COALESCE(?, line_id), cargo_no=COALESCE(?, cargo_no), cargo_provider=COALESCE(?, cargo_provider),
                      cargo_link=COALESCE(?, cargo_link), commission=COALESCE(?, commission), district=COALESCE(?, district),
-                     discounts=COALESCE(?, discounts) WHERE line_key=?""",
+                     discounts=COALESCE(?, discounts), customer_id=COALESCE(?, customer_id) WHERE line_key=?""",
                   (line_unit_revenue(line), info["pkg_total"], info["customer"], info["city"], info["deadline"],
                    str(lid) if lid else None, info.get("cargo_no"), info.get("cargo_provider"), info.get("cargo_link"),
-                   _f(line.get("commission")), info.get("district"), info.get("discounts"), key))
+                   _f(line.get("commission")), info.get("district"), info.get("discounts"), info.get("customer_id"), key))
 
 
 def _line_key(pkg, line):
@@ -1018,10 +1020,12 @@ def orders(month=None, start=None, end=None):
                            "unit_price": r["unit_price"], "state": r["state"], "status": r["ty_status"], "line_id": r["line_id"],
                            "commission": r["commission"], "usual_commission": r["usual_commission"]})
     out, counts = [], {t: 0 for t in ORDER_TABS}
+    hist = customer_history()
     with _lock:
         notes = {r["order_number"]: (r["note"], r["updated_at"]) for r in _db().execute("SELECT * FROM ty_notes")}
     for g in pk.values():
         g["note"], g["note_at"] = notes.get(g["order_number"], (None, None))
+        g["repeat"] = hist.get(g["order_number"])
         live = [st for st in g["statuses"] if st not in CANCEL_STATES]
         g["status"] = live[0] if live else (g["statuses"][0] if g["statuses"] else "")
         g["tab"] = _tab_of(g["status"])
@@ -1674,3 +1678,40 @@ def set_note(order_number, note):
             _db().execute("DELETE FROM ty_notes WHERE order_number=?", (order_number,))
         _db().commit()
     return {"order_number": order_number, "note": note or None, "note_at": _now() if note else None}
+
+
+def _norm_name(s):
+    return re.sub(r"\s+", " ", str(s or "").strip().lower().replace("ı", "i").replace("İ", "i"))
+
+
+def customer_history():
+    """Sipariş no → aynı müşterinin kaçıncı siparişi. Müşteri Trendyol müşteri numarasıyla, yoksa ad + şehir ile tanınır.
+    İptal edilmiş siparişler sayılmaz. Yalnız birden çok siparişi olan müşteriler döner."""
+    cancel = tuple(CANCEL_STATES)
+    q = ",".join("?" * len(cancel))
+    with _lock:
+        rows = [dict(r) for r in _db().execute(
+            f"""SELECT order_number, MIN(order_date) d, MAX(customer_id) cid, MAX(customer) name, MAX(city) city,
+                       SUM(CASE WHEN COALESCE(ty_status,'') IN ({q}) THEN 0 ELSE 1 END) live
+                FROM ty_lines WHERE order_number IS NOT NULL GROUP BY order_number""", cancel)]
+    by_nc = {}
+    for r in rows:
+        if r["cid"] and r["name"]:
+            by_nc.setdefault((_norm_name(r["name"]), _norm_name(r["city"])), r["cid"])
+    groups = {}
+    for r in rows:
+        if not r["live"]:
+            continue
+        nc = (_norm_name(r["name"]), _norm_name(r["city"]))
+        key = r["cid"] or by_nc.get(nc) or (("n:" + "|".join(nc)) if nc[0] else None)
+        if key:
+            groups.setdefault(key, []).append(r)
+    out = {}
+    for lst in groups.values():
+        if len(lst) < 2:
+            continue
+        lst.sort(key=lambda r: r["d"] or 0)
+        for i, r in enumerate(lst):
+            out[r["order_number"]] = {"n": i + 1, "total": len(lst),
+                                     "prev": [{"no": x["order_number"], "date": x["d"]} for x in lst if x is not r][-5:]}
+    return out

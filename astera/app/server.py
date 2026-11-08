@@ -382,7 +382,7 @@ def migrate():
     tcols = _columns("ty_lines")
     for col, typ in (("unit_price", "REAL"), ("pkg_total", "REAL"), ("customer", "TEXT"), ("city", "TEXT"),
                      ("deadline", "INTEGER"), ("line_id", "TEXT"), ("cargo_no", "TEXT"), ("cargo_provider", "TEXT"),
-                     ("cargo_link", "TEXT"), ("label_at", "INTEGER"), ("commission", "REAL"), ("district", "TEXT"), ("discounts", "TEXT")):
+                     ("cargo_link", "TEXT"), ("label_at", "INTEGER"), ("commission", "REAL"), ("district", "TEXT"), ("discounts", "TEXT"), ("customer_id", "TEXT")):
         if col not in tcols:
             c.execute(f"ALTER TABLE ty_lines ADD COLUMN {col} {typ}")
     ocols = _columns("custom_orders")

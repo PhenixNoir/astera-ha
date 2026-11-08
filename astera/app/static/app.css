@@ -3737,3 +3737,37 @@ tr.pen-open td { background: color-mix(in srgb, var(--bad) 7%, transparent); }
 .po-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 .po-link:hover svg { transform: translateX(3px); }
 .po-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* tekrar eden müşteri */
+.rep-tag { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 800; padding: 1px 8px; border-radius: 99px; white-space: nowrap; vertical-align: 1px;
+  background: color-mix(in srgb, #7A5AF8 16%, transparent); color: #7A5AF8; }
+:root[data-theme="dark"] .rep-tag { color: #B9A6FF; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .rep-tag { color: #B9A6FF; } }
+.rep-tag svg { width: 11px; height: 11px; }
+.rep-tag.soft { background: var(--sheet-2); color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--line); }
+.rep-list { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; margin: 0 0 12px; font-size: 13px; color: var(--ink-2); }
+.rep-list > svg { width: 14px; height: 14px; color: #7A5AF8; }
+.rep-list .po-link small { font-weight: 500; color: var(--ink-3); margin-left: 4px; }
+.oc > .rep-list { margin: 12px 16px 0; }
+.drw .oc > .rep-list { margin: 0 0 12px; }
+
+/* sipariş numarası üzerine gelince mini sipariş kartı */
+.opv { position: fixed; z-index: 70; width: 300px; padding: 14px; display: grid; gap: 10px; pointer-events: none; border-radius: 16px; background: var(--sheet); color: var(--ink); border: 1px solid var(--line);
+  box-shadow: 0 24px 54px -20px rgba(0, 0, 0, .42), 0 3px 8px rgba(0, 0, 0, .06); opacity: 0; transform: translateY(6px) scale(.97); transition: opacity .16s, transform .22s cubic-bezier(.2, 1.2, .4, 1); }
+.opv.on { opacity: 1; transform: none; }
+.opv-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.opv-no { font-variant-numeric: tabular-nums; font-size: 14.5px; }
+.opv-st { font-size: 12px; font-weight: 700; color: var(--ink-3); }
+.opv-who b { display: block; font-size: 15px; }
+.opv-who span { color: var(--ink-3); font-size: 12.5px; }
+.opv-its { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.opv-im { position: relative; width: 52px; height: 52px; border-radius: 10px; background: var(--sheet-2) var(--img) center / cover no-repeat; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .06); }
+.opv.on .opv-im { animation: is-im .35s calc(.05s + var(--i, 0) * 40ms) cubic-bezier(.2, 1.4, .4, 1) both; }
+.opv-im i { position: absolute; right: -5px; bottom: -5px; font-style: normal; font: 800 11px/1.2 var(--ui); background: #2a2d33; color: #fff; border-radius: 99px; padding: 1px 6px; border: 2px solid var(--sheet); }
+.opv-more { font-weight: 800; color: var(--ink-2); }
+.opv-note { font-size: 12.5px; font-weight: 600; padding: 6px 10px; border-radius: 4px 10px 10px 10px; background: var(--tn-bg); color: var(--tn-ink); border: 1px solid var(--tn-b); }
+.opv-ft { display: flex; justify-content: space-between; align-items: baseline; border-top: 1px solid var(--line); padding-top: 8px; font-variant-numeric: tabular-nums; }
+.opv-ft b { font-size: 16px; }
+.opv-ft span { color: var(--ok); font-weight: 800; font-size: 13px; } .opv-ft span.neg { color: var(--bad); }
+@media (prefers-reduced-motion: reduce) { .opv, .opv-im { transition: none !important; animation: none !important; } }
+:root[data-motion="off"] .opv, :root[data-motion="off"] .opv-im { transition: none !important; animation: none !important; }

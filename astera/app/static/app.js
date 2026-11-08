@@ -4212,8 +4212,52 @@ function floatVars(seed) {
 function plusTags(p, long) {
   const out = [];
   if (p.plus) out.push(`<span class="plus-tag" title="Trendyol Plus indirimiyle alınmış"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3 6.9 7.5.7-5.7 5 1.7 7.4L12 18.3 5.5 22l1.7-7.4L1.5 9.6 9 8.9z"/></svg>Plus</span>`);
+  const rp = p.repeat;
+  if (rp && rp.n >= 2) out.push(`<span class="rep-tag" title="Bu müşteri daha önce ${rp.n - 1} kez sipariş verdi${rp.total > rp.n ? `; sonrasında ${rp.total - rp.n} sipariş daha var` : ''}">${icon('refresh')} ${long ? `Bu müşterinin ${rp.n}. siparişi` : `${rp.n}. siparişi`}</span>`);
+  else if (long && rp && rp.total >= 2) out.push(`<span class="rep-tag soft" title="Bu müşterinin ilk siparişi; sonrasında ${rp.total - 1} sipariş daha verdi">${icon('refresh')} İlk siparişi · toplam ${rp.total}</span>`);
   if (p.comm_cut) out.push(`<span class="plus-tag soft" title="Bu siparişte komisyon %${p.comm_cut.rate} (ürünün olağan komisyonu %${p.comm_cut.usual})">${long ? `Komisyon %${p.comm_cut.rate} · olağanı %${p.comm_cut.usual}` : `%${p.comm_cut.rate} komisyon`}</span>`);
   return out.length ? ' ' + out.join(' ') : '';
+}
+// ---------- Sipariş numarası üzerine gelince mini sipariş kartı (Hazırla'daki ve paneldeki numara bağlantıları)
+const OPV = { t: 0, el: null };
+function opvHide() { clearTimeout(OPV.t); OPV.el = null; $('#opv')?.classList.remove('on'); }
+async function opvShow(link, x, y) {
+  const no = link.dataset.no;
+  if (!S.tyOrders) { try { await loadTyOrders(); } catch { return; } }
+  try { if (!S.profit) await loadProfit(); } catch { /* kâr gösterilmez */ }
+  if (OPV.el !== link || !link.isConnected) return;
+  const p = S.tyOrders?.packages.find((q) => String(q.order_number) === String(no)); if (!p) return;
+  const live = p.lines.filter((l) => !TY_CANCEL.has(l.status)), lines = live.length ? live : p.lines;
+  const dl = effDeadline(p.deadline), r = S.profit ? orderProfit(p) : null;
+  const date = new Date(p.order_date).toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  let el = $('#opv');
+  if (!el) { el = document.createElement('div'); el.id = 'opv'; el.className = 'opv'; el.setAttribute('aria-hidden', 'true'); document.body.appendChild(el); }
+  el.innerHTML = `<div class="opv-h"><b class="opv-no">${esc(p.order_number)}</b>${dl && p.tab !== 'shipped' && p.tab !== 'delivered' ? dlChip(dl) : `<span class="opv-st">${esc(TYO_TABS.find(([k]) => k === p.tab)?.[1] || '')}</span>`}${p.repeat?.n >= 2 ? `<span class="rep-tag">${icon('refresh')} ${p.repeat.n}. siparişi</span>` : ''}</div>
+    <div class="opv-who"><b>${esc(p.customer || '—')}</b><span>${[p.city, p.district].filter(Boolean).map(esc).join(' · ')}${p.city ? ' · ' : ''}${date}</span></div>
+    <div class="opv-its">${lines.slice(0, 5).map((l, i) => `<span class="opv-im${l.thumbnail ? '' : ' none'}" style="--i:${i};${thumbStyle(l.thumbnail)}" title="${esc(l.name || '')}">${l.quantity > 1 ? `<i>×${l.quantity}</i>` : ''}</span>`).join('')}${lines.length > 5 ? `<span class="opv-more">+${lines.length - 5}</span>` : ''}</div>
+    ${p.note ? `<div class="opv-note">📝 ${esc(p.note)}</div>` : ''}
+    <div class="opv-ft"><b>${r ? fmtTL(r.price) : p.pkg_total != null ? fmtTL(p.pkg_total) : ''}</b>${r ? `<span class="${r.profit < 0 ? 'neg' : ''}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)} · ${fmtPct(r.margin)}</span>` : ''}</div>`;
+  el.classList.remove('on'); el.style.left = '0px'; el.style.top = '0px';
+  const z = ZF(), w = el.offsetWidth, h = el.offsetHeight;
+  let L = x / z + 14, T = y / z + 18;
+  if (L + w > innerWidth / z - 8) L = x / z - w - 14;
+  if (T + h > innerHeight / z - 8) T = y / z - h - 14;
+  el.style.left = `${Math.max(8, L)}px`; el.style.top = `${Math.max(8, T)}px`;
+  void el.offsetWidth; el.classList.add('on');
+}
+if (matchMedia('(hover: hover) and (pointer: fine)').matches) {
+  let pos = [0, 0];
+  document.addEventListener('mousemove', (e) => { pos = [e.clientX, e.clientY]; }, { passive: true });
+  document.addEventListener('mouseover', (e) => {
+    const link = e.target.closest?.('.po-link[data-no]');
+    if (link === OPV.el) return;
+    opvHide(); if (!link) return;
+    OPV.el = link;
+    OPV.t = setTimeout(() => { if (OPV.el === link && link.matches(':hover')) opvShow(link, pos[0], pos[1]); }, 300);
+  });
+  addEventListener('scroll', opvHide, true);
+  addEventListener('mousedown', opvHide, true);
+  addEventListener('hashchange', opvHide);
 }
 // ---------- Siparişin üzerine gelince altta ürün görselleri (büyük görsel, adet, kısa ad); dokunmatikte ve panel açıkken yok
 const TPV = { t: 0, key: null };
@@ -4340,6 +4384,7 @@ function tyoBody(p) {
   const hits = orderRuleHits(p);
   return `<div class="oc">
     ${tyNoteHTML(p)}
+    ${p.repeat?.prev?.length ? `<div class="rep-list">${icon('refresh')}<span>Diğer siparişleri:</span>${p.repeat.prev.slice().reverse().map((o) => `<button type="button" class="po-link" data-act="po-open" data-no="${esc(o.no)}">${esc(o.no)}<small>${o.date ? new Date(o.date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: new Date(o.date).getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined }) : ''}</small></button>`).join('')}</div>` : ''}
     ${hits.length ? `<div class="oc-rules">${hits.map((h) => `<span class="oc-rule t-${h.tone}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}</div>` : ''}
     <div class="oc-items">${lines}
       <p class="muted oc-foot">${p.pkg_total != null ? `Müşterinin ödediği <b>${fmtTL(p.pkg_total)}</b>` : ''}${dl ? ` · son teslim ${fmtDl(dl)}` : ''} · paket ${esc(p.package_id || '')}</p></div>
