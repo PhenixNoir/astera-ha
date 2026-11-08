@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.9.14
+- Hazırla: bir ürünün altındaki sipariş numarasına tıklayınca Siparişler sayfası açılır ve o sipariş panelde açılır.
+
 ## 1.9.13
 - Ürünler bölümlü: en üstte açılır kapanır "Siparişler için gerekenler" (açık Trendyol siparişlerindeki ürünler; rafta / baskıda / eksik çubuğuyla), altında kategori kategori tüm ürünler. Bölümlerin açık / kapalı hali hatırlanır; arama veya filtrede düz liste. Filtre menüsünden "Kategorilere ayır" kapatılabilir.
 - Ürün düzenlemede stok en üste taşındı: büyük sayı, −/+ düğmeleri ve en az stok yan yana.

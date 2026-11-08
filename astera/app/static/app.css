@@ -3732,3 +3732,8 @@ tr.pen-open td { background: color-mix(in srgb, var(--bad) 7%, transparent); }
 .ed-stock .field:last-child .input { max-width: 120px; }
 .ed-stock .inprod { display: block; margin-top: 4px; }
 @keyframes stk-bump { 50% { transform: scale(1.18); } }
+.po-link { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 2px; font-weight: 700; color: var(--pei, #e08a2c); border-radius: 6px; padding: 0 2px; font-variant-numeric: tabular-nums; }
+.po-link svg { width: 13px; height: 13px; transition: transform .2s; }
+.po-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.po-link:hover svg { transform: translateX(3px); }
+.po-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
