@@ -1,5 +1,10 @@
 # Sürüm notları
 
+## 1.9.16
+- Siparişler: "Barem önceliği" düğmesi. Açıkken sepeti ilk kargo bareminin (200 ₺) altında kalan ve son teslimi geçmemiş siparişler en üste, en az süresi kalan önce; satırda kalan süre, süresi geçenlerde "barem indirimi kaçtı" etiketi; üstte geç kalınırsa fazladan kesilecek toplam kargo. Ücretler Kâr sayfasındaki kargo baremlerinden alınır.
+- Yeni baskı: seçili makine pencere başlığında büyükçe görünür (basıyorsa yüzdesiyle); seçilmemişse uyarır.
+- Siparişler araç çubuğu dar ekranda tek satıra sığar.
+
 ## 1.9.15
 - Tekrar eden müşteri: siparişte "↻ 2. siparişi" etiketi; sipariş panelinde "Bu müşterinin 5. siparişi" ve tıklanabilir diğer siparişleri. Müşteri Trendyol müşteri numarasıyla (eski siparişlerde ad + şehir) tanınır, iptaller sayılmaz.
 - Hazırla: sipariş numarasının üzerine gelince mini sipariş kartı (müşteri, şehir, teslim durumu, ürün görselleri, not, tutar ve kâr).

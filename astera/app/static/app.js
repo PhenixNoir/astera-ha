@@ -1813,7 +1813,7 @@ async function openNewPrint(arg) {
   const printers = S.settings?.printers || [];
   NP.printer = printers.some((x) => x.name === NP.printer) ? NP.printer : '';
   openModal(`
-    <div class="modal-h"><h2>Yeni baskı</h2><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
+    <div class="modal-h np-head"><h2>Yeni baskı</h2><button type="button" class="np-mach" id="np-mach" data-act="np-mach-go" title="Makineyi değiştir"></button><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
     <div class="modal-b">
       <div class="seg" id="np-mode">
         <button type="button" data-v="product" class="${mode === 'product' ? 'on' : ''}">Stok ürünü</button>
@@ -1923,6 +1923,17 @@ function npSetPrinter(v) {
   NP.printer = v || '';
   $$('#np-printers .chip').forEach((c) => c.classList.toggle('on', c.dataset.v === NP.printer));
   npLive();
+  npMachHead();
+}
+// Başlıkta seçili makine büyükçe: hangi cihazda başlatıldığı karışmasın
+function npMachHead() {
+  const el = $('#np-mach'); if (!el) return;
+  const key = NP.printer || '';
+  if (!key) { el.className = 'np-mach none'; el.innerHTML = `${icon('alert')}<span><small>Makine</small><b>Seçilmedi</b></span>`; el.dataset.k = ''; return; }
+  const st = bambuLive(key);
+  el.innerHTML = `${printerThumb(key, 'sm')}<span><small>${st ? `basıyor${st.percent != null ? ` · %${st.percent}` : ''}` : 'Makine'}</small><b>${esc(key)}</b></span>`;
+  el.className = `np-mach${st ? ' busy' : ''}`;
+  if (el.dataset.k !== key) { el.dataset.k = key; el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); }
 }
 // Seçilen Bambu yazıcı şu an basıyorsa süre yazıcıdan gelir; süre alanı gizlenir
 function npLive() {
@@ -4077,6 +4088,26 @@ async function lowMarginSeen(keys) {
 const TYO_SORTS = [['auto', 'Varsayılan (açıkta son teslim, diğerlerinde yeni)'], ['date_desc', 'Tarih: yeniden eskiye'], ['date_asc', 'Tarih: eskiden yeniye'],
   ['dl', 'Son teslim: en yakın'], ['price_desc', 'Tutar: yüksekten'], ['price_asc', 'Tutar: düşükten'], ['items_desc', 'Kalem / adet: çoktan'],
   ['profit_desc', 'Kâr: yüksekten'], ['profit_asc', 'Kâr: düşükten'], ['customer', 'Müşteri (A–Z)'], ['city', 'Şehir (A–Z)']];
+// ---------- Barem önceliği: sepeti ilk kargo bareminin altında kalan siparişler son teslimden önce kargoya verilmezse
+// kargo bir üst baremden kesilir. Açıkken bu siparişler en üste, son teslimi en yakın olan önce.
+const baremOn = () => { try { return localStorage.getItem('tyBarem') === '1'; } catch { return false; } };
+function baremInfo(p) {
+  const tiers = S.profit?.cfg?.cargo_tiers || [{ upto: 200, fee: 46.49 }, { upto: 300, fee: 84.49 }];
+  const t0 = tiers[0]; if (!t0 || !TYO_ACTIVE.has(p.tab)) return null;
+  const live = p.lines.filter((l) => !TY_CANCEL.has(l.status));
+  const amt = p.pkg_total ?? live.reduce((a, l) => a + (l.unit_price || 0) * l.quantity, 0);
+  if (!(amt > 0 && amt < t0.upto)) return null;
+  const up = tiers[1]?.fee ?? S.profit?.cfg?.cargo_over ?? t0.fee, dl = effDeadline(p.deadline);
+  const left = dl ? dl - nowS() : null;
+  return { amt, dl, left, lost: left != null && left < 0, risk: Math.max(0, Math.round((up - t0.fee) * 100) / 100), limit: t0.upto };
+}
+function baremTag(p) {
+  if (!baremOn()) return '';
+  const b = baremInfo(p); if (!b) return '';
+  if (b.lost) return `<span class="brm-tag lost" title="Son teslim geçti; kargo üst baremden kesilir">barem indirimi kaçtı · +${fmtTL(b.risk)} kargo</span>`;
+  if (b.left == null) return `<span class="brm-tag" title="Sepet ${fmtTL(b.amt)} · ${b.limit} ₺ baremi altında">⚡ barem altı</span>`;
+  return `<span class="brm-tag${b.left < 6 * 3600 ? ' go' : ''}" title="Sepet ${fmtTL(b.amt)}; son teslimden önce kargoya verilmezse kargo ${fmtTL(b.risk)} fazla kesilir">⚡ ${fmtLeft(b.left)}</span>`;
+}
 function tyoFiltered() {
   const d = S.tyOrders, t = S.tyo.tab;
   const list = d.packages.filter((p) => p.tab === t && tyoBase(p));
@@ -4095,6 +4126,11 @@ function tyoFiltered() {
   if (by) list.sort((a, b) => by(a, b) || b.order_date - a.order_date);
   else if (TYO_ACTIVE.has(t)) list.sort((a, b) => dl(a) - dl(b) || a.order_date - b.order_date);
   else list.sort((a, b) => b.order_date - a.order_date);
+  if (baremOn() && TYO_ACTIVE.has(t)) {   // barem altı ve süresi geçmemişler önde; sıralama içinde sabit
+    const pri = (p) => { const b = baremInfo(p); return b && !b.lost ? 0 : 1; };
+    const idx = new Map(list.map((p, i) => [p, i]));
+    list.sort((a, b) => pri(a) - pri(b) || (pri(a) === 0 ? dl(a) - dl(b) : 0) || idx.get(a) - idx.get(b));
+  }
   return list;
 }
 function tyoPage(src = '') {
@@ -4109,9 +4145,10 @@ function tyoPage(src = '') {
   // Sıkı düzen: 1. satır kaynak + sekmeler + yenile, 2. satır arama + filtreler (etiketler yalnız ekran okuyucuya)
   return `<div class="tyo-stick"><div class="toolbar tyo-tools">${src}<div class="seg tyo-tabs" role="tablist">${TYO_TABS.map(([k, l]) => `<button class="${t === k ? 'on' : ''}" data-act="tyo-tab" data-v="${k}" role="tab">${l} <span class="faint">${counts[k]}</span></button>`).join('')}</div>
       <span class="spacer"></span>
+      ${active ? `<button type="button" class="brm-btn${baremOn() ? ' on' : ''}" data-act="tyo-barem" aria-pressed="${baremOn()}" title="Sepeti kargo bareminin altında kalan siparişleri öne al">${icon('bolt')} Barem<span class="brm-long"> önceliği</span></button>` : ''}
       <label class="switch tyo-det-sw"><input type="checkbox" id="tyo-det" ${tyoDet() ? 'checked' : ''}><span>Ayrıntılı</span></label>
       <span class="faint tyo-sync-t" style="font-size:12.5px">${d.last_sync ? `Son eşitleme ${fmtWhen(d.last_sync)}` : 'Henüz eşitlenmedi'}</span>
-      <button class="btn btn-sm" data-act="tyo-sync" title="${d.last_sync ? `Son eşitleme ${fmtWhen(d.last_sync)}` : 'Henüz eşitlenmedi'}">${icon('refresh')} Yenile</button>
+      <button class="btn btn-sm" data-act="tyo-sync" title="${d.last_sync ? `Son eşitleme ${fmtWhen(d.last_sync)}` : 'Henüz eşitlenmedi'}" aria-label="Yenile">${icon('refresh')}<span class="tyo-sync-l"> Yenile</span></button>
     </div></div>
     <div class="toolbar tyo-filters">
       <label class="search tyo-search">${icon('search')}<input class="input" id="tyo-q" placeholder="Sipariş no, müşteri, şehir veya ürün" aria-label="Sipariş ara" value="${esc(f.q)}" autocomplete="off"></label>
@@ -4142,8 +4179,25 @@ function tyoResults() {
         <button class="btn btn-primary btn-sm" data-act="tyo-pick-sel" ${nsel ? '' : 'disabled'}>${icon('pack')} Hazırlanıyor'a çek${nsel ? ` (${nsel})` : ''}</button></div>` : ''}
       ${unlabeled.length ? `<div class="tyo-bulk"><button class="btn btn-primary btn-sm" data-act="ty-label-all">${icon('print')} Basılmamış ${unlabeled.length} barkodu bas</button></div>` : ''}
     </div>
-    ${list.length ? `<div class="tyo-list fitbox">${prof.map(({ p, r }) => tyoRow(p, r)).join('')}</div>`
+    ${baremOn() && active ? baremBanner(list) : ''}
+    ${list.length ? `<div class="tyo-list fitbox">${baremOn() && active ? baremRows(prof) : prof.map(({ p, r }) => tyoRow(p, r)).join('')}</div>`
       : `<div class="empty panel"><h3>${tyoFilterOn() ? 'Filtreye uyan sipariş yok' : 'Bu sekmede sipariş yok'}</h3><p>${tyoFilterOn() ? 'Filtreleri değiştirip tekrar deneyin.' : active ? 'Yeni siparişler birkaç dakikada bir Trendyol\'dan çekilir.' : 'Başka bir tarih aralığı seçebilirsiniz.'}</p></div>`}`;
+}
+function baremBanner(list) {
+  const open = list.map(baremInfo).filter((b) => b && !b.lost), lost = list.map(baremInfo).filter((b) => b?.lost);
+  const risk = open.reduce((a, b) => a + b.risk, 0), lim = open[0]?.limit || lost[0]?.limit || S.profit?.cfg?.cargo_tiers?.[0]?.upto || 200;
+  return `<div class="brm-banner"><span class="brm-ic">${icon('bolt')}</span>
+    <div><b>Barem önceliği açık</b><p>Sepeti ${lim} ₺ altındaki siparişler en üstte, son teslimi en yakın olan önce. Son teslimden önce kargoya verilmezse kargo bir üst baremden kesilir.${lost.length ? ` ${lost.length} siparişin süresi geçti.` : ''}</p></div>
+    ${open.length ? `<div class="brm-stat"><strong>−${fmtTL(risk)}</strong><small>${open.length} sipariş vaktinde çıkmazsa</small></div>` : '<div class="brm-stat"><small>Bekleyen barem altı sipariş yok</small></div>'}</div>`;
+}
+function baremRows(prof) {
+  let out = '', g = -1;
+  for (const { p, r } of prof) {
+    const b = baremInfo(p), k = b && !b.lost ? 0 : 1;
+    if (k !== g) { out += `<div class="brm-grp">${k === 0 ? 'Barem altı · son teslimden önce çıkmalı' : 'Diğerleri'}</div>`; g = k; }
+    out += tyoRow(p, r);
+  }
+  return out;
 }
 // Adet rozeti: 1 gri → 2-4 kırmızıya doğru → 5-9 turkuazdan lilaya → 10+ elmas gibi parlar
 function qtyColor(q) {
@@ -4211,6 +4265,7 @@ function floatVars(seed) {
 // Trendyol Plus siparişi ya da bu siparişte düşük komisyon (Plus'a özel komisyon indirimi)
 function plusTags(p, long) {
   const out = [];
+  const bt = baremTag(p); if (bt) out.push(bt);
   if (p.plus) out.push(`<span class="plus-tag" title="Trendyol Plus indirimiyle alınmış"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3 6.9 7.5.7-5.7 5 1.7 7.4L12 18.3 5.5 22l1.7-7.4L1.5 9.6 9 8.9z"/></svg>Plus</span>`);
   const rp = p.repeat;
   if (rp && rp.n >= 2) out.push(`<span class="rep-tag" title="Bu müşteri daha önce ${rp.n - 1} kez sipariş verdi${rp.total > rp.n ? `; sonrasında ${rp.total - rp.n} sipariş daha var` : ''}">${icon('refresh')} ${long ? `Bu müşterinin ${rp.n}. siparişi` : `${rp.n}. siparişi`}</span>`);
@@ -6783,6 +6838,12 @@ const ACTIONS = {
   },
   'print-comp': (el) => openNewPrint({ componentId: +el.dataset.id }),
   'pf-cat': (el) => { S.pf.cat = el.dataset.v; pfApply(); },
+  'tyo-barem': async () => {
+    const v = !baremOn(); try { localStorage.setItem('tyBarem', v ? '1' : '0'); } catch { /* */ }
+    try { if (!S.profit) await loadProfit(); } catch { /* varsayılan baremler */ }
+    render();
+  },
+  'np-mach-go': () => { const c = $('#np-printers'); if (!c) return; c.scrollIntoView({ behavior: REDUCED() ? 'auto' : 'smooth', block: 'center' }); c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash'); },
   'po-open': (el) => openOrderFromNotif(el.dataset.no),
   'pf-sec': () => { S.pf.sec = !S.pf.sec; lsSet('pSec', S.pf.sec ? '1' : '0'); pfApply(); },
   psec: (el) => {
