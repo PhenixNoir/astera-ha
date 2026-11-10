@@ -112,7 +112,7 @@ def start():
                                                        ("Deniz", "Örnek", "Kişiye özel isimlik", 1, 250, 6, "new", None)]:
         cur = c.execute("""INSERT INTO custom_orders(first_name,last_name,title,quantity,price,paid,order_date,due_date,status,created_at,updated_at,print_type,items)
                            VALUES(?,?,?,?,?,0,?,?,?,?,?,?,?)""",
-                        (fn, ln, title, q, price, now - 86400, now + due * 86400, status, now, now, "SLA" if its else "FDM",
+                        (fn, ln, title, q, price, time.strftime("%Y-%m-%d", time.localtime(now - 86400)), time.strftime("%Y-%m-%d", time.localtime(now + due * 86400)), status, now, now, "SLA" if its else "FDM",
                          json.dumps(its, ensure_ascii=False) if its else None))
         _rec("custom_orders", cur.lastrowid)
     # Trendyol siparişleri: yeni (bazıları bugün verilmeli) ve geçmişte teslim edilenler

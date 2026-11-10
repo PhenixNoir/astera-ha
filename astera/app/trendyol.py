@@ -477,6 +477,31 @@ def _process_line(pkg, line, codes, restock, since_ms, stats, key=None):
     pid = None if cancelled else _match(codes, line)
     pt = pack_time_ms(pkg) if packed else None
 
+    pkg_id = str(pkg.get("id") or "")
+    # Kısmi iptal: Trendyol paketi böler; iptal edilen adet ve kalan adet ayrı paketlerde aynı satır kimliğiyle gelebilir.
+    # Kalan (canlı) kısım satırın asıl kaydını alır, iptal edilen kısım ayrı bir kayda yazılır; böylece sipariş
+    # İptal'e düşmez ve kalan adet Hazırlanıyor'a çekilebilir.
+    if row is not None and pkg_id and row["package_id"] and row["package_id"] != pkg_id:
+        if cancelled and row["ty_status"] not in CANCEL_STATES:
+            key = f"{key}@{pkg_id}"
+            row = _db().execute("SELECT * FROM ty_lines WHERE line_key=?", (key,)).fetchone()
+        elif not cancelled:
+            _db().execute("UPDATE ty_lines SET package_id=? WHERE line_key=?", (pkg_id, key))
+            if row["state"] in ("cancelled", "restocked"):   # bölünmeden önce iptal sanılmıştı: yeniden açık satır
+                _db().execute("UPDATE ty_lines SET state=? WHERE line_key=?", ("pending" if pid else "unmatched", key))
+            row = _db().execute("SELECT * FROM ty_lines WHERE line_key=?", (key,)).fetchone()
+    if row is not None and not cancelled and row["state"] in ("cancelled", "restocked") and row["ty_status"] in CANCEL_STATES:
+        # önceki sürüm kısmi iptalde açık kalemi de iptal sanmıştı: satırı yeniden aç (paketlenince stok yine düşer)
+        _db().execute("UPDATE ty_lines SET state=?, quantity=? WHERE line_key=?", ("pending" if pid else "unmatched", qty, key))
+        row = _db().execute("SELECT * FROM ty_lines WHERE line_key=?", (key,)).fetchone()
+    if row is not None and not cancelled and row["state"] == "deducted" and qty < (row["quantity"] or 0):
+        diff = row["quantity"] - qty   # düşülmüş adetten bir kısmı iptal edildi
+        if restock and row["product_id"]:
+            _change_stock(row["product_id"], diff, "trendyol", ref=order_no, note=f"Kısmi iptal — {diff} adet stoğa geri eklendi")
+            stats["restocked"] += diff
+        _db().execute("UPDATE ty_lines SET quantity=? WHERE line_key=?", (qty, key))
+        row = _db().execute("SELECT * FROM ty_lines WHERE line_key=?", (key,)).fetchone()
+
     if row is None:
         state = "cancelled" if cancelled else ("pending" if pid else "unmatched")
         _db().execute(
@@ -598,10 +623,20 @@ def package_lines(pkg):
     eski sürüm bunları tek satır sanıyordu. İlk satır eski anahtarını korur (önceden işlenenler iki kez düşülmesin),
     sonrakiler sıra numarası alır."""
     out, seen = [], {}
-    for line in pkg.get("lines") or []:
-        lid = next((line.get(f) for f in LINE_ID_FIELDS if line.get(f)), None)
+    lines = pkg.get("lines") or []
+    ids = [next((l.get(f) for f in LINE_ID_FIELDS if l.get(f)), None) for l in lines]
+    # Kısmi iptalde aynı satır kimliği bir iptal, bir açık kalemle iki kez gelebilir: asıl anahtar açık kalemin,
+    # iptal edilen kalem ayrı anahtar alır (yoksa sonuncusu öncekinin üstüne yazar ve sipariş İptal'e düşer)
+    owner = {}
+    for i, (l, lid) in enumerate(zip(lines, ids)):
+        if lid and (lid not in owner or (lines[owner[lid]].get("orderLineItemStatusName") in CANCEL_STATES
+                                         and l.get("orderLineItemStatusName") not in CANCEL_STATES)):
+            owner[lid] = i
+    for i, line in enumerate(lines):
+        lid = ids[i]
         if lid:
-            key = str(lid)
+            split = owner.get(lid) != i and line.get("orderLineItemStatusName") in CANCEL_STATES
+            key = f"{lid}#c{i}" if split else str(lid)
         else:
             base = f"{pkg.get('id')}-{line.get('barcode')}"
             n = seen.get(base, 0) + 1
@@ -680,8 +715,11 @@ def pkg_info(pkg):
     # paketteki indirim etiketleri (ör. "Sepette %20 İndirim", Plus'a özel fiyat); Plus siparişini tanımak için saklanır
     disc = [{"n": str(d.get("displayName") or "")[:80], "a": _f(d.get("discountAmount"))} for d in (pkg.get("discountDisplays") or []) if isinstance(d, dict) and d.get("displayName")]
     cid = pkg.get("customerId")
+    shp = [int(h.get("createdDate") or 0) for h in (pkg.get("packageHistories") or [])
+           if h.get("status") in SHIPPED_STATES and h.get("createdDate")]
     return {"pkg_total": total, "discounts": json.dumps(disc, ensure_ascii=False) if disc else None, "customer": name or None,
-            "customer_id": str(cid) if cid not in (None, "", 0) else None, "city": city, "district": district, "deadline": pkg_deadline(pkg),
+            "customer_id": str(cid) if cid not in (None, "", 0) else None,
+            "shipped_at": min(shp) if shp else None,   # kargoya verildiği an (ms): barem süresi kaçtı mı "city": city, "district": district, "deadline": pkg_deadline(pkg),
             "cargo_no": str(cno) if cno not in (None, "", 0) else None,
             "cargo_provider": pkg.get("cargoProviderName") or None,
             "cargo_link": pkg.get("cargoTrackingLink") or None}
@@ -694,10 +732,10 @@ def _store_details(pkg, line, key, info=None):
                      customer=COALESCE(?, customer), city=COALESCE(?, city), deadline=COALESCE(?, deadline),
                      line_id=COALESCE(?, line_id), cargo_no=COALESCE(?, cargo_no), cargo_provider=COALESCE(?, cargo_provider),
                      cargo_link=COALESCE(?, cargo_link), commission=COALESCE(?, commission), district=COALESCE(?, district),
-                     discounts=COALESCE(?, discounts), customer_id=COALESCE(?, customer_id) WHERE line_key=?""",
+                     discounts=COALESCE(?, discounts), customer_id=COALESCE(?, customer_id), shipped_at=COALESCE(shipped_at, ?) WHERE line_key=?""",
                   (line_unit_revenue(line), info["pkg_total"], info["customer"], info["city"], info["deadline"],
                    str(lid) if lid else None, info.get("cargo_no"), info.get("cargo_provider"), info.get("cargo_link"),
-                   _f(line.get("commission")), info.get("district"), info.get("discounts"), info.get("customer_id"), key))
+                   _f(line.get("commission")), info.get("district"), info.get("discounts"), info.get("customer_id"), info.get("shipped_at"), key))
 
 
 def _line_key(pkg, line):
@@ -1006,13 +1044,13 @@ def orders(month=None, start=None, end=None):
         g = pk.setdefault(k, {"package_id": r["package_id"], "order_number": r["order_number"], "order_date": r["order_date"],
                               "customer": r["customer"], "city": r["city"], "district": r["district"], "pkg_total": r["pkg_total"], "deadline": r["deadline"],
                               "packed_at": r["packed_at"], "cargo_no": r["cargo_no"], "cargo_provider": r["cargo_provider"],
-                              "cargo_link": r["cargo_link"], "label_at": r["label_at"], "statuses": [], "lines": [], "discounts": None})
+                              "cargo_link": r["cargo_link"], "label_at": r["label_at"], "shipped_at": r.get("shipped_at"), "statuses": [], "lines": [], "discounts": None})
         if r.get("discounts") and not g["discounts"]:
             try:
                 g["discounts"] = json.loads(r["discounts"])
             except ValueError:
                 pass
-        for f in ("customer", "city", "district", "pkg_total", "deadline", "packed_at", "cargo_no", "cargo_provider", "cargo_link", "label_at"):
+        for f in ("customer", "city", "district", "pkg_total", "deadline", "packed_at", "cargo_no", "cargo_provider", "cargo_link", "label_at", "shipped_at"):
             g[f] = g[f] or r[f]
         g["statuses"].append(r["ty_status"] or "")
         g["lines"].append({"line_key": r["line_key"], "product_id": r["product_id"], "name": r["matched_name"] or r["product_name"] or r["barcode"],

@@ -1814,7 +1814,8 @@ async function openNewPrint(arg) {
   NP.printer = printers.some((x) => x.name === NP.printer) ? NP.printer : '';
   openModal(`
     <div class="modal-h np-head"><h2>Yeni baskı</h2><button type="button" class="np-mach" id="np-mach" data-act="np-mach-go" title="Makineyi değiştir"></button><button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
-    <div class="modal-b">
+    <div class="modal-b np-grid">
+      <div class="np-c np-c1">
       <div class="seg" id="np-mode">
         <button type="button" data-v="product" class="${mode === 'product' ? 'on' : ''}">Stok ürünü</button>
         ${U('np.order') || mode === 'order' ? `<button type="button" data-v="order" class="${mode === 'order' ? 'on' : ''}">Özel sipariş <span class="faint">${printable.length}</span></button>` : ''}
@@ -1826,6 +1827,8 @@ async function openNewPrint(arg) {
         <div class="picker" id="np-list"></div>
       </div>
       <label class="switch sm np-remember hidden" id="np-remember"><input type="checkbox" id="np-remember-in" checked><span>Yazıcıdaki dosyayı (<b id="np-remember-file"></b>) bu kayda bağla <small class="muted">— sonraki seferde kendiliğinden tanınır. Tek seferlik baskıysa işareti kaldırın.</small></span></label>
+      </div>
+      <div class="np-c np-c2">
       <div class="field hidden" id="np-parts-field"><span>Bu baskıda hangi parçalar var?</span><div id="np-parts"></div></div>
       <div class="row" style="align-items:end">
         <div class="field" id="np-qty-field"><span id="np-qty-label">Kaç adet?</span>
@@ -1836,13 +1839,16 @@ async function openNewPrint(arg) {
       <div class="field" id="np-type-field" style="display:none"><span>Baskı türü</span>
         <div class="seg type" id="np-type">${['SLA', 'FDM'].map((t) => `<button type="button" data-v="${t}" class="${t === 'SLA' ? 'on' : ''}">${t}</button>`).join('')}</div></div>
       <div class="field hidden" id="np-spools-field"><span>Makara <span class="faint">(isteğe bağlı · bitince gramı buradan düşer)</span></span><div id="np-spools"></div></div>
-      ${printers.length ? `<div class="field"><span>Makine</span><div class="chips" id="np-printers">${printerChips('np', NP.printer)}</div></div>`
-        : `<p class="side-note" style="margin:0">Makine listesini Ayarlar sayfasından ekleyebilirsiniz.</p>`}
       <div class="np-fail hidden" id="np-fail"></div>
       <div class="ends" id="np-ends">${icon('clock')}<span></span></div>
+      </div>
+      <div class="np-c np-c3">
+      ${printers.length ? `<div class="field"><span>Makine</span><div class="chips np-pcs" id="np-printers">${npPrinterCards()}</div></div>`
+        : `<p class="side-note" style="margin:0">Makine listesini Ayarlar sayfasından ekleyebilirsiniz.</p>`}
+      </div>
     </div>
     <aside class="np-side" id="np-side" aria-label="Siparişin kalemleri"></aside>
-    <div class="modal-f"><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary btn-lg" data-act="np-start" id="np-start">Baskıyı başlat</button></div></div>`);
+    <div class="modal-f"><span class="np-fsum" id="np-fsum"></span><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary btn-lg" data-act="np-start" id="np-start">Baskıyı başlat</button></div></div>`, 'np-modal');
 
   $('#np-side').addEventListener('click', npSideClick);
   $('#np-side').addEventListener('input', (e) => { const i = e.target.closest('[data-np-leaf]'); if (!i) return; npSideSet(i.dataset.npLeaf, parseInt(i.value) || 0, false); });
@@ -1919,11 +1925,21 @@ function npSetMode(mode, initial) {
   npSideClose();
   npRememberUI(); npRenderList(); npEnds();
 }
+// Makine kartları: ad + şu anki durumu (basıyorsa yüzde ve kalan süre); geniş ekranda sağ sütunda alt alta
+function npPrinterCards() {
+  return (S.settings?.printers || []).map((x) => {
+    const st = bambuLive(x.name), j = (S.jobs || []).find((q) => q.status === 'printing' && q.printer === x.name);
+    const left = st?.remaining_min ? fmtDur(st.remaining_min) : j?.ends_at && j.ends_at > nowS() ? fmtLeft(j.ends_at - nowS()) : '';
+    const busy = !!(st || j), sub = busy ? `${st?.percent != null ? `%${st.percent}` : 'basıyor'}${left ? ` · ${left}` : ''}` : 'boşta';
+    return `<button type="button" class="chip pchip np-pc${x.name === NP.printer ? ' on' : ''}" data-v="${esc(x.name)}">${printerThumb(x.name, 'xs')}<span class="np-pc-t"><b>${esc(x.name)}</b><small>${sub}</small></span><i class="np-pc-dot${busy ? ' busy' : ''}"></i></button>`;
+  }).join('');
+}
 function npSetPrinter(v) {
   NP.printer = v || '';
   $$('#np-printers .chip').forEach((c) => c.classList.toggle('on', c.dataset.v === NP.printer));
   npLive();
   npMachHead();
+  npFootSum();
 }
 // Başlıkta seçili makine büyükçe: hangi cihazda başlatıldığı karışmasın
 function npMachHead() {
@@ -2219,7 +2235,17 @@ function openSpoolPicker(btn, i) {
   setTimeout(() => { document.addEventListener('pointerdown', palOutside); $('#sp-pop-q', pop)?.focus(); }, 0);
 }
 
-function npEnds() {
+function npEnds() { npEnds0(); npFootSum(); }
+// Alt çubukta kısa özet: ne · kaç · hangi makine · ne zaman biter
+function npFootSum() {
+  const el = $('#np-fsum'); if (!el || !NP) return;
+  const picked = NP.mode === 'order' ? S.orders.find((o) => o.id === NP.oid) : NP.mode === 'comp' || NP.mode === 'misc' ? compById(NP.cid) : productById(NP.pid);
+  if (!picked) { el.innerHTML = ''; return; }
+  const min = npMinutes(), qty = parseInt($('#np-qty')?.value) || 1;
+  const nParts = NP.mode === 'product' && NP.parts ? Object.values(NP.parts).reduce((a, b) => a + b, 0) : 0;
+  el.innerHTML = [`<b>${esc(picked.name || picked.customer || picked.title || '')}</b>${nParts ? ` · ${nParts} parça` : NP.mode !== 'order' ? ` ×${qty}` : ''}`, NP.printer ? esc(NP.printer) : '<span class="warn-text">makine seçilmedi</span>', !NP.finished && min >= 1 ? `${fmtClock(nowS() + min * 60)}'te biter` : ''].filter(Boolean).join(' · ');
+}
+function npEnds0() {
   npSyncSlots(); npFailWarn();
   const min = npMinutes();
   const el = $('#np-ends span');
@@ -2629,7 +2655,7 @@ function openResult(id, again) {
   openModal(`
     <div class="done-head">
       <span class="done-pulse"></span>
-      <div><b>Baskı bitti</b>${due.length > 1 ? `<button type="button" class="linkish on-dark" data-act="bulk-open">${due.length} baskıyı birlikte gir</button>` : ''}<span>${due.length > 1 ? `${pos + 1} / ${due.length} · ` : ''}${fmtClock(j.started_at)}'de başladı, ${fmtDur(Math.round((j.ends_at - j.started_at) / 60))} sürdü</span></div>
+      <div><b>Baskı bitti</b><span>${due.length > 1 ? `${pos + 1} / ${due.length} · ` : ''}${fmtClock(j.started_at)}'de başladı, ${fmtDur(Math.round((j.ends_at - j.started_at) / 60))} sürdü</span>${due.length > 1 ? `<button type="button" class="linkish on-dark rh-bulk" data-act="bulk-open">${due.length} baskıyı birlikte gir →</button>` : ''}</div>
       <button class="icon-btn" data-act="res-later" data-id="${j.id}" aria-label="Sonra sor">${icon('x')}</button>
     </div>
     <div class="modal-b">
@@ -4007,6 +4033,10 @@ function orderProfit(pkg) {
   const r = { price: P, commission: com, commissionPct: Math.round(com / P * 1000) / 10, comSrc: comReal ? 'cari hesaptan' : comLine ? 'siparişteki oran' : '', cargo: realCargo ? pkg.cargo_real : cargoFor(pkg.pkg_total ?? P, over),
     cargoTier: realCargo ? `kargo faturasından${pkg.cargo_desi ? `, ${pkg.cargo_desi} desi` : ''}` : cargoTierLabel(pkg.pkg_total ?? P),
     fee: cfg.service_fee, pack: cfg.packaging, material: mat * (1 + cfg.fire_pct / 100), extra };
+  if (!realCargo) {   // barem altı sipariş son teslimden sonra kargoya verildiyse / verilecekse kargo üst baremden kesilir
+    const b = baremInfo(pkg);
+    if (b?.lost && b.risk > 0) { r.cargo = Math.max(r.cargo, b.up); r.cargoTier = `barem kaçtı · üst baremden ${fmtTL(b.up)}`; r.baremLost = true; }
+  }
   r.costs = r.commission + r.cargo + r.fee + r.pack + r.material + r.extra;
   r.net = P - r.costs; r.profit = r.net / v; r.vat = r.net - r.profit; r.margin = r.profit / P;
   r.missing = [...missing]; r.grams = grams;
@@ -4093,18 +4123,22 @@ const TYO_SORTS = [['auto', 'Varsayılan (açıkta son teslim, diğerlerinde yen
 const baremOn = () => { try { return localStorage.getItem('tyBarem') === '1'; } catch { return false; } };
 function baremInfo(p) {
   const tiers = S.profit?.cfg?.cargo_tiers || [{ upto: 200, fee: 46.49 }, { upto: 300, fee: 84.49 }];
-  const t0 = tiers[0]; if (!t0 || !TYO_ACTIVE.has(p.tab)) return null;
+  const active = TYO_ACTIVE.has(p.tab), t0 = tiers[0];
+  if (!t0 || p.tab === 'cancelled' || (!active && !p.shipped_at)) return null;
   const live = p.lines.filter((l) => !TY_CANCEL.has(l.status));
   const amt = p.pkg_total ?? live.reduce((a, l) => a + (l.unit_price || 0) * l.quantity, 0);
   if (!(amt > 0 && amt < t0.upto)) return null;
   const up = tiers[1]?.fee ?? S.profit?.cfg?.cargo_over ?? t0.fee, dl = effDeadline(p.deadline);
-  const left = dl ? dl - nowS() : null;
-  return { amt, dl, left, lost: left != null && left < 0, risk: Math.max(0, Math.round((up - t0.fee) * 100) / 100), limit: t0.upto };
+  const left = dl ? dl - nowS() : null, raw = p.deadline ? p.deadline / 1000 : null;
+  // kaçtı mı: kargoya verildiyse verildiği an, verilmediyse şimdi; Trendyol'un son teslimiyle karşılaştırılır
+  const lost = raw != null && (active ? nowS() > raw : p.shipped_at / 1000 > raw);
+  return { amt, dl, left: active ? left : null, lost, shipped: !active, risk: Math.max(0, Math.round((up - t0.fee) * 100) / 100), limit: t0.upto, up };
 }
 function baremTag(p) {
   if (!baremOn()) return '';
   const b = baremInfo(p); if (!b) return '';
-  if (b.lost) return `<span class="brm-tag lost" title="Son teslim geçti; kargo üst baremden kesilir">barem indirimi kaçtı · +${fmtTL(b.risk)} kargo</span>`;
+  if (b.shipped && !b.lost) return '';
+  if (b.lost) return `<span class="brm-tag lost" title="${b.shipped ? 'Son teslimden sonra kargoya verildi' : 'Son teslim geçti'}; kargo üst baremden kesilir">barem indirimi kaçtı · +${fmtTL(b.risk)} kargo</span>`;
   if (b.left == null) return `<span class="brm-tag" title="Sepet ${fmtTL(b.amt)} · ${b.limit} ₺ baremi altında">⚡ barem altı</span>`;
   return `<span class="brm-tag${b.left < 6 * 3600 ? ' go' : ''}" title="Sepet ${fmtTL(b.amt)}; son teslimden önce kargoya verilmezse kargo ${fmtTL(b.risk)} fazla kesilir">⚡ ${fmtLeft(b.left)}</span>`;
 }
@@ -4133,6 +4167,9 @@ function tyoFiltered() {
   }
   return list;
 }
+// Üst bölümü (arama, filtreler, özet) daralt: siparişler için yer açar; tercih hatırlanır
+const tyoCompact = () => { try { return localStorage.getItem('tyoCompact') === '1'; } catch { return false; } };
+const tyoFilterCount = () => { const f = S.tyo; return (f.q.trim() ? 1 : 0) + (f.cat !== 'all' ? 1 : 0) + (f.pid ? 1 : 0) + ((TYO_ACTIVE.has(f.tab) ? f.rA : f.rD) !== (TYO_ACTIVE.has(f.tab) ? 'all' : 'month') ? 1 : 0); };
 function tyoPage(src = '') {
   const d = S.tyOrders, t = S.tyo.tab;
   if (!d) return '';
@@ -4145,11 +4182,13 @@ function tyoPage(src = '') {
   // Sıkı düzen: 1. satır kaynak + sekmeler + yenile, 2. satır arama + filtreler (etiketler yalnız ekran okuyucuya)
   return `<div class="tyo-stick"><div class="toolbar tyo-tools">${src}<div class="seg tyo-tabs" role="tablist">${TYO_TABS.map(([k, l]) => `<button class="${t === k ? 'on' : ''}" data-act="tyo-tab" data-v="${k}" role="tab">${l} <span class="faint">${counts[k]}</span></button>`).join('')}</div>
       <span class="spacer"></span>
+      <button type="button" class="tyo-fold${tyoCompact() ? ' closed' : ''}" data-act="tyo-fold" aria-expanded="${!tyoCompact()}" title="${tyoCompact() ? 'Arama ve filtreleri göster' : 'Arama ve filtreleri gizle'}">${icon('chevron-down')}<span>Filtreler</span>${tyoCompact() && tyoFilterCount() ? `<b>${tyoFilterCount()}</b>` : ''}</button>
       ${active ? `<button type="button" class="brm-btn${baremOn() ? ' on' : ''}" data-act="tyo-barem" aria-pressed="${baremOn()}" title="Sepeti kargo bareminin altında kalan siparişleri öne al">${icon('bolt')} Barem<span class="brm-long"> önceliği</span></button>` : ''}
       <label class="switch tyo-det-sw"><input type="checkbox" id="tyo-det" ${tyoDet() ? 'checked' : ''}><span>Ayrıntılı</span></label>
       <span class="faint tyo-sync-t" style="font-size:12.5px">${d.last_sync ? `Son eşitleme ${fmtWhen(d.last_sync)}` : 'Henüz eşitlenmedi'}</span>
       <button class="btn btn-sm" data-act="tyo-sync" title="${d.last_sync ? `Son eşitleme ${fmtWhen(d.last_sync)}` : 'Henüz eşitlenmedi'}" aria-label="Yenile">${icon('refresh')}<span class="tyo-sync-l"> Yenile</span></button>
     </div></div>
+    <div class="tyo-foldbox${tyoCompact() ? ' closed' : ''}"><div>
     <div class="toolbar tyo-filters">
       <label class="search tyo-search">${icon('search')}<input class="input" id="tyo-q" placeholder="Sipariş no, müşteri, şehir veya ürün" aria-label="Sipariş ara" value="${esc(f.q)}" autocomplete="off"></label>
       <label class="flt"><span>Tarih${active ? '' : ' (sipariş)'}</span><select class="input" id="tyo-range">${RANGES.map(([k, l]) => `<option value="${k}"${rk === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
@@ -4160,6 +4199,7 @@ function tyoPage(src = '') {
       ${tyoFilterOn() ? '<button class="btn btn-ghost btn-sm" data-act="tyo-clear">Filtreleri temizle</button>' : ''}
     </div>
     ${!d.tracking_enabled ? `<div class="notice">${icon('bell')}<div>Trendyol takibi kapalı. Siparişlerin buraya gelmesi için <a href="#/satis">Satış</a> sayfasından takibi açın.</div></div>` : ''}
+    </div></div>
     <div id="tyo-res">${tyoResults()}</div>`;
 }
 function tyoResults() {
@@ -6838,6 +6878,14 @@ const ACTIONS = {
   },
   'print-comp': (el) => openNewPrint({ componentId: +el.dataset.id }),
   'pf-cat': (el) => { S.pf.cat = el.dataset.v; pfApply(); },
+  'tyo-fold': (el) => {
+    const v = !tyoCompact(); try { localStorage.setItem('tyoCompact', v ? '1' : '0'); } catch { /* */ }
+    $('.tyo-foldbox')?.classList.toggle('closed', v);
+    document.body.classList.toggle('tyo-compact', v);
+    el.classList.toggle('closed', v); el.setAttribute('aria-expanded', String(!v)); el.title = v ? 'Arama ve filtreleri göster' : 'Arama ve filtreleri gizle';
+    el.querySelector('b')?.remove(); if (v && tyoFilterCount()) el.insertAdjacentHTML('beforeend', `<b>${tyoFilterCount()}</b>`);
+    if (v && document.activeElement?.closest('.tyo-foldbox')) document.activeElement.blur();
+  },
   'tyo-barem': async () => {
     const v = !baremOn(); try { localStorage.setItem('tyBarem', v ? '1' : '0'); } catch { /* */ }
     try { if (!S.profit) await loadProfit(); } catch { /* varsayılan baremler */ }

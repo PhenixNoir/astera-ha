@@ -382,7 +382,7 @@ def migrate():
     tcols = _columns("ty_lines")
     for col, typ in (("unit_price", "REAL"), ("pkg_total", "REAL"), ("customer", "TEXT"), ("city", "TEXT"),
                      ("deadline", "INTEGER"), ("line_id", "TEXT"), ("cargo_no", "TEXT"), ("cargo_provider", "TEXT"),
-                     ("cargo_link", "TEXT"), ("label_at", "INTEGER"), ("commission", "REAL"), ("district", "TEXT"), ("discounts", "TEXT"), ("customer_id", "TEXT")):
+                     ("cargo_link", "TEXT"), ("label_at", "INTEGER"), ("commission", "REAL"), ("district", "TEXT"), ("discounts", "TEXT"), ("customer_id", "TEXT"), ("shipped_at", "INTEGER")):
         if col not in tcols:
             c.execute(f"ALTER TABLE ty_lines ADD COLUMN {col} {typ}")
     ocols = _columns("custom_orders")
@@ -401,6 +401,9 @@ def init_db():
         musteri.migrate(db())
         migrate()
         sync_part_grams()
+        for col in ("order_date", "due_date"):   # eski örnek veriler tarihi saniye olarak yazmıştı → YYYY-AA-GG
+            db().execute(f"UPDATE custom_orders SET {col}=date(CAST({col} AS INTEGER),'unixepoch','localtime') "
+                         f"WHERE {col} IS NOT NULL AND {col} NOT LIKE '%-%' AND length({col}) >= 9")
         db().commit()
 
 
@@ -2201,9 +2204,12 @@ def build_plan():
     # 2) Termini olan / bekleyen özel siparişler
     for o in db().execute("SELECT * FROM custom_orders WHERE status='new' ORDER BY due_date IS NULL, due_date, id"):
         dl = None
-        if o["due_date"]:
-            y, m, d = (int(x) for x in o["due_date"].split("-"))
+        dd = str(o["due_date"] or "")
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", dd[:10]):
+            y, m, d = (int(x) for x in dd[:10].split("-"))
             dl = int(time.mktime((y, m, d, 18, 0, 0, 0, 0, -1)))
+        elif dd.isdigit():   # eski örnek veriler termini saniye olarak yazmıştı
+            dl = int(dd)
         name = (f"{o['first_name'] or ''} {o['last_name'] or ''}".strip() + (f" — {o['title']}" if o["title"] else "")) or "Özel sipariş"
         items.append({"kind": "order", "order_id": o["id"], "name": name, "thumbnail": o["image"], "qty": o["quantity"] or 1,
                       "deadline": dl, "print_type": o["print_type"] or "SLA", "minutes": o["print_minutes"] or 0,

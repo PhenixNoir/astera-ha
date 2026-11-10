@@ -1,5 +1,12 @@
 # Sürüm notları
 
+## 1.9.17
+- Kısmi iptal düzeltildi: müşteri bir siparişteki ürünlerin bir kısmını iptal edince sipariş artık İptal'e düşmüyor; kalan adet Yeni'de kalır ve Hazırlanıyor'a çekilebilir. Paketlendikten sonra yapılan kısmi iptalde iptal edilen adet stoğa geri eklenir. Bu yüzden takılı kalan siparişler bir sonraki eşitlemede kendiliğinden düzelir.
+- Barem süresini kaçıran (200 ₺ altı, son teslimden sonra kargolanan / kargolanacak) siparişlerin kâr hesabında kargo üst baremden düşülür. Kargoya verilme saati artık kaydedilir.
+- Yeni baskı penceresi geniş ekranda üç sütun: ürünler | adet, parçalar, süre | makine kartları (durum ve kalan süreyle). Altta kısa özet; kaydırmadan her şey görünür.
+- Siparişler: arama ve filtreler tek düğmeyle daraltılabilir (tercih hatırlanır), siparişler için yer açılır.
+- Düzeltmeler: açık temada Tablada'daki "Sonucu gir" düğmesi görünmüyordu; baskı sonucu başlığında "birlikte gir" bağlantısı yazıyla çakışıyordu; örnek verilerde özel sipariş tarihleri hatalıydı (Plan sayfası boş açılıyordu).
+
 ## 1.9.16
 - Siparişler: "Barem önceliği" düğmesi. Açıkken sepeti ilk kargo bareminin (200 ₺) altında kalan ve son teslimi geçmemiş siparişler en üste, en az süresi kalan önce; satırda kalan süre, süresi geçenlerde "barem indirimi kaçtı" etiketi; üstte geç kalınırsa fazladan kesilecek toplam kargo. Ücretler Kâr sayfasındaki kargo baremlerinden alınır.
 - Yeni baskı: seçili makine pencere başlığında büyükçe görünür (basıyorsa yüzdesiyle); seçilmemişse uyarır.
