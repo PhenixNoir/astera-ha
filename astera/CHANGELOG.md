@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.9.18
+- Yeni baskı penceresi düzeltildi: yazıcıdan gelen baskıyla açılınca sütunlar kayıyor, makineler alta düşüyor ve sağda kaydırma çubuğu çıkıyordu. Bilgi kutusu sol sütunun üstüne taşındı ve kısaldı; pencere ekran boyunca uzar, ürün listesi sıkı dizilir.
+
 ## 1.9.17
 - Kısmi iptal düzeltildi: müşteri bir siparişteki ürünlerin bir kısmını iptal edince sipariş artık İptal'e düşmüyor; kalan adet Yeni'de kalır ve Hazırlanıyor'a çekilebilir. Paketlendikten sonra yapılan kısmi iptalde iptal edilen adet stoğa geri eklenir. Bu yüzden takılı kalan siparişler bir sonraki eşitlemede kendiliğinden düzelir.
 - Barem süresini kaçıran (200 ₺ altı, son teslimden sonra kargolanan / kargolanacak) siparişlerin kâr hesabında kargo üst baremden düşülür. Kargoya verilme saati artık kaydedilir.

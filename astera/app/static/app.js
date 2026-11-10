@@ -2287,14 +2287,16 @@ async function openFromBambu(ev) {
   npSetPrinter(ev.printer); npRememberUI();
   if (NP.finished) { $('#np-time-field')?.classList.add('hidden'); const st = $('#np-start'); if (st) st.innerHTML = `${icon('check')} Kaydet, sonucu gir`; npEnds(); }
   if (ev.remaining_min) { NP.timeTouched = true; $('#np-h').value = Math.floor(ev.remaining_min / 60); $('#np-m').value = ev.remaining_min % 60; npEnds(); }
-  const box = $('.modal-b');
+  const box = $('.np-c1') || $('.modal-b');
+  const file = `<span class="np-ev-f" title="${esc(ev.file || '')}">${esc(ev.file || 'bir dosya')}</span>`;
+  const head = `${printerThumb(ev.printer, 'xs')}<div><div class="np-ev-h"><b>${esc(ev.printer)}</b> ${ev.done ? 'bitirdi' : `basıyor${ev.percent ? ` · %${ev.percent}` : ''}`}${ev.objects ? ` · tablada ${ev.objects} nesne` : ''}</div>${file}`;
   if (ev.reason === 'confirm') {
     if (ev.guess_qty && NP.mode === 'product' && !NP.parts) { $('#np-qty').value = ev.guess_qty; npAutoTime(); npEnds(); }
     const st = $('#np-start'); if (st) st.innerHTML = `${icon('check')} ${ev.done ? 'Onayla, sonucu gir' : 'Onayla, baskıyı aç'}`;
-    box?.insertAdjacentHTML('afterbegin', `<div class="notice confirm">${printerThumb(ev.printer, 'xs')}<div><b>${esc(ev.printer)}</b> ${ev.done ? '<b>bitirdi</b>' : 'basıyor'}: <b>${esc(ev.file || 'bir dosya')}</b>${ev.objects ? ` · tablada ${ev.objects} nesne` : ''}.<br>Tahminim: <b>${esc(ev.guess || '')}${ev.guess_qty ? ` ×${ev.guess_qty}` : ''}</b>. Doğruysa onaylayın; değilse listeden doğru ürünü seçin (dosya o ürüne öğretilir).</div></div>`);
+    box?.insertAdjacentHTML('afterbegin', `<div class="notice confirm np-ev">${head}<small>Tahmin: <b>${esc(ev.guess || '')}${ev.guess_qty ? ` ×${ev.guess_qty}` : ''}</b> · doğruysa onaylayın, değilse doğru ürünü seçin</small></div></div>`);
     return;
   }
-  box?.insertAdjacentHTML('afterbegin', `<div class="notice">${printerThumb(ev.printer, 'xs')}<div><b>${esc(ev.printer)}</b> ${ev.done ? 'bitirdi' : 'şu an'} <b>${esc(ev.file || 'bir dosya')}</b> ${ev.done ? '' : 'basıyor'}${ev.percent ? ` (%${ev.percent})` : ''}${ev.objects ? `, tablada ${ev.objects} nesne var` : ''}. ${ev.reason === 'parts' ? 'Bu baskıda hangi parçaların olduğunu seçin.' : 'Hangi ürün olduğunu seçin; bu dosyayı bir dahaki sefere tanırım. Satılmayan bir baskıysa (dükkan malzemesi vb.) <b>Diğer amaçlı</b> sekmesini seçin.'}</div></div>`);
+  box?.insertAdjacentHTML('afterbegin', `<div class="notice np-ev">${head}<small>${ev.reason === 'parts' ? 'Bu baskıdaki parçaları seçin' : 'Ürünü seçin, dosya ona öğretilir · satılmayan baskıysa <b>Diğer amaçlı</b>'}</small></div></div>`);
 }
 async function startPrint() {
   const qty = parseInt($('#np-qty').value) || 0;
