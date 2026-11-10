@@ -3846,6 +3846,7 @@ tr.pen-open td { background: color-mix(in srgb, var(--bad) 7%, transparent); }
   .modal.np-modal:not(.np-wide) .np-c1 > .field:has(#np-list) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .modal.np-modal:not(.np-wide) #np-list { flex: 1; min-height: 0; max-height: none; }
   .modal.np-modal:not(.np-wide) .np-c3 { background: var(--sheet-2); }
+  .modal.np-modal:not(.np-wide) .np-parts-list { max-height: none; overflow: visible; }
   .modal.np-modal:not(.np-wide) .np-pcs { display: grid; gap: 8px; }
   .modal.np-modal:not(.np-wide) .np-pc { display: flex; width: 100%; height: auto; justify-content: flex-start; padding: 9px 12px 9px 9px; border-radius: 12px; text-align: left; background: var(--sheet); }
   .modal.np-modal:not(.np-wide) .np-pc .pr-thumb { width: 32px; height: 32px; border-radius: 8px; }

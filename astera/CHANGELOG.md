@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.9.19
+- Yeni baskı: parça listesi artık orta sütunu dolduruyor; 4 parçadan sonra çıkan küçük kaydırma ve alttaki boşluk giderildi.
+
 ## 1.9.18
 - Yeni baskı penceresi düzeltildi: yazıcıdan gelen baskıyla açılınca sütunlar kayıyor, makineler alta düşüyor ve sağda kaydırma çubuğu çıkıyordu. Bilgi kutusu sol sütunun üstüne taşındı ve kısaldı; pencere ekran boyunca uzar, ürün listesi sıkı dizilir.
 
