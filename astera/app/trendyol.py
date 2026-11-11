@@ -719,7 +719,8 @@ def pkg_info(pkg):
            if h.get("status") in SHIPPED_STATES and h.get("createdDate")]
     return {"pkg_total": total, "discounts": json.dumps(disc, ensure_ascii=False) if disc else None, "customer": name or None,
             "customer_id": str(cid) if cid not in (None, "", 0) else None,
-            "shipped_at": min(shp) if shp else None,   # kargoya verildiği an (ms): barem süresi kaçtı mı "city": city, "district": district, "deadline": pkg_deadline(pkg),
+            "shipped_at": min(shp) if shp else None,   # kargoya verildiği an (ms): barem süresi kaçtı mı
+            "city": city, "district": district, "deadline": pkg_deadline(pkg),
             "cargo_no": str(cno) if cno not in (None, "", 0) else None,
             "cargo_provider": pkg.get("cargoProviderName") or None,
             "cargo_link": pkg.get("cargoTrackingLink") or None}

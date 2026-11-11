@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.9.20
+- Acil düzeltme: Trendyol senkronu "Sunucu hatası: 'city'" ile duruyordu; iptaller ve yeni durumlar listeye düşmüyordu. Giderildi.
+
 ## 1.9.19
 - Yeni baskı: parça listesi artık orta sütunu dolduruyor; 4 parçadan sonra çıkan küçük kaydırma ve alttaki boşluk giderildi.
 
