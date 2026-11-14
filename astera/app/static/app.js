@@ -144,6 +144,13 @@ const PALETTE = [
 const colorName = (hex) => (PALETTE.find((p) => p[0].toLowerCase() === String(hex).toLowerCase()) || [])[1] || '';
 const swatchStyle = (hex) => hex === 'transparent' ? '' : `--c:${hex}`;
 const swatchCls = (hex) => hex === 'transparent' ? ' clear' : '';
+// rengin parlaklığı (0 siyah – 1 beyaz); beyaz makara beyaz zeminde, siyah makara koyu temada kaybolmasın diye
+function hexLum(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim()); if (!m) return 0.5;
+  const n = parseInt(m[1], 16), f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * f(n >> 16) + 0.7152 * f((n >> 8) & 255) + 0.0722 * f(n & 255);
+}
+const toneCls = (hex) => { const l = hexLum(hex); return l > 0.7 ? ' tone-lt' : l < 0.03 ? ' tone-dk' : ''; };
 // Kategoriler Ayarlar'dan düzenlenir; boot'ta ve kaydedince yüklenir
 const catNames = () => (S.categories || []).map((c) => c.name);
 const catFlags = (name) => (S.categories || []).find((c) => c.name === name) || { no_materials: false, no_parts: false };
@@ -1567,9 +1574,9 @@ function renderParts() {
     <div class="parts-head${per ? ' colored' : ''}">${per ? '<span>Renk</span>' : ''}<span>Parça adı</span><span>Bir üründe</span><span title="1 parçanın filament gramı">Gram (1 adet)</span>${ED.totalMode ? '<span title="Elinizdeki toplam parça (sete dönüşmüş olanlar dahil)">Elde (toplam)</span>' : '<span title="Basılmış, henüz sete dönüşmemiş">Elde</span>'}<span></span></div>
     ${ED.parts.map((x, i) => { const comp = x.component_id ? compById(x.component_id) : null;
       const hex = comp ? (comp.color_hex || '#C2C6CA') : (x.color_hex || '#F4F4F1'), clear = hex === 'transparent', col = clear ? '#C9D1D6' : hex;
-      return `<div class="part-row${per ? ' colored pcA' : ''}${comp ? ' shared' : ''}" data-i="${i}"${per ? ` style="--c:${col};--m:${shapeMask(comp ? comp.brand : x.brand)}"` : ''}>
-      ${per && comp ? `<div class="part-color pc-cell"><span class="pc-sh" aria-hidden="true"></span><span class="pc-tx"><b>${esc(comp.color_name || colorName(comp.color_hex) || 'Ortak')}</b><small>${esc(comp.brand || 'ortak parça')}</small></span></div>` : ''}
-      ${per && !comp ? `<div class="part-color pc-cell"><button type="button" class="pc-sh" data-act="pick-part-color" data-i="${i}" aria-label="Parça rengi" title="Rengi değiştir"></button>
+      return `<div class="part-row${per ? ' colored pcA' + toneCls(col) : ''}${comp ? ' shared' : ''}" data-i="${i}"${per ? ` style="--c:${col};--m:${shapeMask(comp ? comp.brand : x.brand)}"` : ''}>
+      ${per && comp ? `<div class="part-color pc-cell"><span class="pc-sh" aria-hidden="true"><i></i></span><span class="pc-tx"><b>${esc(comp.color_name || colorName(comp.color_hex) || 'Ortak')}</b><small>${esc(comp.brand || 'ortak parça')}</small></span></div>` : ''}
+      ${per && !comp ? `<div class="part-color pc-cell"><button type="button" class="pc-sh" data-act="pick-part-color" data-i="${i}" aria-label="Parça rengi" title="Rengi değiştir"><i></i></button>
         <span class="pc-tx"><button type="button" class="pc-nm" data-act="pick-part-color" data-i="${i}">${esc(x.color_name || colorName(x.color_hex) || (x.color_hex ? x.color_hex : 'Renk seç'))}</button>
         <input class="pc-br" list="pbl-${i}" placeholder="marka / model" value="${esc(x.brand || '')}" data-pf="brand" data-i="${i}" autocomplete="off" aria-label="Filament marka / model"></span>
         <datalist id="pbl-${i}">${brandsForColor(x.color_hex).map((b) => `<option value="${esc(b)}">`).join('')}</datalist></div>` : ''}

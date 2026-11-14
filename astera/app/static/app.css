@@ -2243,11 +2243,15 @@ body:has(.psel-bar) .fab { display: none; }
 .part-row.pcA.shared { margin: 0; }
 .parts-head.colored { padding-left: 2px; }
 .pc-cell { display: flex !important; align-items: center; gap: 10px; padding-left: 12px; min-width: 0; }
-.pc-sh { flex: none; width: 34px; height: 34px; border: 0; padding: 0; cursor: pointer; background: var(--c);
-  -webkit-mask: var(--m) center/contain no-repeat; mask: var(--m) center/contain no-repeat; transition: transform .35s cubic-bezier(.2,.8,.2,1); }
+.pc-sh { flex: none; width: 34px; height: 34px; border: 0; padding: 0; cursor: pointer; background: none; display: grid; transition: transform .35s cubic-bezier(.2,.8,.2,1); }
+.pc-sh > i { background: var(--c); -webkit-mask: var(--m) center/contain no-repeat; mask: var(--m) center/contain no-repeat; }
+/* açık renk (beyaz, krem) makara: koyu kontur; çok koyu makara: açık kontur. Filtre dış kutuda, maske içte, yoksa maske konturu keser */
+.part-row.pcA.tone-lt .pc-sh { filter: drop-shadow(0 0 .6px rgba(0,0,0,.75)) drop-shadow(0 1px 1.5px rgba(0,0,0,.28)); }
+.part-row.pcA.tone-lt { box-shadow: inset 4px 0 0 color-mix(in srgb, var(--c) 55%, var(--ink-3)); background: linear-gradient(90deg, color-mix(in srgb, var(--ink-3) 12%, var(--sheet-2)), var(--sheet-2) 42%); }
+.part-row.pcA.tone-dk .pc-sh { filter: drop-shadow(0 0 .6px rgba(255,255,255,.85)) drop-shadow(0 0 1.5px rgba(255,255,255,.25)); }
+.part-row.pcA.tone-dk { box-shadow: inset 4px 0 0 color-mix(in srgb, var(--c) 60%, var(--ink-3)); }
 span.pc-sh { cursor: default; }
 .pc-cell:hover .pc-sh { transform: rotate(40deg) scale(1.06); }
-.part-row.pcA[style*="#1"] .pc-sh, .part-row.pcA[style*="#0"] .pc-sh { filter: drop-shadow(0 0 1px rgba(255,255,255,.45)); }
 .pc-tx { display: grid; min-width: 0; line-height: 1.2; }
 .pc-tx b, .pc-nm { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pc-nm { border: 0; background: none; padding: 0; color: var(--ink); text-align: left; cursor: pointer; font-family: inherit; }

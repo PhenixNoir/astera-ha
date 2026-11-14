@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.9.21
+- Parça renkleri: beyaz/krem makaralar açık zeminde, siyah makaralar koyu temada artık kontur alıyor ve görünüyor.
+
 ## 1.9.20
 - Acil düzeltme: Trendyol senkronu "Sunucu hatası: 'city'" ile duruyordu; iptaller ve yeni durumlar listeye düşmüyordu. Giderildi.
 
