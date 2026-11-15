@@ -1,5 +1,11 @@
 # Sürüm notları
 
+## 1.9.22
+- Pano: yeni "Yeni siparişler" bölümü. En yeni üstte, gün gün ayrılmış zaman akışı; yanında bugünün sipariş sayısı, cirosu, tahmini kârı ve saat saat gelen siparişler. Yeni sipariş düşünce satır kayarak en üste girer.
+- Siparişler: sekme sayıları durum renginde rozet oldu; seçili sekme kendi rengini alır.
+- Bildirimler: geçmiş de Yazıcılar / Siparişler / Müşteri / Diğer diye bölümlere ayrıldı; tüm bölümler açılır kapanır ve seçim hatırlanır.
+- Komisyon etiketi sipariş listesinden kalktı. Ayrıntıda her ürünün kendi komisyon oranı, başlıkta siparişin tutara göre ağırlıklı ortalaması yazar.
+
 ## 1.9.21
 - Parça renkleri: beyaz/krem makaralar açık zeminde, siyah makaralar koyu temada artık kontur alıyor ve görünüyor.
 

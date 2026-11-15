@@ -562,6 +562,7 @@ PAGES[''] = {
   after() {
     if (S.settings?.ty_seller_id && (!S.pick || Date.now() - (S.pickAt || 0) > 120000)) loadPick(true);
     if (S.dashEdit) bindDashDrag();
+    dashNewLoad();
   },
   html() {
     const layout = dashLayout(), editing = !!S.dashEdit;
@@ -587,6 +588,7 @@ PAGES[''] = {
 
 // ---------- pano bölümleri: sırası, genişliği ve görünürlüğü cihaz başına kaydedilir
 const DASH_SECTIONS = {
+  neworders: { title: 'Yeni siparişler', w: 'full', html: () => dashNewHTML() },
   timeline: { title: 'Makine çizelgesi', w: 'full', html: () => timelineHTML() },
   plan: { title: 'Plan: sıradaki baskılar', w: 'full', html: () => planDashHTML() },
   bed: { title: 'Tablada (aktif baskılar)', w: 'full', html: () => bedHTML() },
@@ -597,7 +599,7 @@ const DASH_SECTIONS = {
   log: { title: 'Son stok hareketleri', w: 'half', html: () => `<section class="panel"><div class="panel-h"><h2>Son stok hareketleri</h2></div><div class="panel-b">${logList(S.log)}</div></section>` },
   colors: { title: 'Kullanılan renkler', w: 'full', html: () => colorsHTML() },
 };
-const DASH_DEFAULT = ['plan', 'timeline', 'bed', 'terms', 'ty', 'readout', 'low', 'log', 'colors'];
+const DASH_DEFAULT = ['neworders', 'plan', 'timeline', 'bed', 'terms', 'ty', 'readout', 'low', 'log', 'colors'];
 const DASH_W = { full: 'Tam', half: 'Yarım', third: 'Üçte bir' };
 function dashLayout() {
   let saved = [];
@@ -738,6 +740,7 @@ async function loadNotifs() {
     S.notif = d; renderNotifs(); renderNav();
     if (fresh.length) notifIslands(fresh);
     if (tyNew) setTimeout(() => checkLowMargin(), 1500);
+    if (tyNew && route() === '') setTimeout(() => dashNewLoad(true), 800);
     if (fresh.length) {
       const bell = $('#notif-bell'); bell?.classList.remove('ring'); void bell?.offsetWidth; bell?.classList.add('ring');
       const hid = U('nf.hide') || [], has = (k) => fresh.some((n) => n.kind === k && !hid.includes(k));
@@ -789,6 +792,13 @@ function nfSec(n) {
   if (n.kind === 'trendyol' || n.kind === 'order') return 'od';
   return 'ot';
 }
+// Bildirim bölümleri açılır kapanır: bekleyenler varsayılan açık, geçmiş varsayılan kapalı; seçim tarayıcıda hatırlanır
+function nfFold() { try { return JSON.parse(localStorage.getItem('nfFold') || '{}') || {}; } catch { return {}; } }
+const nfClosed = (id) => { const v = nfFold()[id]; return v == null ? id[0] === 'h' : !!v; };
+function nfSecHTML(pre, [k, label, ic, extra], g) {
+  const id = `${pre}:${k}`, cl = nfClosed(id);
+  return `<section class="nf-sec s-${k}${pre === 'h' ? ' hist' : ''}${cl ? ' closed' : ''}"><button type="button" class="nf-sh" data-nf-fold="${id}" aria-expanded="${!cl}">${icon(ic)}<span>${label}</span><b>${g.length}</b>${extra && pre === 'a' ? `<small>${extra}</small>` : ''}<i class="nf-chev">${icon('chevron-down')}</i></button><div class="nf-sbw"><div class="nf-sb">${g.map(notifItem).join('')}</div></div></section>`;
+}
 function renderNotifs() {
   const el = $('#notif-panel'); if (!el) return;
   const d0 = S.notif || { items: [], active: 0 }, f = S.nfFilter || 'all', hk = U('nf.hide') || [];
@@ -803,8 +813,8 @@ function renderNotifs() {
   el.innerHTML = `<div class="nf-head"><h2>Bildirimler${d.active ? ` <span class="nf-count">${d.active}</span>` : ''}</h2>
       ${d.active ? '<button class="btn btn-ghost btn-sm" data-act="nf-all">Hepsini kapat</button>' : ''}
       <button class="icon-btn nf-close" data-act="nf-close" aria-label="Kapat">${icon('x')}</button></div>
-    <div class="nf-list">${act.length ? NF_SECS.map(([k, label, ic, extra]) => { const g = act.filter((n) => nfSec(n) === k); return g.length ? `<section class="nf-sec s-${k}"><div class="nf-sh">${icon(ic)}<span>${label}</span><b>${g.length}</b>${extra ? `<small>${extra}</small>` : ''}</div><div class="nf-sb">${g.map(notifItem).join('')}</div></section>` : ''; }).join('') : '<p class="nf-empty">Bekleyen bildirim yok.</p>'}
-      ${old.length ? `<div class="nf-sep">Geçmiş (7 gün)</div>${old.slice(0, 60).map(notifItem).join('')}` : ''}</div>`;
+    <div class="nf-list">${act.length ? NF_SECS.map((sec) => { const g = act.filter((n) => nfSec(n) === sec[0]); return g.length ? nfSecHTML('a', sec, g) : ''; }).join('') : '<p class="nf-empty">Bekleyen bildirim yok.</p>'}
+      ${old.length ? `<div class="nf-sep">Geçmiş (7 gün)</div>${NF_SECS.map((sec) => { const g = old.filter((n) => nfSec(n) === sec[0]).slice(0, 60); return g.length ? nfSecHTML('h', sec, g) : ''; }).join('')}` : ''}</div>`;
   const c = $('#nb-count'); if (c) { c.hidden = !d.active; c.textContent = d.active > 99 ? '99+' : d.active; }
   $('#notif-bell')?.classList.toggle('has', !!d.active);
 }
@@ -815,6 +825,9 @@ function notifBind() {
   $('#notif-panel')?.addEventListener('click', async (e) => {
     const ig = e.target.closest('[data-nf-ign]');
     if (ig) { ig.disabled = true; await ignoreJob(+ig.dataset.nfIgn, ig.dataset.nid); ig.disabled = false; return; }
+    const fo = e.target.closest('[data-nf-fold]');
+    if (fo) { const sec = fo.closest('.nf-sec'), cl = sec.classList.toggle('closed'), m = nfFold(); m[fo.dataset.nfFold] = cl; fo.setAttribute('aria-expanded', !cl);
+      try { localStorage.setItem('nfFold', JSON.stringify(m)); } catch {} return; }
     const b = e.target.closest('[data-nf]'); if (!b) return;
     if (Date.now() - (S.nfSwiped || 0) < 400) return;   // kaydırma bitti, tıklama sayılmasın
     const n = S.notif?.items.find((x) => x.id === +b.dataset.nf); if (!n) return;
@@ -2915,7 +2928,7 @@ PAGES.siparisler = {
   html() {
     const tyN = S.tyOrders ? (S.tyOrders.counts.new || 0) : null;
     const cuN = S.orders.filter((o) => ['new', 'printing', 'ready'].includes(o.status)).length;
-    const src = `<div class="seg src-seg"><button class="${S.oSrc === 'ty' ? 'on' : ''}" data-act="osrc" data-v="ty">Trendyol${tyN != null ? ` <span class="faint">${tyN} yeni</span>` : ''}</button><button class="${S.oSrc === 'custom' ? 'on' : ''}" data-act="osrc" data-v="custom">Özel siparişler <span class="faint">${cuN}</span></button></div>`;
+    const src = `<div class="seg src-seg stc"><button class="stc-new${S.oSrc === 'ty' ? ' on' : ''}${tyN ? '' : ' zero'}" data-act="osrc" data-v="ty">Trendyol${tyN != null ? ` <span class="faint">${tyN} yeni</span>` : ''}</button><button class="stc-picking${S.oSrc === 'custom' ? ' on' : ''}${cuN ? '' : ' zero'}" data-act="osrc" data-v="custom">Özel siparişler <span class="faint">${cuN}</span></button></div>`;
     if (S.oSrc === 'ty') return tyoPage(src);
     return customOrdersHTML(src);
   },
@@ -2969,7 +2982,7 @@ function customOrdersHTML(src) {
         <label class="flt"><span>Sırala</span><select class="input" id="co-sort">${CO_SORTS.map(([k, l]) => `<option value="${k}"${(S.coSort || 'due') === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
         <label class="switch"><input type="checkbox" id="show-cancel" ${S.showCancelled ? 'checked' : ''}> İptalleri göster</label>
         <button class="btn btn-primary" data-act="new-order">${icon('plus')} Sipariş ekle</button></div>
-      <div class="toolbar"><div class="seg" id="otabs">${['new', 'printing', 'ready', 'delivered'].map((s) => `<button class="${S.ordersTab === s ? 'on' : ''}" data-act="otab" data-v="${s}">${s === 'delivered' ? 'Teslim' : OST[s].l} <span class="faint">${S.orders.filter((o) => o.status === s).length}</span></button>`).join('')}</div></div>
+      <div class="toolbar"><div class="seg stc" id="otabs">${['new', 'printing', 'ready', 'delivered'].map((s) => { const n = S.orders.filter((o) => o.status === s).length; return `<button class="stc-${{ printing: 'picking', ready: 'shipped' }[s] || s}${S.ordersTab === s ? ' on' : ''}${n ? '' : ' zero'}" data-act="otab" data-v="${s}">${s === 'delivered' ? 'Teslim' : OST[s].l} <span class="faint">${n}</span></button>`; }).join('')}</div></div>
       <div class="kanban tabs">${cols.map((s) => {
         let list = S.orders.filter((o) => o.status === s);
         if (s === 'delivered') list = list.sort((a, b) => b.updated_at - a.updated_at).slice(0, 30);
@@ -4189,7 +4202,7 @@ function tyoPage(src = '') {
   const pname = f.pid ? productById(f.pid)?.name || '' : '';
   const cats = catNames();
   // Sıkı düzen: 1. satır kaynak + sekmeler + yenile, 2. satır arama + filtreler (etiketler yalnız ekran okuyucuya)
-  return `<div class="tyo-stick"><div class="toolbar tyo-tools">${src}<div class="seg tyo-tabs" role="tablist">${TYO_TABS.map(([k, l]) => `<button class="${t === k ? 'on' : ''}" data-act="tyo-tab" data-v="${k}" role="tab">${l} <span class="faint">${counts[k]}</span></button>`).join('')}</div>
+  return `<div class="tyo-stick"><div class="toolbar tyo-tools">${src}<div class="seg tyo-tabs stc" role="tablist">${TYO_TABS.map(([k, l]) => `<button class="stc-${k}${t === k ? ' on' : ''}${counts[k] ? '' : ' zero'}" data-act="tyo-tab" data-v="${k}" role="tab">${l} <span class="faint">${counts[k]}</span></button>`).join('')}</div>
       <span class="spacer"></span>
       <button type="button" class="tyo-fold${tyoCompact() ? ' closed' : ''}" data-act="tyo-fold" aria-expanded="${!tyoCompact()}" title="${tyoCompact() ? 'Arama ve filtreleri göster' : 'Arama ve filtreleri gizle'}">${icon('chevron-down')}<span>Filtreler</span>${tyoCompact() && tyoFilterCount() ? `<b>${tyoFilterCount()}</b>` : ''}</button>
       ${active ? `<button type="button" class="brm-btn${baremOn() ? ' on' : ''}" data-act="tyo-barem" aria-pressed="${baremOn()}" title="Sepeti kargo bareminin altında kalan siparişleri öne al">${icon('bolt')} Barem<span class="brm-long"> önceliği</span></button>` : ''}
@@ -4311,7 +4324,17 @@ function floatVars(seed) {
   return `--ax:${v(4).toFixed(1)}px;--ay:${v(3).toFixed(1)}px;--ar:${v(8).toFixed(1)}deg;--ad:${(3.2 + r() * 2.6).toFixed(2)}s;--ae:-${(r() * 4).toFixed(2)}s;`
     + `--bx:${v(4).toFixed(1)}px;--by:${v(3).toFixed(1)}px;--bd:${(2.8 + r() * 2.8).toFixed(2)}s;--be:-${(r() * 4).toFixed(2)}s`;
 }
-// Trendyol Plus siparişi ya da bu siparişte düşük komisyon (Plus'a özel komisyon indirimi)
+const fmtPctNum = (x) => String(Math.round(x * 10) / 10).replace('.', ',');
+// Siparişin komisyonu: iptal olmayan satırların kendi oranlarının tutara göre ağırlıklı ortalaması
+function orderComAvg(p) {
+  let rev = 0, com = 0, min = Infinity, max = -Infinity;
+  for (const l of p.lines) {
+    if (TY_CANCEL.has(l.status) || l.commission == null || l.commission < 0 || l.unit_price == null) continue;
+    const r = l.unit_price * l.quantity; rev += r; com += r * l.commission / 100; min = Math.min(min, l.commission); max = Math.max(max, l.commission);
+  }
+  return rev > 0 ? { avg: com / rev * 100, min, max, mixed: max - min > 0.05 } : null;
+}
+// Trendyol Plus siparişi, tekrar eden müşteri, barem; ayrıntıda ayrıca komisyon
 function plusTags(p, long) {
   const out = [];
   const bt = baremTag(p); if (bt) out.push(bt);
@@ -4319,7 +4342,8 @@ function plusTags(p, long) {
   const rp = p.repeat;
   if (rp && rp.n >= 2) out.push(`<span class="rep-tag" title="Bu müşteri daha önce ${rp.n - 1} kez sipariş verdi${rp.total > rp.n ? `; sonrasında ${rp.total - rp.n} sipariş daha var` : ''}">${icon('refresh')} ${long ? `Bu müşterinin ${rp.n}. siparişi` : `${rp.n}. siparişi`}</span>`);
   else if (long && rp && rp.total >= 2) out.push(`<span class="rep-tag soft" title="Bu müşterinin ilk siparişi; sonrasında ${rp.total - 1} sipariş daha verdi">${icon('refresh')} İlk siparişi · toplam ${rp.total}</span>`);
-  if (p.comm_cut) out.push(`<span class="plus-tag soft" title="Bu siparişte komisyon %${p.comm_cut.rate} (ürünün olağan komisyonu %${p.comm_cut.usual})">${long ? `Komisyon %${p.comm_cut.rate} · olağanı %${p.comm_cut.usual}` : `%${p.comm_cut.rate} komisyon`}</span>`);
+  // Komisyon yalnız ayrıntıda: ürün ürün satırlarda yazar; burada siparişin tutara göre ağırlıklı ortalaması
+  if (long) { const c = orderComAvg(p); if (c) out.push(`<span class="plus-tag soft" title="${c.mixed ? 'Ürünlerin komisyon oranları farklı; tutara göre ağırlıklı ortalama. Her ürünün oranı kendi satırında yazar.' : 'Bu siparişteki komisyon oranı'}">${c.mixed ? 'Ortalama komisyon' : 'Komisyon'} %${fmtPctNum(c.avg)}${c.mixed ? ` · %${fmtPctNum(c.min)}–%${fmtPctNum(c.max)}` : ''}</span>`); }
   return out.length ? ' ' + out.join(' ') : '';
 }
 // ---------- Sipariş numarası üzerine gelince mini sipariş kartı (Hazırla'daki ve paneldeki numara bağlantıları)
@@ -4477,7 +4501,7 @@ function tyoBody(p) {
     return `<div class="oc-item${cancel ? ' cancel' : ''}${out ? (part ? ' out part' : ' out') : ''}">
       <span class="oc-img${l.thumbnail ? '' : ' none'}" style="${thumbStyle(l.thumbnail)}" data-zoom="${esc(l.thumbnail || '')}" data-title="${esc(l.name || '')}">${qtyBadge(l.quantity)}</span>
       <div class="oc-tx"><b>${pr || (l.ty_url && /^https?:\/\//.test(l.ty_url)) ? `<button type="button" class="oc-name" data-act="oc-pmenu" data-pid="${pr ? pr.id : ''}" data-url="${esc(l.ty_url && /^https?:\/\//.test(l.ty_url) ? l.ty_url : '')}" data-name="${esc(pr?.name || l.name || '')}">${esc(l.name || 'Bilinmeyen ürün')}<svg class="oc-caret" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></button>` : esc(l.name || 'Bilinmeyen ürün')}</b>${l.ty_name && pr && l.ty_name !== l.name ? `<small class="faint">${esc(l.ty_name)}</small>` : ''}
-        <div class="oc-meta">${l.barcode ? `<span class="mono">${esc(l.barcode)}</span>` : ''}${shelf}${parts}${state}${l.unit_price != null ? `<span class="faint oc-up">${fmtTL(l.unit_price)}</span>` : ''}</div>
+        <div class="oc-meta">${l.barcode ? `<span class="mono">${esc(l.barcode)}</span>` : ''}${shelf}${parts}${state}${l.unit_price != null ? `<span class="faint oc-up">${fmtTL(l.unit_price)}</span>` : ''}${!cancel && l.commission != null && l.commission >= 0 ? `<span class="oc-com${l.usual_commission && l.commission < l.usual_commission - 0.4 ? ' cut' : ''}" title="${l.usual_commission && l.commission < l.usual_commission - 0.4 ? `Bu siparişte indirimli; ürünün olağan komisyonu %${fmtPctNum(l.usual_commission)}` : 'Bu üründen kesilen komisyon oranı'}">komisyon %${fmtPctNum(l.commission)}</span>` : ''}</div>
         ${!l.product_id && l.barcode && !cancel ? `<div class="pick-match"><select class="input" data-tyo-match="${esc(l.barcode)}"><option value="">Hangi ürününüz?</option>${S.products.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select><button class="btn btn-sm btn-ok" data-act="tyo-match" data-code="${esc(l.barcode)}">Eşleştir</button></div>` : ''}</div></div>`;
   }).join('');
   const dl = effDeadline(p.deadline);
@@ -4801,7 +4825,7 @@ function tyoBind() {
 function tyoCounts() {
   const c = {}; TYO_TABS.forEach(([k]) => { c[k] = 0; });
   S.tyOrders.packages.forEach((p) => { if (tyoBase(p)) c[p.tab]++; });
-  $$('.tyo-tabs button').forEach((b) => { const n = b.querySelector('.faint'); if (n) n.textContent = c[b.dataset.v]; });
+  $$('.tyo-tabs button').forEach((b) => { const n = b.querySelector('.faint'); if (n) n.textContent = c[b.dataset.v]; b.classList.toggle('zero', !c[b.dataset.v]); });
 }
 function tyoBindRes() {
   $('#tyo-all')?.addEventListener('change', (e) => { tyoFiltered().filter((p) => p.can_pick).forEach((p) => (e.target.checked ? S.tyo.sel.add(p.package_id) : S.tyo.sel.delete(p.package_id))); tyoRes(); });
@@ -5831,6 +5855,75 @@ function trackingNotice() {
 }
 
 // ---------- panoda Trendyol özeti
+// ---------- Pano: yeni siparişler akışı (en yeni üstte, gün gün) + bugünün özeti
+const NO = { at: 0, busy: false, seen: null };
+async function dashNewLoad(force) {
+  if (NO.busy || !S.settings?.ty_seller_id) return;
+  if (!force && S.tyOrders && Date.now() - NO.at < 60000) return fillDashNew();
+  NO.busy = true;
+  const keep = S.tyo.rD;
+  try {   // bugünün özeti için liste en az bu ayı kapsamalı; Siparişler sayfasındaki tarih seçimi bozulmaz
+    if (keep !== 'month' && keep !== 'all') S.tyo.rD = 'month';
+    await Promise.all([loadTyOrders(), loadProfit().catch(() => null)]); NO.at = Date.now();
+  } catch { /* Trendyol kapalıysa bölüm boş kalır */ } finally { S.tyo.rD = keep; NO.busy = false; }
+  fillDashNew();
+}
+function fillDashNew() {
+  const el = $('#no-body'); if (!el || !S.tyOrders) return;
+  el.innerHTML = dashNewBody();
+  const c = $('#no-cnt'); if (c) { const n = S.tyOrders.packages.filter((p) => p.tab === 'new').length; c.textContent = n; c.hidden = !n; }
+}
+function dashNewHTML() {
+  if (!S.settings?.ty_seller_id) return '';
+  const n = S.tyOrders ? S.tyOrders.packages.filter((p) => p.tab === 'new').length : 0;
+  return `<section class="panel no-sec"><div class="panel-h"><h2>Yeni siparişler <span class="no-cnt" id="no-cnt" ${n ? '' : 'hidden'}>${n}</span><span class="no-live"><i></i>canlı</span></h2>
+      <button type="button" class="btn btn-ghost btn-sm" data-act="no-all">Tümünü gör</button></div>
+    <div class="panel-b" id="no-body">${S.tyOrders ? dashNewBody() : '<div class="pick-item skel" style="height:180px"></div>'}</div></section>`;
+}
+const noAgo = (ms) => { const m = Math.max(0, Math.floor((Date.now() - ms) / 60000)); return m < 1 ? 'şimdi' : m < 60 ? `${m} dk` : m < 1440 ? `${Math.floor(m / 60)} sa` : `${Math.floor(m / 1440)} g`; };
+function dashNewRow(p, i, last, isNew) {
+  const live = p.lines.filter((l) => !TY_CANCEL.has(l.status)), ls = live.length ? live : p.lines;
+  const qty = ls.reduce((a, l) => a + (l.quantity || 0), 0);
+  let r = null; try { r = orderProfit(p); } catch { /* */ }
+  const sh = ordShort(p), by = Object.values(sh.by), miss = by.filter((x) => x.miss).length;
+  const chip = ls.some((l) => !l.product_id) ? ['eşleşmedi', 'warn'] : sh.state === 'all' ? ['hepsi eksik', 'bad'] : sh.state === 'some' ? [`${miss} kalem eksik`, 'bad'] : by.some((x) => x.print) ? ['baskıda', 'info'] : ['rafta', 'ok'];
+  const fresh = Date.now() - p.order_date < 30 * 60000;
+  const names = ls.map((l) => `${l.name || 'Bilinmeyen ürün'}${l.quantity > 1 ? ` ×${l.quantity}` : ''}`).join(', ');
+  const amt = r ? r.price : p.pkg_total;
+  return `<button type="button" class="no-it po-link${fresh ? ' fresh' : ''}${last ? ' last' : ''}${isNew ? ' enter' : ''}" data-act="po-open" data-no="${esc(p.order_number)}" style="--i:${Math.min(i, 12)}">
+    <span class="no-t"><b>${new Date(p.order_date).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</b>${noAgo(p.order_date)}</span><span class="no-dot"></span>
+    <span class="no-stk">${ls.slice(0, 3).map((l, k, a) => `<span class="no-th${l.thumbnail ? '' : ' none'}" style="${thumbStyle(l.thumbnail)}">${k === a.length - 1 && qty > 1 ? `<i class="no-q">×${qty}</i>` : ''}</span>`).join('')}</span>
+    <span class="no-nm"><b>${esc(p.customer || '—')}${fresh ? ' <span class="no-chip new">yeni</span>' : ''}${p.repeat?.n >= 2 ? ` <span class="no-chip rep">↻ ${p.repeat.n}. siparişi</span>` : ''}</b><small>${esc(names)}</small><small>${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''}</small></span>
+    <span class="no-r"><span class="no-amt">${amt != null ? fmtTL(amt) : '–'}</span>${r ? ` <span class="mg ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)}</span>` : ''}<small><span class="no-chip ${chip[1]}">${chip[0]}</span></small></span></button>`;
+}
+function dashNewBody() {
+  const pk = S.tyOrders?.packages || [];
+  const news = pk.filter((p) => p.tab === 'new').sort((a, b) => (b.order_date || 0) - (a.order_date || 0));
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0); const T = d0.getTime(), Y = T - 86400000;
+  const price = (p) => { try { return orderProfit(p)?.price ?? p.pkg_total ?? 0; } catch { return p.pkg_total || 0; } };
+  const dayOf = (p) => p.order_date >= T ? 'Bugün' : p.order_date >= Y ? 'Dün' : new Date(p.order_date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' });
+  const prev = NO.seen; NO.seen = new Set(news.map((p) => p.package_id));
+  let list = '', cur = null;
+  news.slice(0, 40).forEach((p, i, a) => {
+    const d = dayOf(p);
+    if (d !== cur) { cur = d; const g = news.filter((x) => dayOf(x) === d); list += `<div class="no-day">${d}<span>${g.length} sipariş · ${fmtTL(g.reduce((s, x) => s + price(x), 0))}</span></div>`; }
+    list += dashNewRow(p, i, i === a.length - 1 || dayOf(a[i + 1]) !== d, !!prev && !prev.has(p.package_id));
+  });
+  if (news.length > 40) list += `<button type="button" class="no-more" data-act="no-all">${news.length - 40} sipariş daha · tümünü gör</button>`;
+  // bugünün özeti: bugün gelen (iptal olmayan) tüm siparişler, hangi sekmede olursa olsun
+  const today = pk.filter((p) => p.order_date >= T && p.tab !== 'cancelled');
+  let ciro = 0, kar = 0; const hrs = {};
+  today.forEach((p) => { let r = null; try { r = orderProfit(p); } catch { /* */ } ciro += r ? r.price : (p.pkg_total || 0); kar += r ? r.profit : 0; const h = new Date(p.order_date).getHours(); hrs[h] = (hrs[h] || 0) + 1; });
+  const tn = today.filter((p) => p.tab === 'new'), ready = tn.filter((p) => { const s = ordShort(p); return s.state === 'none' && !Object.values(s.by).some((x) => x.print) && !p.lines.some((l) => !l.product_id && !TY_CANCEL.has(l.status)); }).length;
+  const hNow = new Date().getHours(), h0 = Math.min(8, hNow, ...Object.keys(hrs).map(Number)), mx = Math.max(1, ...Object.values(hrs));
+  const bars = Array.from({ length: hNow - h0 + 1 }, (_, k) => { const h = h0 + k, v = hrs[h] || 0; return `<i class="${h === hNow ? 'now' : ''}${v ? '' : ' zero'}" style="height:${v ? Math.max(12, v / mx * 100) : 5}%;--i:${k}" title="${String(h).padStart(2, '0')}:00 · ${v} sipariş"></i>`; }).join('');
+  const mid = Math.round((h0 + hNow) / 2);
+  const sum = `<aside class="no-sum"><div><div class="no-sl">Bugün</div><div class="no-big">${today.length}<small>sipariş</small></div></div>
+    <div class="no-kv"><span>Ciro</span><b>${fmtTL(ciro)}</b></div><div class="no-kv"><span>Tahmini kâr</span><b class="${kar >= 0 ? 'pos' : 'neg'}">${kar >= 0 ? '+' : ''}${fmtTL(kar)}</b></div>
+    ${tn.length ? `<div class="no-kv"><span>Rafta hazır</span><b>${ready} / ${tn.length}</b></div>` : ''}
+    <div><div class="no-sl">Saat saat gelen sipariş</div><div class="no-bars">${bars}</div><div class="no-axis"><span>${String(h0).padStart(2, '0')}</span>${hNow - h0 >= 4 ? `<span>${String(mid).padStart(2, '0')}</span>` : ''}<span>şimdi</span></div></div></aside>`;
+  return `<div class="no-cols"><div class="no-list">${list || '<p class="no-empty">Bekleyen yeni sipariş yok.</p>'}</div>${sum}</div>`;
+}
 function tyDashHTML() {
   if (!S.settings?.ty_seller_id) return '';
   return `<section class="panel ty-dash"><div class="panel-h"><h2>Trendyol siparişleri</h2>
@@ -6902,6 +6995,7 @@ const ACTIONS = {
   },
   'np-mach-go': () => { const c = $('#np-printers'); if (!c) return; c.scrollIntoView({ behavior: REDUCED() ? 'auto' : 'smooth', block: 'center' }); c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash'); },
   'po-open': (el) => openOrderFromNotif(el.dataset.no),
+  'no-all': () => { S.oSrc = 'ty'; try { localStorage.setItem('oSrc', 'ty'); } catch { /* */ } S.tyo.tab = 'new'; location.hash = '#/siparisler'; },
   'pf-sec': () => { S.pf.sec = !S.pf.sec; lsSet('pSec', S.pf.sec ? '1' : '0'); pfApply(); },
   psec: (el) => {
     const k = el.dataset.k, set = psecClosed(); set.has(k) ? set.delete(k) : set.add(k);
