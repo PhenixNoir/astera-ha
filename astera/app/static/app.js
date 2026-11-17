@@ -179,7 +179,18 @@ const NAV = [
   { r: 'istatistik', label: 'İstatistik', icon: 'chart', title: 'İstatistik' },
   { r: 'kar', label: 'Kâr', icon: 'coin', title: 'Kâr hesabı' },
   { r: 'finans', label: 'Finans', icon: 'wallet', title: 'Finans' },
+  { r: 'musteriler', label: 'Müşteriler', icon: 'users', title: 'Müşteriler' },
+  { r: 'ambalaj', label: 'Ambalaj', icon: 'parcel', title: 'Ambalaj stoğu' },
 ];
+// Menü grupları: solda ince ikon şeridi, grubun sayfaları içeriğin üstünde sekme. "sayfa?kaynak" = Siparişler'in Trendyol / Özel görünümü
+const NAV_GROUPS = [
+  { k: 'pano', label: 'Pano', icon: 'home', tabs: [''] },
+  { k: 'siparis', label: 'Siparişler', icon: 'clip', tabs: ['siparisler?ty', 'siparisler?custom', 'hazirla', 'iadeler', 'sorular', 'musteriler'] },
+  { k: 'uretim', label: 'Üretim', icon: 'layers', tabs: ['baskilar', 'plan', 'filament', 'ambalaj'] },
+  { k: 'urun', label: 'Ürünler', icon: 'box', tabs: ['urunler', 'satis', 'buybox'] },
+  { k: 'para', label: 'Para', icon: 'coin', tabs: ['kar', 'finans', 'istatistik'] },
+];
+const NAV_SRC = { ty: ['Trendyol', 'cart', 'ty'], custom: ['Özel siparişler', 'clip', 'custom'] };
 // Telefonda alt menüde sığanlar; diğerleri "Daha" altında
 const TAB_MAIN_DEFAULT = ['', 'urunler', 'baskilar', 'hazirla'];
 // ------------------------------------------------------------------ görünüm tercihleri (Ayarlar → Görünüm ve düzen; cihaz başına)
@@ -221,7 +232,7 @@ const USE_MODES = [
   ['stock', 'Stok için üretiyorum', 'Kendi ürünlerimi basıp rafta tutuyorum.', 'box', ['Ürünler ve stok', 'Plan: neyi kaç tane basmalı', 'Elle satış ve barkod']],
   ['farm', 'Çok makine yönetiyorum', 'Birden fazla yazıcı; doluluk ve sıra önemli.', 'layers', ['Makine bağlantıları', 'Canlı durum ve ısı', 'Başarısızlık analizi']],
 ];
-const PAGE_MODES = { plan: ['stock', 'farm', 'ty'], hazirla: ['ty'], siparisler: ['ty', 'custom'], iadeler: ['ty'], sorular: ['ty'], satis: ['ty', 'stock'], buybox: ['ty'], kar: ['ty', 'custom'], finans: ['ty'] };
+const PAGE_MODES = { plan: ['stock', 'farm', 'ty'], hazirla: ['ty'], musteriler: ['ty', 'custom'], siparisler: ['ty', 'custom'], iadeler: ['ty'], sorular: ['ty'], satis: ['ty', 'stock'], buybox: ['ty'], kar: ['ty', 'custom'], finans: ['ty'] };
 const useModes = () => S.settings?.use_modes || [];
 const pageInUse = (r) => { const m = useModes(); return !m.length || !PAGE_MODES[r] || PAGE_MODES[r].some((x) => m.includes(x)); };
 const navVisible = () => navAll().filter((n) => !(U('nav.hidden') || []).includes(n.r) && pageInUse(n.r));
@@ -268,31 +279,67 @@ function ordMarkSeen() {
   S.ordSeen = new Set(Object.entries(on).flatMap(([k, ids]) => ids.map((id) => k + ':' + id)));
   try { localStorage.setItem('ordSeen2', JSON.stringify([...S.ordSeen])); } catch { /* */ }
 }
+// Menü rozeti: sayı ve renk (sayfa başına); grubun rozeti alt sayfalarının toplamı
+function navBadge(r, src) {
+  const nf = (pre) => (S.notif?.items || []).filter((x) => !x.resolved_at && String(x.key).startsWith(pre)).length;
+  if (r === 'satis') return { n: S.dash?.ty_unmatched || 0 };
+  if (r === 'baskilar') return { n: dueJobs().length };
+  if (r === 'iadeler') return { n: nf('claim:'), cls: 'bad' };
+  if (r === 'sorular') return { n: nf('qna:') };
+  if (r === 'buybox') return { n: nf('bb:'), cls: 'bad' };
+  if (r === 'ambalaj') return { n: nf('pack:'), cls: 'bad' };
+  if (r === 'siparisler') {
+    const on = ordNewCounts();
+    if (src === 'custom') return { n: nf('cord:') };
+    if (src === 'ty') return { n: on.ty || 0, cls: 'mp-ty' };
+    return { n: (on.ty || 0) + (on.hb || 0), cls: 'mp-ty' };
+  }
+  return { n: 0 };
+}
+const navCount = (b, pop) => (b.n ? `<span class="count${b.cls ? ' ' + b.cls : ''}${pop ? ' pop' : ''}">${b.n > 99 ? '99+' : b.n}</span>` : '');
+// Grubun görünen sekmeleri: gizlenen ve kullanım şekline uymayan sayfalar çıkar; sıra kullanıcının menü sırası
+function navTabs(g) {
+  const vis = navVisible().map((n) => n.r), m = useModes();
+  const t = g.tabs.map((spec) => { const [r, src] = spec.split('?'); return { r, src, spec }; })
+    .filter((x) => (x.r === '' || vis.includes(x.r)) && (!x.src || !m.length || m.includes(NAV_SRC[x.src][2])));
+  if (!(U('nav.order') || []).length) return t;   // kullanıcı sıralamadıysa grubun kendi sırası
+  const ord = navAll().map((n) => n.r);
+  return t.sort((a, b) => (a.r === b.r ? 0 : ord.indexOf(a.r) - ord.indexOf(b.r)));
+}
+const navTabHref = (t) => `#/${t.r}${t.src ? `?src=${t.src}` : ''}`;
+const navTabOn = (t, r) => t.r === r && (!t.src || (S.oSrc || 'ty') === t.src);
+function navGroupOf(r) { return NAV_GROUPS.find((g) => g.tabs.some((spec) => spec.split('?')[0] === r)); }
+function navLast() { try { return JSON.parse(localStorage.getItem('navLast') || '{}'); } catch { return {}; } }
 function renderNav() {
   if (route() === 'siparisler') ordMarkSeen();
   const r = route() === 'urun' ? 'urunler' : route();
-  const badge = (n) => {
-    if (n.r === 'satis' && S.dash?.ty_unmatched) return `<span class="count">${S.dash.ty_unmatched}</span>`;
-    if (n.r === 'baskilar') { const d = dueJobs().length; return d ? `<span class="count">${d}</span>` : ''; }
-    if (n.r === 'iadeler' || n.r === 'sorular') { const pre = n.r === 'iadeler' ? 'claim:' : 'qna:', d = (S.notif?.items || []).filter((x) => !x.resolved_at && String(x.key).startsWith(pre)).length; return d ? `<span class="count${n.r === 'iadeler' ? ' bad' : ''}">${d}</span>` : ''; }
-    if (n.r === 'siparisler') {
-      // pazar yeri başına yeni sipariş: Trendyol turuncu, Hepsiburada mavi
-      const on = ordNewCounts();
-      return [['ty', 'Trendyol'], ['hb', 'Hepsiburada']].filter(([k]) => on[k] > 0).map(([k, l]) => `<span class="count mp-${k}${on[k] > (S.mpPrev?.[k] ?? on[k]) ? ' pop' : ''}" title="${l}: ${on[k]} yeni sipariş">${on[k]}</span>`).join('');
-    }
-    if (n.r === 'buybox') { const d = (S.notif?.items || []).filter((x) => !x.resolved_at && String(x.key).startsWith('bb:')).length; return d ? `<span class="count bad">${d}</span>` : ''; }
-    return '';
-  };
-  const vis = navVisible(), TAB_MAIN = tabMain();
-  $('#nav').innerHTML = vis.map((n) => `<a class="nav-item${r === n.r ? ' active' : ''}" href="#/${n.r}">${icon(n.icon)}<span>${n.label}</span>${badge(n)}</a>`).join('');
-  const more = vis.filter((n) => !TAB_MAIN.includes(n.r)).concat([{ r: 'ayarlar', label: 'Ayarlar', icon: 'gear' }]);
-  const inMore = more.some((n) => n.r === r);
-  const moreBadge = more.reduce((a, n) => a + (badge(n) ? 1 : 0), 0);
-  $('#tabbar').innerHTML = TAB_MAIN.map((t) => NAV.find((n) => n.r === t)).filter(Boolean).map((n) => `<a class="${r === n.r ? 'active' : ''}" href="#/${n.r}">${icon(n.icon)}<span>${n.label}</span>${badge(n)}</a>`).join('')
-    + `<a href="#" class="${inMore ? 'active' : ''}" data-act="more-menu">${icon('more')}<span>${inMore ? esc(more.find((n) => n.r === r).label) : 'Daha'}</span>${moreBadge ? '<span class="count">!</span>' : ''}</a>`;
-  S.moreItems = more.map((n) => ({ ...n, badge: badge(n) }));
+  const cur = navGroupOf(r), last = navLast();
+  if (cur) { const t = navTabs(cur).find((x) => navTabOn(x, r)); if (t && last[cur.k] !== t.spec) { last[cur.k] = t.spec; try { localStorage.setItem('navLast', JSON.stringify(last)); } catch { /* */ } } }
+  const on = S.notif?.orders_new ? ordNewCounts() : {}, popTy = on.ty > (S.mpPrev?.ty ?? on.ty);
+  const groups = NAV_GROUPS.map((g) => {
+    const tabs = navTabs(g); if (!tabs.length) return null;
+    const bs = tabs.filter((t) => !(t.r === 'siparisler' && t.src)).map((t) => navBadge(t.r)).concat(tabs.some((t) => t.src === 'custom') ? [navBadge('siparisler', 'custom')] : []);
+    const n = bs.reduce((a, b) => a + (b.n || 0), 0), cls = bs.some((b) => b.n && b.cls === 'bad') ? 'bad' : bs.some((b) => b.n && b.cls === 'mp-ty') ? 'mp-ty' : '';
+    const go = tabs.find((t) => t.spec === last[g.k]) || tabs[0];
+    return { g, tabs, href: navTabHref(go), badge: { n, cls } };
+  }).filter(Boolean);
+  $('#nav').innerHTML = groups.map(({ g, href, badge }) => `<a class="nav-g${cur === g ? ' active' : ''}" href="${href}" data-g="${g.k}" title="${g.label}">${icon(g.icon)}<span>${g.label}</span>${navCount(badge, g.k === 'siparis' && popTy)}</a>`).join('');
+  // alt sekmeler: grubun birden fazla sayfası varsa içeriğin üstünde
+  const sub = $('#subnav'), grp = groups.find((x) => x.g === cur);
+  if (sub) {
+    const show = grp && grp.tabs.length > 1;
+    sub.hidden = !show;
+    if (show) {
+      const fresh = S.navG !== cur.k; S.navG = cur.k;
+      sub.innerHTML = grp.tabs.map((t, i) => { const p = NAV.find((n) => n.r === t.r) || { label: 'Pano', icon: 'home' }, sl = t.src ? NAV_SRC[t.src] : null;
+        return `<a class="${navTabOn(t, r) ? 'active' : ''}" href="${navTabHref(t)}" style="--i:${i}">${icon(sl ? sl[1] : p.icon)}<span>${sl ? sl[0] : p.label}</span>${navCount(navBadge(t.r, t.src))}</a>`; }).join('');
+      if (fresh && !REDUCED()) { sub.classList.remove('in'); void sub.offsetWidth; sub.classList.add('in'); }
+    } else S.navG = cur?.k || null;
+  }
+  // telefonda alt çubuk: gruplar
+  $('#tabbar').innerHTML = groups.map(({ g, href, badge }) => `<a class="${cur === g ? 'active' : ''}" href="${href}">${icon(g.icon)}<span>${g.label}</span>${navCount(badge)}</a>`).join('');
   $('.settings-link').classList.toggle('active', r === 'ayarlar');
-  if (S.notif?.orders_new) S.mpPrev = ordNewCounts();
+  if (S.notif?.orders_new) S.mpPrev = on;
   renderDemoBar();
   setTimeout(placeHints, 400);
 }
@@ -300,9 +347,9 @@ function renderNav() {
 // "Anladım" ya da özelliği kullanmak noktayı kalıcı kapatır (görülenler sunucuda saklanır, tüm cihazlarda geçerli)
 const HINTS = [
   { id: 'cmdk', sel: '#cmdk-btn', t: 'Hızlı arama', x: 'Ctrl+K ile ürün, sipariş, müşteri ya da sayfa ara; "yeni baskı", "yedek al" gibi komutları buradan çalıştır.' },
-  { id: 'plan', sel: '#nav a[href="#/plan"]', t: 'Plan', x: 'Satış hızına ve stoğa bakıp hangi üründen kaç tane basman gerektiğini sıralar.' },
-  { id: 'hazirla', sel: '#nav a[href="#/hazirla"]', t: 'Hazırla', x: 'Bugün çıkacak siparişlerin ürünlerini tek listede toplar; rafta olmayanları gösterir.' },
-  { id: 'kar', sel: '#nav a[href="#/kar"]', t: 'Kâr', x: 'Komisyon, kargo, malzeme ve elektrik düşülmüş gerçek kârını ürün ürün gösterir.' },
+  { id: 'plan', sel: '#subnav a[href="#/plan"], #nav a[data-g="uretim"]', t: 'Plan', x: 'Satış hızına ve stoğa bakıp hangi üründen kaç tane basman gerektiğini sıralar.' },
+  { id: 'hazirla', sel: '#subnav a[href="#/hazirla"]', t: 'Hazırla', x: 'Bugün çıkacak siparişlerin ürünlerini tek listede toplar; rafta olmayanları gösterir.' },
+  { id: 'kar', sel: '#subnav a[href="#/kar"], #nav a[data-g="para"]', t: 'Kâr', x: 'Komisyon, kargo, malzeme ve elektrik düşülmüş gerçek kârını ürün ürün gösterir.' },
   { id: 'pbar', sel: '#pbar .pb', t: 'Makine durumu', x: 'Bağlı makinelerin üzerine gelince kalan süre, nozul ve tabla sıcaklığı görünür.' },
   { id: 'rclick-ord', sel: '.tyo-row', route: 'siparisler', t: 'Sağ tık', x: 'Sipariş satırına sağ tıkla: hazırla, barkod bas, sipariş numarasını kopyala. Tıklayınca ayrıntı sağdan açılır; ↑ ↓ ile gezersin.' },
   { id: 'rclick-pc', sel: '.pcard[data-pid]', route: 'urunler', t: 'Ürün kartı', x: 'Görsele tıklayınca ürün düzenlenir; sağ tıkla baskı başlat, ürün sayfası, istatistik.' },
@@ -416,6 +463,7 @@ async function render() {
   const nav = NAV.find((n) => n.r === r);
   $('#page-title').textContent = page.title?.() || (r === 'ayarlar' ? 'Ayarlar' : (nav ? nav.title : 'Pano'));
   document.title = ($('#page-title').textContent) + ' · ' + appName();
+  if (r === 'siparisler') { const qs = new URLSearchParams(location.hash.split('?')[1] || '').get('src'); if (qs === 'ty' || qs === 'custom') S.oSrc = qs; }
   renderNav();
   try { await page.load?.(); } catch (e) { fail(e); }
   if (route() !== r) return;
@@ -449,7 +497,8 @@ function fitBoxes() {
   const tb = document.querySelector('.topbar'), bb = document.getElementById('bambu-events');
   const bbh = bb ? bb.offsetHeight : 0;
   document.documentElement.style.setProperty('--bbh', `${bbh}px`);
-  if (tb) document.documentElement.style.setProperty('--tbh', `${tb.offsetHeight + bbh}px`);
+  const sn = document.getElementById('subnav'), snh = sn && !sn.hidden ? sn.offsetHeight + 14 : 0;
+  if (tb) document.documentElement.style.setProperty('--tbh', `${tb.offsetHeight + bbh + snh}px`);
   const Z = ZF();
   $$('.fitbox').forEach((el) => {
     if (!desk) { el.style.maxHeight = ''; return; }
@@ -563,6 +612,8 @@ PAGES[''] = {
     if (S.settings?.ty_seller_id && (!S.pick || Date.now() - (S.pickAt || 0) > 120000)) loadPick(true);
     if (S.dashEdit) bindDashDrag();
     dashNewLoad();
+    todoBind();
+    if (!S.todos || Date.now() - (S.todosAt || 0) > 30000) loadTodos().then(() => { S.todosAt = Date.now(); fillTodo(); });
   },
   html() {
     const layout = dashLayout(), editing = !!S.dashEdit;
@@ -588,6 +639,7 @@ PAGES[''] = {
 
 // ---------- pano bölümleri: sırası, genişliği ve görünürlüğü cihaz başına kaydedilir
 const DASH_SECTIONS = {
+  todo: { title: 'Yapılacaklar', w: 'full', html: () => todoHTML() },
   neworders: { title: 'Yeni siparişler', w: 'full', html: () => dashNewHTML() },
   timeline: { title: 'Makine çizelgesi', w: 'full', html: () => timelineHTML() },
   plan: { title: 'Plan: sıradaki baskılar', w: 'full', html: () => planDashHTML() },
@@ -599,7 +651,7 @@ const DASH_SECTIONS = {
   log: { title: 'Son stok hareketleri', w: 'half', html: () => `<section class="panel"><div class="panel-h"><h2>Son stok hareketleri</h2></div><div class="panel-b">${logList(S.log)}</div></section>` },
   colors: { title: 'Kullanılan renkler', w: 'full', html: () => colorsHTML() },
 };
-const DASH_DEFAULT = ['neworders', 'plan', 'timeline', 'bed', 'terms', 'ty', 'readout', 'low', 'log', 'colors'];
+const DASH_DEFAULT = ['todo', 'neworders', 'plan', 'timeline', 'bed', 'terms', 'ty', 'readout', 'low', 'log', 'colors'];
 const DASH_W = { full: 'Tam', half: 'Yarım', third: 'Üçte bir' };
 function dashLayout() {
   let saved = [];
@@ -1442,6 +1494,7 @@ async function openProductEditor(id) {
     <div class="modal-f">
       ${id ? `<button class="btn btn-ghost" data-act="delete-product" data-id="${id}">${icon('trash')} Arşivle</button>
         <button class="btn btn-ghost" data-act="new-variant" data-id="${id}">${icon('plus')} Renk varyantı</button>
+        <button class="btn btn-ghost" data-act="td-new" data-k="p" data-id="${id}" data-l="${esc(ED.name || 'Ürün')}" data-c="dukkan">${icon('note')} Yapılacak</button>
         ${ED.group_id ? `<button class="btn btn-ghost" data-act="ungroup" data-id="${id}">Gruptan çıkar</button>` : ''}` : ''}
       <div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" data-act="save-product">${id ? 'Kaydet' : 'Ürünü ekle'}</button></div>
     </div>`, 'wide xwide');
@@ -2926,6 +2979,8 @@ function dueLabel(o) {
 S.oSrc = (() => { try { return localStorage.getItem('oSrc') || 'ty'; } catch { return 'ty'; } })();
 PAGES.siparisler = {
   async load() {
+    const qs = new URLSearchParams(location.hash.split('?')[1] || '').get('src');
+    if (qs === 'ty' || qs === 'custom') { S.oSrc = qs; try { localStorage.setItem('oSrc', qs); } catch { /* */ } }
     const jobs = [loadOrders(), loadJobs(), S.settings ? null : loadSettings(), loadProfit().catch(() => null)];
     if (S.oSrc === 'ty') jobs.push(loadTyOrders(), loadProfit(), S.components ? null : loadComponents());
     else if (!S.tyOrders) jobs.push(loadTyOrders().catch(() => {}));
@@ -2935,8 +2990,10 @@ PAGES.siparisler = {
     const tyN = S.tyOrders ? (S.tyOrders.counts.new || 0) : null;
     const cuN = S.orders.filter((o) => ['new', 'printing', 'ready'].includes(o.status)).length;
     const src = `<div class="seg src-seg stc"><button class="stc-new${S.oSrc === 'ty' ? ' on' : ''}${tyN ? '' : ' zero'}" data-act="osrc" data-v="ty">Trendyol${tyN != null ? ` <span class="faint">${tyN} yeni</span>` : ''}</button><button class="stc-picking${S.oSrc === 'custom' ? ' on' : ''}${cuN ? '' : ' zero'}" data-act="osrc" data-v="custom">Özel siparişler <span class="faint">${cuN}</span></button></div>`;
-    if (S.oSrc === 'ty') return tyoPage(src);
-    return customOrdersHTML(src);
+    // Trendyol / Özel seçimi artık üstteki sekmelerde; menü sekmeleri kapalıysa (tek grup) eski seçici kalır
+    const tabsOn = !!$('#subnav') && !$('#subnav').hidden && $('#subnav').querySelector('a[href*="src="]');
+    if (S.oSrc === 'ty') return tyoPage(tabsOn ? '' : src);
+    return customOrdersHTML(tabsOn ? '' : src);
   },
   after() {
     if (S.oSrc === 'ty') { tyoBind(); setTimeout(focusPkgRow, 80); return; }
@@ -3392,7 +3449,7 @@ function openOrderEditor(id) {
       </div>
     </div>
     <div class="modal-f">
-      ${id ? `<button class="btn btn-ghost" data-act="delete-order" data-id="${id}">${icon('trash')} Sil</button>` : ''}
+      ${id ? `<button class="btn btn-ghost" data-act="delete-order" data-id="${id}">${icon('trash')} Sil</button><button class="btn btn-ghost" data-act="td-new" data-k="co" data-id="${id}" data-l="Özel sipariş · ${esc(o.first_name)} ${esc(o.last_name || '')}" data-c="mus">${icon('note')} Yapılacak</button>` : ''}
       <div class="right"><button class="btn" data-act="close">Vazgeç</button>
         <button class="btn" id="oe-print-sel" hidden>${icon('layers')} <span>Seçilenleri baskıya ver</span></button>
         <button class="btn btn-primary" data-act="save-order">${id ? 'Kaydet' : 'Siparişi ekle'}</button></div>
@@ -3403,6 +3460,7 @@ function openOrderEditor(id) {
   $('#o-stage').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; OE.stage = b.dataset.v; $$('#o-stage button').forEach((x) => x.classList.toggle('on', x === b)); };
   $('#o-dm').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; OE.delivery_method = b.dataset.v; $$('#o-dm button').forEach((x) => x.classList.toggle('on', x === b)); $('#o-dk').hidden = OE.delivery_method !== 'kargo'; };
   oeTags();
+  if (id) cuNoteInto('.oe-left', `co=${id}`);
   $('#o-printers')?.addEventListener('click', (e) => { const b = e.target.closest('.chip'); if (!b) return; OE.printer = OE.printer === b.dataset.v ? '' : b.dataset.v; $$('#o-printers .chip').forEach((c) => c.classList.toggle('on', c.dataset.v === OE.printer)); });
   ['#o-odate', '#o-due'].forEach((x) => $(x).addEventListener('input', dueHint));
   dueHint();
@@ -4810,10 +4868,73 @@ const TN_ACTIONS = {
   'tn-cancel': () => { S.tyNoteEdit = null; document.activeElement?.blur(); if (DRW.key) drawerOpen('ty', DRW.key); },
   'tn-del': (el) => tyNoteSave(el.dataset.no, ''),
 };
+// Kalem kontrolü: 3 ve daha fazla kalemli siparişte her kalemin yanında kutucuk; hepsi işaretlenmeden
+// ayrıntı panelinden "Hazırlanıyor'a çek" ve "Barkod" uyarır. Liste aşağı taşıyorsa "N kalem daha" balonu çıkar.
+const OCK_MIN = 3;
+const ocChkOn = (p) => ['new', 'picking'].includes(p.tab) && p.lines.filter((l) => !TY_CANCEL.has(l.status)).length >= OCK_MIN;
+function ocChkLoad() { try { return JSON.parse(localStorage.getItem('ocChk') || '{}') || {}; } catch { return {}; } }
+function ocChkSave(pkg, keys) {
+  const m = ocChkLoad(); delete m[pkg]; if (keys.length) m[pkg] = keys;
+  const ks = Object.keys(m); ks.slice(0, Math.max(0, ks.length - 150)).forEach((k) => delete m[k]);
+  try { localStorage.setItem('ocChk', JSON.stringify(m)); } catch { /* */ }
+}
+function ocChkSync(root) {
+  const box = root.querySelector('.oc-chk'); if (!box) return;
+  const it = [...root.querySelectorAll('.oc-item[data-ock]')], n = it.filter((x) => x.classList.contains('ck')).length;
+  box.querySelector('.n').textContent = `${n}/${it.length}`;
+  box.querySelector('.bar i').style.width = `${it.length ? n / it.length * 100 : 0}%`;
+  box.querySelector('.t').textContent = n === it.length ? 'Hepsi kontrol edildi ✓' : 'kalem kontrol edildi';
+  box.classList.toggle('all', n === it.length);
+}
+function ocEnhance(root, pkg) {
+  const items = root.querySelector('.oc-items'); if (!items) return;
+  const set = new Set(ocChkLoad()[pkg] || []);
+  root.querySelectorAll('.oc-item[data-ock]').forEach((x) => x.classList.toggle('ck', set.has(x.dataset.ock)));
+  ocChkSync(root);
+  items.addEventListener('click', (e) => {
+    const it = e.target.closest('.oc-item[data-ock]');
+    if (!it || (e.target.closest('button, a, select, input, [data-zoom]') && !e.target.closest('.oc-ck'))) return;
+    it.classList.toggle('ck'); it.classList.remove('oc-warn');
+    const keys = [...root.querySelectorAll('.oc-item.ck[data-ock]')].map((x) => x.dataset.ock);
+    ocChkSave(pkg, keys); ocChkSync(root); ocMoreUpd();
+    if (it.classList.contains('ck') && root.querySelector('.oc-chk.all') && FX()) { const b = root.querySelector('.oc-chk'); b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); }
+  });
+  // "N kalem daha" balonu: kaydırma alanının altında kalan kalemler
+  const sc = root.querySelector('.drw-b'); if (!sc) return;
+  let pill = root.querySelector('.oc-more');
+  if (!pill) { pill = document.createElement('button'); pill.type = 'button'; pill.className = 'oc-more'; root.appendChild(pill); }
+  S.ocRoot = root;
+  sc.addEventListener('scroll', ocMoreUpd, { passive: true });
+  setTimeout(ocMoreUpd, 380); setTimeout(ocMoreUpd, 900);
+}
+function ocMoreUpd() {
+  const root = S.ocRoot; if (!root?.isConnected) return;
+  const sc = root.querySelector('.drw-b'), pill = root.querySelector('.oc-more'); if (!sc || !pill) return;
+  const r = sc.getBoundingClientRect();
+  const hid = [...root.querySelectorAll('.oc-item:not(.cancel)')].filter((x) => x.getBoundingClientRect().bottom > r.bottom + 2);
+  if (!hid.length) { pill.classList.remove('on'); return; }
+  const un = hid.filter((x) => x.dataset.ock && !x.classList.contains('ck')).length;
+  pill.innerHTML = `<span class="st">${hid.slice(0, 3).map((x) => `<span style="${x.querySelector('.oc-img')?.getAttribute('style') || ''}"></span>`).join('')}</span>${hid.length} kalem daha${un && un < hid.length ? ` <small>· ${un} işaretsiz</small>` : ''} <span aria-hidden="true">↓</span>`;
+  pill.style.bottom = `${(root.querySelector('.drw-f')?.offsetHeight || 0) + 14}px`;
+  pill.onclick = () => { hid[0].scrollIntoView({ behavior: REDUCED() ? 'auto' : 'smooth', block: 'center' }); hid[0].classList.remove('oc-flash'); void hid[0].offsetWidth; hid[0].classList.add('oc-flash'); };
+  pill.classList.add('on');
+}
+addEventListener('resize', () => ocMoreUpd());
+// ayrıntı panelinden hazırla / barkod: işaretlenmemiş kalem varsa önce uyar
+function ocGuard(el, go) {
+  const root = el.closest('.drw'); if (!root) return go();
+  const left = [...root.querySelectorAll('.oc-item[data-ock]:not(.ck)')];
+  if (!left.length) return go();
+  left[0].scrollIntoView({ behavior: REDUCED() ? 'auto' : 'smooth', block: 'center' });
+  left.forEach((x) => { x.classList.remove('oc-warn'); void x.offsetWidth; x.classList.add('oc-warn'); });
+  const b = root.querySelector('.oc-chk'); if (b) { b.classList.remove('shake'); void b.offsetWidth; b.classList.add('shake'); }
+  toast(`${left.length} kalem işaretlenmedi; önce kontrol edin`, { bad: true, action: 'Yine de devam et', onAction: go });
+}
 function tyoBody(p) {
   const r = p.tab === 'cancelled' ? null : orderProfit(p);
   const sh = ordShort(p);
-  const lines = p.lines.map((l) => {
+  const chk = ocChkOn(p);
+  const lines = p.lines.map((l, li) => {
     const pr = l.product_id ? productById(l.product_id) : null;
     const cancel = TY_CANCEL.has(l.status);
     const ms = !cancel && l.product_id ? sh.by[l.product_id] : null;
@@ -4827,8 +4948,8 @@ function tyoBody(p) {
       : st <= 0 && p.tab === 'new' && !cancel ? `<span class="oc-out">${icon('alert')} Rafta yok</span>` : `<span class="oc-shelf">rafta <b>${st}</b>${ms && !l.state?.startsWith('deduct') ? ` <span class="oc-after">→ bu siparişten sonra <b>${Math.max(0, ms.shelf - ms.ahead - ms.need)}</b></span>` : ''}</span>`;
     const pmiss = pr?.parts?.length && out ? Math.max(0, (pr.parts_total || 0) - (pr.parts_ready || 0)) : 0;
     const parts = pmiss ? `<span class="oc-parts" title="Sonraki set için elde ${pr.parts_ready}/${pr.parts_total} parça">${pmiss}/${pr.parts_total} parça eksik</span>` : '';
-    return `<div class="oc-item${cancel ? ' cancel' : ''}${out ? (part ? ' out part' : ' out') : ''}">
-      <span class="oc-img${l.thumbnail ? '' : ' none'}" style="${thumbStyle(l.thumbnail)}" data-zoom="${esc(l.thumbnail || '')}" data-title="${esc(l.name || '')}">${qtyBadge(l.quantity)}</span>
+    return `<div class="oc-item${cancel ? ' cancel' : ''}${out ? (part ? ' out part' : ' out') : ''}"${chk && !cancel ? ` data-ock="${esc(`${l.barcode || l.name || ''}#${li}`)}"` : ''}>
+      ${chk && !cancel ? '<button type="button" class="oc-ck" aria-label="Kontrol edildi"></button>' : ''}<span class="oc-img${l.thumbnail ? '' : ' none'}" style="${thumbStyle(l.thumbnail)}" data-zoom="${esc(l.thumbnail || '')}" data-title="${esc(l.name || '')}">${qtyBadge(l.quantity)}</span>
       <div class="oc-tx"><b>${pr || (l.ty_url && /^https?:\/\//.test(l.ty_url)) ? `<button type="button" class="oc-name" data-act="oc-pmenu" data-pid="${pr ? pr.id : ''}" data-url="${esc(l.ty_url && /^https?:\/\//.test(l.ty_url) ? l.ty_url : '')}" data-name="${esc(pr?.name || l.name || '')}">${esc(l.name || 'Bilinmeyen ürün')}<svg class="oc-caret" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></button>` : esc(l.name || 'Bilinmeyen ürün')}</b>${l.ty_name && pr && l.ty_name !== l.name ? `<small class="faint">${esc(l.ty_name)}</small>` : ''}
         <div class="oc-meta">${l.barcode ? `<span class="mono">${esc(l.barcode)}</span>` : ''}${shelf}${parts}${state}${l.unit_price != null ? `<span class="faint oc-up">${fmtTL(l.unit_price)}</span>` : ''}${!cancel && l.commission != null && l.commission >= 0 ? `<span class="oc-com${l.usual_commission && l.commission < l.usual_commission - 0.4 ? ' cut' : ''}" title="${l.usual_commission && l.commission < l.usual_commission - 0.4 ? `Bu siparişte indirimli; ürünün olağan komisyonu %${fmtPctNum(l.usual_commission)}` : 'Bu üründen kesilen komisyon oranı'}">komisyon %${fmtPctNum(l.commission)}</span>` : ''}</div>
         ${!l.product_id && l.barcode && !cancel ? `<div class="pick-match"><select class="input" data-tyo-match="${esc(l.barcode)}"><option value="">Hangi ürününüz?</option>${S.products.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select><button class="btn btn-sm btn-ok" data-act="tyo-match" data-code="${esc(l.barcode)}">Eşleştir</button></div>` : ''}</div></div>`;
@@ -4843,7 +4964,7 @@ function tyoBody(p) {
     ${tyNoteHTML(p)}
     ${p.repeat?.prev?.length ? `<div class="rep-list">${icon('refresh')}<span>Diğer siparişleri:</span>${p.repeat.prev.slice().reverse().map((o) => `<button type="button" class="po-link" data-act="po-open" data-no="${esc(o.no)}">${esc(o.no)}<small>${o.date ? new Date(o.date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: new Date(o.date).getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined }) : ''}</small></button>`).join('')}</div>` : ''}
     ${hits.length ? `<div class="oc-rules">${hits.map((h) => `<span class="oc-rule t-${h.tone}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}</div>` : ''}
-    <div class="oc-items">${lines}
+    <div class="oc-items">${chk ? '<div class="oc-chk"><b class="n">0/0</b><span class="t">kalem kontrol edildi</span><span class="bar"><i></i></span></div>' : ''}${lines}
       <p class="muted oc-foot">${p.pkg_total != null ? `Müşterinin ödediği <b>${fmtTL(p.pkg_total)}</b>` : ''}${dl ? ` · son teslim ${fmtDl(dl)}` : ''} · paket ${esc(p.package_id || '')}</p></div>
     <aside class="oc-side">
       ${p.cargo_provider || p.cargo_no ? `<div class="oc-cargo${tex ? '' : ' other'}">${icon('pack')}<div><b>${esc((p.cargo_provider || 'Kargo').replace(/ Marketplace$/i, ''))}</b>${p.cargo_no ? `<span class="mono">${esc(p.cargo_no)}</span>` : ''}
@@ -4869,15 +4990,20 @@ const DRAWER_KINDS = {
       const dl = effDeadline(p.deadline), act = TYO_ACTIVE.has(p.tab) && p.tab !== 'shipped', today = act && dueToday(dl);
       const date = new Date(p.order_date).toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
       return `<div class="drw-t"><span class="drw-no">${esc(p.order_number)}</span>${act && dl ? `${today ? '<span class="tag tag-warn">Bugün verilmeli</span>' : ''}${dlChip(dl)}` : ''}</div>
-        <div class="drw-who"><b>${esc(p.customer || '—')}</b><small>${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''} · ${date}</small>
+        <div class="drw-who"><b>${p.customer ? `<button type="button" class="cu-name-btn" data-act="cust-open" data-key="" data-ty="${esc(p.order_number)}" title="Müşteri kartını aç">${esc(p.customer)}</button>` : '—'}</b><small>${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''} · ${date}</small>
           <span class="drw-tags">${plusTags(p, true)}${orderRuleHits(p).map((h) => `<span class="rule-tag t-${h.tone}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? `<span class="near-tag">${icon('pin')} Yakın · not ekle</span>` : ''}</span></div>`;
     },
     body: (p) => tyoBody(p),
     foot(p) {
       return `<button type="button" class="btn btn-ghost btn-sm" data-drw-copy="${esc(p.order_number)}">${icon('copy')} Sipariş no</button>${p.customer ? `<button type="button" class="btn btn-ghost btn-sm" data-drw-copy="${esc(p.customer)}" data-what="Müşteri adı">${icon('copy')} Müşteri</button>` : ''}
+        <button type="button" class="btn btn-ghost btn-sm" data-act="td-new" data-k="ty" data-id="${esc(p.order_number)}" data-l="Sipariş ${esc(p.order_number)}${p.customer ? ' · ' + esc(p.customer) : ''}" data-c="mus">${icon('note')} Yapılacak ekle</button>
         <span class="spacer"></span><span class="faint drw-keys"><kbd>↑</kbd><kbd>↓</kbd> gez · <kbd>Esc</kbd></span>`;
     },
     bind(root) {
+      const no = root.querySelector('.cu-name-btn')?.dataset.ty, b = root.querySelector('.drw-b');
+      const pkg = root.querySelector('[data-act="tyo-pick"], [data-act="ty-label"], [data-act="ty-cargo"]')?.dataset.id || no;
+      ocEnhance(root, pkg);
+      if (no && b) cuNoteInto(b, `ty=${encodeURIComponent(no)}`);
       const ta = root.querySelector('#tn-ta');
       if (ta) {
         ta.oninput = () => tnGrow(ta);
@@ -6184,6 +6310,350 @@ function trackingNotice() {
 }
 
 // ---------- panoda Trendyol özeti
+// ---------- Ambalaj stoğu (sunucuda paket.py)
+const PK_ICONS = ['📦', '🛍️', '🫧', '💌', '✉️', '🏷️', '🎀', '📜', '🧻', '🧴', '🗃️', '🔖'];
+const PK_UNITS = [['adet', 'adet'], ['m', 'metre'], ['paket', 'paket'], ['kg', 'kg']];
+const PK_STARTER = [['Kargo poşeti', '🛍️', 'adet', 50], ['Kutu · küçük', '📦', 'adet', 20], ['Kutu · orta', '📦', 'adet', 20], ['Balonlu naylon', '🫧', 'm', 10], ['Teşekkür kartı', '💌', 'adet', 50], ['Koli bandı', '🧻', 'adet', 2]];
+const pkNum = (v) => String(Math.round((v || 0) * 100) / 100).replace('.', ',');
+const pkU = (u) => (u === 'adet' ? '' : ` ${u}`);
+PAGES.ambalaj = {
+  async load() { await Promise.all([(async () => { S.pack = await api('GET', '/api/pack'); })(), S.products.length ? null : loadProducts()]); },
+  html() {
+    const P = S.pack || { items: [], rules: [], log: [] }, it = P.items;
+    const low = it.filter((x) => x.min > 0 && x.stock <= x.min).length;
+    const cats = [...new Set(S.products.filter((p) => !p.archived).map((p) => (p.category || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'tr'));
+    const iname = (id) => { const x = it.find((y) => y.id === id); return x ? `${x.icon} ${esc(x.name)}` : '?'; };
+    const tname = (r) => (r.scope === 'order' ? '<b>Her siparişe</b>' : r.scope === 'category' ? `Kategori: <b>${esc(r.target)}</b>` : `Ürün: <b>${esc(productById(+r.target)?.name || '#' + r.target)}</b>`);
+    return `<div class="toolbar"><span class="muted pk-sum"><b>${it.length}</b> malzeme${low ? ` · <span class="bad-text"><b>${low}</b> tanesi azaldı</span>` : ''}</span><span class="spacer"></span>
+        ${it.length ? `<button class="btn" data-act="pk-count">${icon('check')} Sayım yap</button>` : ''}<button class="btn btn-primary" data-act="pk-item">${icon('plus')} Malzeme ekle</button></div>
+      ${it.length ? `<div class="pk-grid">${it.map((x, i) => { const r = x.min > 0 ? x.stock / (x.min * 3) : 1, cls = x.stock <= 0 ? 'out' : x.min > 0 && x.stock <= x.min ? 'low' : r < .6 ? 'mid' : '';
+        return `<article class="pk-card ${cls}" style="--i:${i}" data-act="pk-item" data-id="${x.id}">
+          <span class="pk-ic">${x.icon || '📦'}</span>
+          <div class="pk-nm"><b title="${esc(x.name)}">${esc(x.name)}</b><small>${x.days_left != null ? `günde ~${pkNum(x.per_day)}${pkU(x.unit)} · <b class="${x.days_left < 7 ? 'bad-text' : ''}">~${Math.floor(x.days_left)} gün yeter</b>` : 'henüz kullanım yok'}${x.min ? ` · en az ${pkNum(x.min)}` : ''}</small></div>
+          <div class="pk-st"><b data-count>${pkNum(x.stock)}</b><small>${x.unit}</small></div>
+          <div class="pk-bar"><i style="width:${Math.max(3, Math.min(100, r * 100))}%"></i></div>
+          <div class="pk-q"><button type="button" class="btn btn-sm" data-act="pk-adj" data-id="${x.id}" data-d="-1" aria-label="Bir azalt">−</button><button type="button" class="btn btn-sm" data-act="pk-adj" data-id="${x.id}" data-d="1" aria-label="Bir artır">+</button><button type="button" class="btn btn-sm" data-act="pk-buy" data-id="${x.id}">${icon('plus')} Satın aldım</button></div></article>`; }).join('')}</div>`
+        : `<div class="empty panel pk-empty"><span class="pk-big">📦</span><h3>Ambalaj stoğu boş</h3><p class="muted">Kutu, poşet, balonlu naylon gibi malzemeleri ekleyin; kurallara göre sipariş hazırlanınca kendiliğinden düşsün.</p>
+          <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn btn-primary" data-act="pk-starter">Hazır listeyle başla</button><button class="btn" data-act="pk-item">Tek tek ekle</button></div></div>`}
+      ${it.length ? `<div class="two-col pk-cols"><section class="panel"><div class="panel-h"><h2>Kurallar</h2><span class="muted">sipariş hazırlanınca ne düşsün</span></div><div class="panel-b">
+          <div class="pk-rules">${P.rules.map((r) => `<div class="pk-rule"><span>${tname(r)}</span><span class="pk-arr">→</span><span><b>${pkNum(r.qty)}${pkU(it.find((y) => y.id === r.item_id)?.unit)}</b> ${iname(r.item_id)}${r.scope !== 'order' ? ` <small class="muted">${r.per === 'unit' ? 'her adet için' : 'siparişte bir kez'}</small>` : ''}</span><button class="icon-btn" data-act="pk-rdel" data-id="${r.id}" aria-label="Kuralı sil">${icon('trash')}</button></div>`).join('') || '<p class="muted" style="margin:0">Henüz kural yok. Aşağıdan ekleyin; örneğin her siparişe 1 kargo poşeti.</p>'}</div>
+          <div class="pk-radd" id="pk-radd">
+            <select class="input" id="pkr-scope"><option value="order">Her siparişe</option><option value="category">Kategoriye göre</option><option value="product">Ürüne göre</option></select>
+            <select class="input" id="pkr-cat" hidden>${cats.map((c) => `<option>${esc(c)}</option>`).join('')}</select>
+            <select class="input" id="pkr-prod" hidden>${S.products.filter((p) => !p.archived).sort((a, b) => a.name.localeCompare(b.name, 'tr')).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
+            <span class="pk-arr">→</span><input class="input" id="pkr-qty" type="number" min="0.1" step="0.1" value="1" aria-label="Miktar">
+            <select class="input" id="pkr-item">${it.map((x) => `<option value="${x.id}">${x.icon} ${esc(x.name)}</option>`).join('')}</select>
+            <select class="input" id="pkr-per" hidden><option value="order">siparişte bir kez</option><option value="unit">her adet için</option></select>
+            <button class="btn btn-primary" data-act="pk-radd">Ekle</button></div>
+          <p class="muted pk-hint">Ürüne göre kural, o ürün için kategori kuralının yerine geçer. Özel siparişlere yalnız “Her siparişe” kuralları uygulanır; sipariş kapanış aşamasına geçince düşer. Trendyol siparişi Hazırlanıyor'a geçince düşer.</p>
+        </div></section>
+        <section class="panel"><div class="panel-h"><h2>Son hareketler</h2></div><div class="panel-b"><ul class="pk-log">${P.log.map((l) => `<li><span>${l.icon || '📦'}</span><span class="pk-ln"><b>${esc(l.name)}</b><small>${{ order: 'Sipariş', count: 'Sayım', buy: 'Satın alma', manual: 'Elle' }[l.reason] || l.reason}${l.ref ? ' · ' + esc(l.ref) : ''} · ${fmtWhen(l.created_at)}</small></span><b class="${l.delta < 0 ? 'bad-text' : 'ok-text'}">${l.delta > 0 ? '+' : ''}${pkNum(l.delta)}${pkU(l.unit)}</b></li>`).join('') || '<li class="muted">Hareket yok.</li>'}</ul></div></section></div>` : ''}`;
+  },
+  after() {
+    const sc = $('#pkr-scope'); if (!sc) return;
+    const upd = () => { $('#pkr-cat').hidden = sc.value !== 'category'; $('#pkr-prod').hidden = sc.value !== 'product'; $('#pkr-per').hidden = sc.value === 'order'; };
+    sc.onchange = upd; upd();
+  },
+};
+async function pkDo(method, url, body, msg) {
+  try { S.pack = await api(method, url, body); if (msg) toast(msg); if (route() === 'ambalaj') { $('#view').innerHTML = PAGES.ambalaj.html(); PAGES.ambalaj.after(); countUp($('#view')); } renderNav(); return true; } catch (e) { fail(e); return false; }
+}
+function openPackItem(id) {
+  const x = id ? S.pack.items.find((y) => y.id === id) : { name: '', icon: '📦', unit: 'adet', min: 0, stock: 0 };
+  let ic = x.icon || '📦';
+  openModal(`<div class="modal-h"><h2>${id ? 'Malzeme' : 'Yeni malzeme'}</h2><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+    <div class="modal-b pk-ed">
+      <div class="field"><span>Simge</span><div class="fe-ics" id="pki-ic">${PK_ICONS.map((i) => `<button type="button" data-v="${i}" class="${ic === i ? 'on' : ''}">${i}</button>`).join('')}</div></div>
+      <label class="field"><span>Ad</span><input class="input" id="pki-n" value="${esc(x.name)}" placeholder="Ör. Kutu · orta (15×15×10)"></label>
+      <div class="row"><label class="field"><span>Birim</span><select class="input" id="pki-u">${PK_UNITS.map(([k, l]) => `<option value="${k}"${x.unit === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="field"><span>Uyarı sınırı</span><input class="input" id="pki-min" type="number" min="0" step="1" value="${x.min || ''}" placeholder="0 = uyarma"></label>
+        ${id ? '' : '<label class="field"><span>Şu an elde</span><input class="input" id="pki-s" type="number" min="0" step="1" placeholder="0"></label>'}</div>
+    </div>
+    <div class="modal-f">${id ? `<button class="btn btn-ghost" id="pki-del">${icon('trash')} Sil</button>` : ''}<div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" id="pki-ok">${id ? 'Kaydet' : 'Ekle'}</button></div></div>`, 'pk-modal');
+  $('#pki-ic').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; ic = b.dataset.v; $$('#pki-ic button').forEach((y) => y.classList.toggle('on', y === b)); };
+  $('#pki-n').focus();
+  $('#pki-ok').onclick = async () => { const body = { name: $('#pki-n').value, icon: ic, unit: $('#pki-u').value, min: $('#pki-min').value, stock: $('#pki-s')?.value }; if (await pkDo(id ? 'PUT' : 'POST', id ? `/api/pack/items/${id}` : '/api/pack/items', body, id ? 'Kaydedildi' : 'Malzeme eklendi')) closeModal(); };
+  $('#pki-del')?.addEventListener('click', async () => { if (!confirm(`“${x.name}” silinsin mi? Bu malzemenin kuralları da silinir.`)) return; if (await pkDo('DELETE', `/api/pack/items/${id}`, undefined, 'Silindi')) closeModal(); });
+}
+function openPackCount() {
+  const it = S.pack.items;
+  openModal(`<div class="modal-h"><h2>Sayım</h2><span class="muted">elinizdekileri sayıp yazın</span><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+    <div class="modal-b pk-cnt">${it.map((x) => `<div class="pk-cr"><span class="pk-ic sm">${x.icon}</span><span class="pk-cn"><b>${esc(x.name)}</b><small>sistemde ${pkNum(x.stock)}${pkU(x.unit)}</small></span>
+      <span class="pk-step"><button type="button" data-pkc="-1" data-id="${x.id}">−</button><input type="number" min="0" step="any" data-pkv="${x.id}" value="${pkNum(x.stock).replace(',', '.')}" inputmode="decimal"><button type="button" data-pkc="1" data-id="${x.id}">+</button></span><span class="pk-diff" data-pkd="${x.id}"></span></div>`).join('')}</div>
+    <div class="modal-f"><span class="muted" id="pkc-sum"></span><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" id="pkc-ok">Sayımı kaydet</button></div></div>`, 'pk-modal');
+  const diff = () => { let n = 0; it.forEach((x) => { const v = parseFloat($(`[data-pkv="${x.id}"]`).value) || 0, d = Math.round((v - x.stock) * 100) / 100, el = $(`[data-pkd="${x.id}"]`); el.textContent = d ? `${d > 0 ? '+' : ''}${pkNum(d)}` : ''; el.className = 'pk-diff ' + (d < 0 ? 'bad-text' : 'ok-text'); if (d) n++; }); $('#pkc-sum').textContent = n ? `${n} malzemede fark var` : 'Fark yok'; };
+  $('.pk-cnt').addEventListener('input', diff);
+  $('.pk-cnt').addEventListener('click', (e) => { const b = e.target.closest('[data-pkc]'); if (!b) return; const i = $(`[data-pkv="${b.dataset.id}"]`); i.value = Math.max(0, (parseFloat(i.value) || 0) + +b.dataset.pkc); diff(); });
+  diff();
+  $('#pkc-ok').onclick = async () => { const values = {}; it.forEach((x) => { values[x.id] = parseFloat($(`[data-pkv="${x.id}"]`).value) || 0; }); if (await pkDo('POST', '/api/pack/count', { values }, 'Sayım kaydedildi')) closeModal(); };
+}
+
+// ---------- Müşteriler: tek müşteri kartı (sunucuda kisiler.py)
+const TY_ST_TR = { Created: 'Yeni', Awaiting: 'Bekliyor', Picking: 'Hazırlanıyor', Invoiced: 'Faturalandı', Shipped: 'Kargoda', Delivered: 'Teslim edildi', Cancelled: 'İptal', UnDelivered: 'Teslim edilemedi', Returned: 'İade', UnSupplied: 'Tedarik edilemedi', AtCollectionPoint: 'Teslim noktasında' };
+const cuInit = (n) => (String(n || '?').trim().split(/\s+/).map((w) => w[0]).join('').slice(0, 2) || '?').toLocaleUpperCase('tr');
+const cuHue = (k) => { let h = 0; for (const ch of String(k)) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
+const cuAv = (c, cls = '') => `<span class="cu-av${cls}" style="--h:${cuHue(c.key)}">${esc(cuInit(c.name))}</span>`;
+const cuAgo = (t) => { if (!t) return '–'; const d = Math.floor((Date.now() / 1000 - t) / 86400); return d <= 0 ? 'bugün' : d === 1 ? 'dün' : d < 30 ? `${d} gün önce` : d < 365 ? `${Math.floor(d / 30)} ay önce` : `${Math.floor(d / 365)} yıl önce`; };
+const cuDate = (t) => (t ? new Date(t * 1000).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: new Date(t * 1000).getFullYear() === new Date().getFullYear() ? undefined : 'numeric' }) : '–');
+const CU_SORTS = [['spent', 'En çok harcayan'], ['orders', 'En çok sipariş'], ['last', 'Son sipariş'], ['away', 'Uzun süredir gelmeyen'], ['name', 'Ad (A–Z)']];
+PAGES.musteriler = {
+  async load() { S.custs = await api('GET', '/api/customers'); },
+  html() {
+    S.cuSort ||= lsGet('cuSort', 'spent');
+    const q = trLow(S.cuQ || ''), L = (S.custs || []).filter((c) => !q || trLow(`${c.name} ${c.city} ${c.phone} ${(c.tags || []).join(' ')}`).includes(q));
+    const by = { spent: (a, b) => b.spent - a.spent, orders: (a, b) => b.orders - a.orders, last: (a, b) => b.last - a.last, away: (a, b) => (b.orders > 1) - (a.orders > 1) || a.last - b.last, name: (a, b) => a.name.localeCompare(b.name, 'tr') }[S.cuSort];
+    L.sort(by);
+    const rep = (S.custs || []).filter((c) => c.orders > 1).length, tot = (S.custs || []).reduce((a, c) => a + c.spent, 0);
+    return `<div class="toolbar"><div class="search cu-search">${icon('search')}<input class="input" id="cu-q" placeholder="Ad, şehir, telefon ya da etiket ara" value="${esc(S.cuQ || '')}" autocomplete="off"></div>
+        <label class="flt"><span>Sırala</span><select class="input" id="cu-sort">${CU_SORTS.map(([k, l]) => `<option value="${k}"${S.cuSort === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+        <span class="spacer"></span><span class="muted cu-sum"><b>${(S.custs || []).length}</b> müşteri · <b>${rep}</b> tekrar eden · toplam <b>${fmtTL(tot)}</b></span></div>
+      <div class="cu-list">${L.length ? `<div class="cu-row cu-head"><span></span><span>Müşteri</span><span>Kanal</span><span class="num">Sipariş</span><span class="num">Harcama</span><span>Son sipariş</span></div>` + L.slice(0, 300).map((c, i) => `<button type="button" class="cu-row" data-act="cust-open" data-key="${esc(c.key)}" style="--i:${Math.min(i, 20)}">
+        ${cuAv(c)}<span class="cu-nm"><b>${esc(c.name)}</b><small>${esc([c.city, c.district].filter(Boolean).join(' · ') || c.phone || '')}${(c.tags || []).map((t) => ` <span class="cu-tg" style="--h:${cuHue(t)}">${esc(t)}</span>`).join('')}${c.note ? ' <span title="Notu var">📝</span>' : ''}</small></span>
+        <span class="cu-ch">${c.n_ty ? '<span class="cu-c ty">Trendyol</span>' : ''}${c.n_co ? '<span class="cu-c co">Özel</span>' : ''}</span>
+        <span class="num">${c.orders}${c.returns ? ` <small class="bad-text" title="İade">↩${c.returns}</small>` : ''}</span><span class="num"><b>${fmtTL(c.spent)}</b>${c.unpaid > 0 ? `<small class="bad-text">${fmtTL(c.unpaid)} alacak</small>` : ''}</span><span class="muted">${cuAgo(c.last)}</span></button>`).join('')
+        : `<div class="empty"><p class="muted">${q ? 'Aramaya uyan müşteri yok.' : 'Henüz müşteri yok; siparişler geldikçe burada toplanır.'}</p></div>`}</div>`;
+  },
+  after() {
+    const q = $('#cu-q'); if (q) q.oninput = () => { S.cuQ = q.value; const p = q.selectionStart; $('#view').innerHTML = PAGES.musteriler.html(); PAGES.musteriler.after(); const n = $('#cu-q'); n.focus(); n.setSelectionRange(p, p); };
+    $('#cu-sort')?.addEventListener('change', (e) => { S.cuSort = e.target.value; lsSet('cuSort', S.cuSort); render(); });
+  },
+};
+async function openCustomer(key, from) {
+  let c;
+  try { c = await api('GET', `/api/customers/${encodeURIComponent(key)}`); } catch (e) { return fail(e); }
+  S.cuCur = c;
+  const ordP = (S.tyOrders?.packages || []);
+  // zaman çizelgesi: Trendyol siparişleri, özel siparişler, iadeler, sorular
+  const ev = [
+    ...c.ty.map((o) => ({ at: o.at, k: 'ty', o })),
+    ...c.co.map((o) => ({ at: o.at, k: 'co', o })),
+    ...c.ty.flatMap((o) => (o.claims || []).map((cl) => ({ at: cuSec(cl.claim_date), k: 'cl', o: cl, no: o.no }))),
+    ...(c.questions || []).map((q) => ({ at: cuSec(q.created), k: 'q', o: q })),
+  ].sort((a, b) => b.at - a.at);
+  const pr = (pid) => productById(pid);
+  const th = (o) => { const x = o.items?.find((i) => pr(i.pid)?.thumbnail); return x ? `style="${thumbStyle(pr(x.pid).thumbnail)}"` : ''; };
+  let profit = null;
+  if (c.ty.length && c.ty.every((o) => o.cancelled || ordP.some((p) => p.order_number === o.no))) {
+    profit = c.ty.filter((o) => !o.cancelled).reduce((a, o) => { const p = ordP.find((x) => x.order_number === o.no); let r = null; try { r = p && orderProfit(p); } catch { /* */ } return a + (r ? r.profit : 0); }, 0);
+  }
+  const row = (e) => {
+    const o = e.o;
+    if (e.k === 'ty') return `<button type="button" class="cu-ev${o.cancelled ? ' off' : ''}" data-act="po-open" data-no="${esc(o.no)}" style="--c:#F27A1A"><span class="d"><b>${cuDate(e.at)}</b>Trendyol</span><i class="dot"></i><span class="cu-th" ${th(o)}></span>
+      <span class="w"><b>${esc(o.items.filter((i) => !i.cancelled).map((i) => `${i.name || '?'}${i.qty > 1 ? ' ×' + i.qty : ''}`).join(', ') || o.items.map((i) => i.name).join(', '))}</b><small>${esc(o.no)} · ${o.cancelled ? 'iptal' : esc(TY_ST_TR[o.status] || o.status || '')}</small></span><span class="r">${fmtTL(o.amount)}</span></button>`;
+    if (e.k === 'co') { const st = stGet(o.stage) || (o.status === 'cancelled' ? ST_CANCEL : null), rem = (o.price || 0) - (o.paid || 0);
+      return `<button type="button" class="cu-ev${o.cancelled ? ' off' : ''}" data-act="edit-order" data-id="${o.id}" style="--c:${st ? stColor(st) : '#3C7DD9'}"><span class="d"><b>${cuDate(e.at)}</b>Özel</span><i class="dot"></i><span class="cu-th" ${o.image ? `style="${thumbStyle(o.image)}"` : ''}>${o.image ? '' : '✏️'}</span>
+      <span class="w"><b>${esc(o.title || 'Özel sipariş')}</b><small>${st ? `${st.icon} ${esc(st.name)}` : ''}</small></span><span class="r">${o.price != null ? fmtMoney(o.price) : ''}${o.price > 0 ? `<small class="${rem > 0.004 ? 'bad-text' : 'ok-text'}">${rem > 0.004 ? `${fmtMoney(rem)} kaldı` : 'ödendi'}</small>` : ''}</span></button>`; }
+    if (e.k === 'cl') return `<div class="cu-ev" style="--c:var(--bad)"><span class="d"><b>${cuDate(e.at)}</b>İade</span><i class="dot"></i><span class="cu-th">↩️</span><span class="w"><b>İade talebi · ${esc(e.no)}</b><small>${esc(o.status || '')}</small></span><span class="r"></span></div>`;
+    return `<div class="cu-ev" style="--c:#1A9C9C"><span class="d"><b>${cuDate(e.at)}</b>Soru</span><i class="dot"></i><span class="cu-th">💬</span><span class="w"><b>“${esc((o.text || '').slice(0, 90))}”</b><small>${esc(o.product_name || '')}${o.answer ? ' · cevaplandı' : ''}</small></span><span class="r"></span></div>`;
+  };
+  const wa = c.phone ? waLink(c.phone) : '';
+  const best = (() => { const m = {}; c.ty.filter((o) => !o.cancelled).forEach((o) => o.items.forEach((i) => { if (!i.cancelled) m[i.name] = (m[i.name] || 0) + i.qty; })); const e = Object.entries(m).sort((a, b) => b[1] - a[1])[0]; return e ? e[0] : ''; })();
+  openModal(`<div class="modal-h cu-mh">${cuAv(c, ' lg')}<div class="cu-ti"><h2>${esc(c.name)}</h2><p>${esc([c.city, c.district].filter(Boolean).join(' · '))}${c.phone ? ` · ${esc(c.phone)}` : ''}</p>
+      <div class="cu-chs">${c.n_ty ? `<span class="cu-c ty">Trendyol · ${c.n_ty} sipariş</span>` : ''}${c.n_co ? `<span class="cu-c co">Özel · ${c.n_co} sipariş</span>` : ''}${c.orders > 1 ? '<span class="cu-c rp">↻ Tekrar eden</span>' : ''}</div></div>
+      <div class="cu-acts">${wa ? `<a class="btn btn-sm" href="${wa}" target="_blank" rel="noopener">${icon('phone')} WhatsApp</a>` : ''}<button class="btn btn-sm" data-act="cust-co" >${icon('plus')} Özel sipariş</button><button class="btn btn-sm" data-act="td-new" data-k="${c.co[0] ? 'co' : 'ty'}" data-id="${esc(c.co[0]?.id ?? c.ty[c.ty.length - 1]?.no ?? '')}" data-l="${esc(c.name)}" data-c="mus">${icon('note')} Yapılacak</button></div>
+      <button class="icon-btn" data-act="close" aria-label="Kapat">${icon('x')}</button></div>
+    <div class="modal-b cu-b">
+      <div class="cu-main">
+        <div class="cu-stats"><div><small>Toplam harcama</small><b data-count>${fmtTL(c.spent)}</b></div>${profit != null ? `<div><small>Sana kalan kâr</small><b class="${profit >= 0 ? 'ok-text' : 'bad-text'}">${profit >= 0 ? '+' : ''}${fmtTL(profit)}</b></div>` : `<div><small>Ortalama sepet</small><b>${c.orders ? fmtTL(c.spent / c.orders) : '–'}</b></div>`}<div><small>Sipariş</small><b>${c.orders}</b></div><div><small>İade</small><b class="${c.returns ? 'bad-text' : ''}">${c.returns}</b></div></div>
+        <div class="cu-box"><h5>Tüm geçmiş · en yeni üstte</h5><div class="cu-tl">${ev.map(row).join('') || '<p class="faint">Kayıt yok.</p>'}</div></div>
+      </div>
+      <div class="cu-side">
+        <label class="cu-note${c.note ? ' has' : ''}"><span>📝 Müşteri notu <small>her yeni siparişinde görünür</small></span><textarea id="cu-note" rows="3" placeholder="Ör. hediye paketini seviyor, kapora istemeye gerek yok…">${esc(c.note || '')}</textarea></label>
+        <div class="cu-box"><h5>Etiketler</h5><div class="cu-tags" id="cu-tags"></div></div>
+        <div class="cu-box"><h5>Özet</h5>
+          <div class="kv"><span>İlk sipariş</span><b>${cuDate(c.first)}</b></div><div class="kv"><span>Son sipariş</span><b>${cuAgo(c.last)}</b></div>
+          <div class="kv"><span>Ortalama sepet</span><b>${c.orders ? fmtTL(c.spent / c.orders) : '–'}</b></div>${best ? `<div class="kv"><span>En çok aldığı</span><b>${esc(best)}</b></div>` : ''}
+          ${c.unpaid > 0 ? `<div class="kv"><span>Alacak</span><b class="bad-text">${fmtTL(c.unpaid)}</b></div>` : ''}</div>
+        ${(c.suggest || []).map((s) => `<div class="cu-sug"><span class="cu-sug-ic">🔗</span><span><b>Aynı kişi olabilir:</b> ${esc(s.name)} · ${s.n_co ? `${s.n_co} özel sipariş` : `${s.n_ty} Trendyol siparişi`}${s.phone ? ` · ${esc(s.phone)}` : ''}${s.city ? ` · ${esc(s.city)}` : ''}</span>
+          <span class="cu-sug-b"><button class="btn btn-sm btn-primary" data-act="cust-merge" data-b="${esc(s.key)}">Birleştir</button><button class="btn btn-sm btn-ghost" data-act="cust-nolink" data-b="${esc(s.key)}">Farklı kişi</button></span></div>`).join('')}
+        ${c.raw.length > 1 ? `<details class="cu-raw"><summary>Birleştirilmiş kayıtlar (${c.raw.length})</summary>${c.raw.filter((k) => k !== c.key).map((k) => `<div><code>${esc(k.replace(/^(ty|tn|ph|cn):/, (m) => ({ 'ty:': 'Trendyol #', 'tn:': 'Trendyol · ', 'ph:': 'Tel · ', 'cn:': 'Özel · ' }[m])))}</code><button class="btn btn-sm btn-ghost" data-act="cust-unmerge" data-k="${esc(k)}">Ayır</button></div>`).join('')}</details>` : ''}
+      </div>
+    </div>`, 'wide cu-modal');
+  cuTags();
+  const ta = $('#cu-note'); let t0 = c.note || '';
+  ta.addEventListener('blur', async () => { if (ta.value === t0) return; try { await api('PUT', `/api/customers/${encodeURIComponent(c.key)}`, { note: ta.value }); t0 = ta.value; c.note = ta.value; ta.closest('.cu-note').classList.toggle('has', !!ta.value); toast('Not kaydedildi'); S.custs = null; } catch (e) { fail(e); } });
+}
+const cuSec = (v) => (typeof v === 'number' ? (v > 1e11 ? Math.floor(v / 1000) : v) : Math.floor((Date.parse(v) || 0) / 1000));
+function cuTags() {
+  const c = S.cuCur, box = $('#cu-tags'); if (!box || !c) return;
+  const sug = ['VIP', 'Toptan', 'Hediye sever', 'Dikkat', 'Kurumsal'].filter((t) => !c.tags.includes(t));
+  box.innerHTML = c.tags.map((t) => `<span class="cu-tg on" style="--h:${cuHue(t)}">${esc(t)}<button type="button" data-cu-rm="${esc(t)}" aria-label="Kaldır">×</button></span>`).join('')
+    + sug.slice(0, 4).map((t) => `<button type="button" class="cu-tg add" data-cu-add="${esc(t)}">+ ${esc(t)}</button>`).join('')
+    + '<input id="cu-tnew" class="cu-tnew" placeholder="+ etiket" maxlength="24">';
+  const save = async (tags) => { try { const r = await api('PUT', `/api/customers/${encodeURIComponent(c.key)}`, { tags }); c.tags = r.tags; S.custs = null; cuTags(); } catch (e) { fail(e); } };
+  box.onclick = (e) => { const a = e.target.closest('[data-cu-add]'), r = e.target.closest('[data-cu-rm]'); if (a) save([...c.tags, a.dataset.cuAdd]); if (r) save(c.tags.filter((t) => t !== r.dataset.cuRm)); };
+  $('#cu-tnew').onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); const v = e.target.value.trim(); if (v && !c.tags.includes(v)) save([...c.tags, v]); };
+}
+// sipariş açıldığında müşterinin notu sarı kutuda (Trendyol çekmecesi ve özel sipariş penceresi)
+async function cuNoteInto(target, q) {
+  try {
+    const r = await api('GET', `/api/customers/find?${q}`), el = typeof target === 'string' ? $(target) : target; if (!el || !el.isConnected || !r?.key) return;
+    el.querySelector('.cu-inote')?.remove();
+    const d = document.createElement('div'); d.className = 'cu-inote' + (r.note ? '' : ' plain');
+    d.innerHTML = `${r.note ? `<span>📝 <b>Müşteri notu:</b> ${esc(r.note)}</span>` : ''}${(r.tags || []).map((t) => `<span class="cu-tg on" style="--h:${cuHue(t)}">${esc(t)}</span>`).join('')}<button type="button" class="cu-ilink" data-act="cust-open" data-key="${esc(r.key)}">${icon('user')} Müşteri kartı</button>`;
+    el.prepend(d);
+  } catch { /* müşteri bulunamadı */ }
+}
+
+// ---------- Yapılacaklar: panoda yapışkan notlar (sunucuda isler.py)
+const TD_CATS = { dukkan: ['Dükkan', '🛠️', '#FFE58A'], alis: ['Alışveriş', '🛒', '#B9E6FF'], mus: ['Müşteri', '👤', '#FFC9DD'], mak: ['Makine', '🖨️', '#C9F2D4'], ofis: ['Ofis', '💼', '#E3D7FF'], diger: ['Diğer', '📌', '#FFD8B5'] };
+const TD_DAYS = ['pazartesi', 'salı', 'çarşamba', 'perşembe', 'cuma', 'cumartesi', 'pazar'];
+const TD_MON = ['ocak', 'şubat', 'mart', 'nisan', 'mayıs', 'haziran', 'temmuz', 'ağustos', 'eylül', 'ekim', 'kasım', 'aralık'];
+async function loadTodos() { try { S.todos = await api('GET', '/api/todos'); } catch { S.todos = S.todos || []; } }
+const tdDate = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const tdAdd = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return tdDate(d); };
+// Hızlı yazım: "#alışveriş", "bugün/yarın/cuma", "25 kasım", "her pazartesi", "her ayın 1'i" tarih ve kategoriye çevrilir
+function tdParse(raw) {
+  let t = ` ${raw} `, cat = '', due = '', rep = '';
+  const lo = (x) => x.toLocaleLowerCase('tr');
+  t = t.replace(/#(\S+)/g, (m, w) => { const k = Object.entries(TD_CATS).find(([key, [l]]) => lo(l).startsWith(lo(w)) || key === lo(w)); if (k) cat = k[0]; return k ? ' ' : m; });
+  const R = (re, fn) => { t = t.replace(re, (...a) => { fn(...a); return ' '; }); };
+  R(/\sher\s+gün\s/i, () => { rep = 'daily'; });
+  R(new RegExp(`\\sher\\s+(${TD_DAYS.join('|')})\\s`, 'i'), (m, d) => { rep = 'weekly:' + TD_DAYS.indexOf(lo(d)); });
+  R(/\sher\s+ay(?:ın)?\s+(\d{1,2})(?:['’]?\S*)?\s/i, (m, n) => { rep = 'monthly:' + Math.min(31, +n); });
+  R(/\sher\s+ay\s/i, () => { rep = 'monthly:' + new Date().getDate(); });
+  R(/\sbugün\s/i, () => { due = tdAdd(0); });
+  R(/\s(?:yarın)\s/i, () => { due = tdAdd(1); });
+  R(/\söbür\s*gün\s/i, () => { due = tdAdd(2); });
+  R(/\shafta\s*sonu\s/i, () => { due = tdAdd((5 - new Date().getDay() + 7) % 7 || 7); });
+  R(new RegExp(`\\s(${TD_DAYS.join('|')})\\s`, 'i'), (m, d) => { const w = (TD_DAYS.indexOf(lo(d)) + 1) % 7, n = (w - new Date().getDay() + 7) % 7 || 7; due = tdAdd(n); });
+  R(new RegExp(`\\s(\\d{1,2})[\\s./](\\d{1,2}|${TD_MON.join('|')})\\s`, 'i'), (m, dd, mm) => {
+    const mo = /^\d+$/.test(mm) ? +mm - 1 : TD_MON.indexOf(lo(mm)), now = new Date(); let d = new Date(now.getFullYear(), mo, +dd);
+    if (d < new Date(now.getFullYear(), now.getMonth(), now.getDate())) d = new Date(now.getFullYear() + 1, mo, +dd); due = tdDate(d); });
+  return { text: t.replace(/\s+/g, ' ').trim(), cat, due, rep };
+}
+function tdRepLabel(r) {
+  if (!r) return '';
+  if (r === 'daily') return 'her gün';
+  if (r.startsWith('weekly:')) return 'her ' + TD_DAYS[+r.split(':')[1]];
+  if (r.startsWith('monthly:')) return `her ayın ${r.split(':')[1]}'i`;
+  return '';
+}
+function tdDue(d) {
+  if (!d) return { t: '', cls: '' };
+  const n = Math.round((new Date(d + 'T00:00:00') - new Date(tdAdd(0) + 'T00:00:00')) / 86400000);
+  if (n < 0) return { t: `${-n} gün gecikti`, cls: 'late' };
+  if (n === 0) return { t: 'bugün', cls: 'today' };
+  if (n === 1) return { t: 'yarın', cls: 'soon' };
+  if (n < 7) return { t: TD_DAYS[(new Date(d + 'T00:00:00').getDay() + 6) % 7], cls: '' };
+  return { t: new Date(d + 'T00:00:00').toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }), cls: '' };
+}
+const tdRot = (id) => (((id * 37) % 9) - 4) * 0.55;
+function tdNote(t, i) {
+  const [cl, ic, col] = TD_CATS[t.cat] || TD_CATS.diger, du = tdDue(t.due), rp = tdRepLabel(t.rep), done = !!t.done_at;
+  return `<article class="sticky${done ? ' done' : ''}${S.tdFresh === t.id ? ' drop' : ''}" data-td="${t.id}" style="--c:${col};--r:${tdRot(t.id)}deg;--i:${Math.min(i, 14)}" tabindex="0">
+    <button type="button" class="td-ck" data-act="td-done" data-id="${t.id}" aria-label="${done ? 'Geri al' : 'Yapıldı'}" title="${done ? 'Geri al' : 'Yapıldı'}"></button>
+    <b>${esc(t.text)}</b>
+    <small>${ic} ${cl}${du.t ? ` · <span class="td-due ${du.cls}">${du.t}</span>` : ''}${rp ? ` · 🔁 ${rp}` : ''}</small>
+    ${t.link_kind ? `<button type="button" class="td-lnk" data-act="td-link" data-id="${t.id}">🔗 ${esc(t.link_label || 'Bağlı kayıt')}</button>` : ''}
+    ${done ? '<span class="td-stamp">✓</span>' : ''}</article>`;
+}
+function todoBody() {
+  const all = S.todos || [], open = all.filter((t) => !t.done_at), f = S.tdF || '';
+  const list = (S.tdDone ? all.filter((t) => t.done_at) : open).filter((t) => !f || t.cat === f);
+  const cats = Object.entries(TD_CATS).filter(([k]) => open.some((t) => t.cat === k));
+  return `<div class="td-top"><div class="td-add"><span class="td-plus">+</span><input id="td-in" maxlength="200" placeholder="Yeni iş yaz, Enter… (ör. “kargo poşeti al yarın #alışveriş”, “her pazartesi sayım yap”)" aria-label="Yeni iş" autocomplete="off"><span class="td-pv" id="td-pv"></span></div>
+      <div class="td-f">${cats.length > 1 || f ? `<button type="button" class="${!f ? 'on' : ''}" data-act="td-f" data-v="">Hepsi</button>${cats.map(([k, [l, ic]]) => `<button type="button" class="${f === k ? 'on' : ''}" data-act="td-f" data-v="${k}">${ic} ${l}</button>`).join('')}` : ''}
+        ${all.some((t) => t.done_at) ? `<button type="button" class="${S.tdDone ? 'on' : ''}" data-act="td-donev">${S.tdDone ? '← Açık işler' : 'Bitenler'}</button>` : ''}</div></div>
+    <div class="td-board">${list.length ? list.map(tdNote).join('') : `<p class="td-empty">${S.tdDone ? 'Son iki günde biten iş yok.' : f ? 'Bu kategoride iş yok.' : 'Yapılacak iş yok. Yukarıya yazıp Enter’a basın.'}</p>`}</div>`;
+}
+function todoHTML() {
+  const n = (S.todos || []).filter((t) => !t.done_at).length;
+  return `<section class="panel td-sec"><div class="panel-h"><h2>Yapılacaklar <span class="td-n" id="td-n" ${n ? '' : 'hidden'}>${n}</span></h2></div>
+    <div class="panel-b" id="td-body">${S.todos ? todoBody() : '<div class="pick-item skel" style="height:120px"></div>'}</div></section>`;
+}
+function fillTodo() {
+  const b = $('#td-body'); if (!b) return;
+  const keep = $('#td-in') && document.activeElement === $('#td-in') ? $('#td-in').value : null;
+  b.innerHTML = todoBody();
+  const n = (S.todos || []).filter((t) => !t.done_at).length, c = $('#td-n'); if (c) { c.textContent = n; c.hidden = !n; }
+  todoBind();
+  if (keep != null) { const i = $('#td-in'); i.value = keep; i.focus(); tdPreview(); }
+  S.tdFresh = null;
+}
+function tdPreview() {
+  const pv = $('#td-pv'), v = $('#td-in')?.value || ''; if (!pv) return;
+  const p = tdParse(v), bits = [];
+  if (p.cat) bits.push(`${TD_CATS[p.cat][1]} ${TD_CATS[p.cat][0]}`);
+  if (p.due) bits.push(`📅 ${tdDue(p.due).t}`);
+  if (p.rep) bits.push(`🔁 ${tdRepLabel(p.rep)}`);
+  pv.innerHTML = bits.map((b) => `<span>${b}</span>`).join('');
+}
+function todoBind() {
+  const i = $('#td-in'); if (!i) return;
+  i.oninput = tdPreview;
+  i.onkeydown = async (e) => {
+    if (e.key !== 'Enter') return; e.preventDefault();
+    const p = tdParse(i.value); if (!p.text) return;
+    i.disabled = true;
+    try { const t = await api('POST', '/api/todos', { ...p, cat: p.cat || (S.tdF || 'diger') }); S.todos = [t, ...(S.todos || [])]; S.tdFresh = t.id; S.tdDone = false; i.value = ''; fillTodo(); $('#td-in')?.focus(); }
+    catch (err) { fail(err); i.disabled = false; }
+  };
+  $$('#td-body .sticky').forEach((n) => n.addEventListener('click', (e) => { if (e.target.closest('button')) return; openTodoEdit(+n.dataset.td); }));
+}
+async function tdToggle(id, el) {
+  const t = (S.todos || []).find((x) => x.id === id); if (!t) return;
+  const done = !t.done_at, note = el?.closest('.sticky');
+  if (done && note && !REDUCED()) { note.classList.add(t.rep ? 'again' : 'fly'); await new Promise((r) => setTimeout(r, t.rep ? 650 : 560)); }
+  try {
+    const r = await api('PUT', `/api/todos/${id}`, { done });
+    Object.assign(t, r);
+    if (done && r.rep) toast(`Yapıldı · sonraki: ${tdDue(r.due).t}`);
+    else if (done) toast('Yapıldı', { action: 'Geri al', onAction: async () => { Object.assign(t, await api('PUT', `/api/todos/${id}`, { done: false })); fillTodo(); } });
+    fillTodo();
+    if (done && FX() && !(S.todos || []).some((x) => !x.done_at)) confetti();
+  } catch (e) { fail(e); fillTodo(); }
+}
+// iş düzenle / bir kayda bağlı yeni iş (sipariş, özel sipariş, ürün)
+function openTodoEdit(id, preset = {}) {
+  const t = id ? { ...(S.todos || []).find((x) => x.id === id) } : { text: '', cat: preset.cat || 'diger', due: '', rep: '', ...preset };
+  let cat = t.cat || 'diger', rep = t.rep || '';
+  const repOpts = [['', 'Tekrarlamaz'], ['daily', 'Her gün'], ...TD_DAYS.map((d, i) => [`weekly:${i}`, `Her ${d}`]), ...[1, 5, 10, 15, 20, 25, 28].map((n) => [`monthly:${n}`, `Her ayın ${n}'i`])];
+  if (rep && !repOpts.some(([k]) => k === rep)) repOpts.push([rep, tdRepLabel(rep)]);
+  // başka bir pencere (ürün, özel sipariş) açıksa onu kapatmadan üstünde aç
+  const overModal = !!$('#modal-root').children.length;
+  let ovl = null;
+  const html = `<div class="modal-h"><h2>${id ? 'Yapılacak iş' : 'Yeni yapılacak'}</h2><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+    <div class="modal-b td-ed">
+      <div class="td-ed-note" id="tde-note" style="--c:${TD_CATS[cat][2]}"><textarea id="tde-t" rows="2" maxlength="200" placeholder="Ne yapılacak?">${esc(t.text || '')}</textarea></div>
+      <div class="field"><span>Kategori</span><div class="td-cats" id="tde-cat">${Object.entries(TD_CATS).map(([k, [l, ic, c]]) => `<button type="button" data-v="${k}" style="--c:${c}" class="${cat === k ? 'on' : ''}">${ic} ${l}</button>`).join('')}</div></div>
+      <div class="row"><label class="field"><span>Tarih</span><input class="input" type="date" id="tde-d" value="${esc(t.due || '')}"></label>
+        <label class="field"><span>Tekrar</span><select class="input" id="tde-r">${repOpts.map(([k, l]) => `<option value="${k}"${rep === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label></div>
+      <div class="termin-quick">${[[0, 'Bugün'], [1, 'Yarın'], [7, '1 hafta sonra']].map(([n, l]) => `<button type="button" class="chip" data-tde-d="${n}">${l}</button>`).join('')}<button type="button" class="chip" data-tde-d="">Tarihsiz</button></div>
+      ${t.link_kind ? `<div class="td-ed-link">🔗 Bağlı: <b>${esc(t.link_label || '')}</b></div>` : ''}
+    </div>
+    <div class="modal-f">${id ? `<button class="btn btn-ghost" id="tde-del">${icon('trash')} Sil</button>` : ''}<div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" id="tde-ok">${id ? 'Kaydet' : 'Ekle'}</button></div></div>`;
+  const close = () => { if (ovl) { ovl.classList.add('closing'); setTimeout(() => ovl.remove(), 180); document.removeEventListener('keydown', esc2, true); } else closeModal(); };
+  const esc2 = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  if (overModal) {
+    ovl = document.createElement('div'); ovl.className = 'td-ovl';
+    ovl.innerHTML = `<div class="modal td-modal" role="dialog" aria-modal="true">${html}</div>`;
+    document.body.appendChild(ovl);
+    ovl.addEventListener('click', (e) => { if (e.target === ovl || e.target.closest('[data-act="close"]')) { e.stopPropagation(); close(); } });
+    document.addEventListener('keydown', esc2, true);
+  } else openModal(html, 'td-modal');
+  $('#tde-cat').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; cat = b.dataset.v; $$('#tde-cat button').forEach((x) => x.classList.toggle('on', x === b)); $('#tde-note').style.setProperty('--c', TD_CATS[cat][2]); };
+  $$('[data-tde-d]').forEach((b) => (b.onclick = () => { $('#tde-d').value = b.dataset.tdeD === '' ? '' : tdAdd(+b.dataset.tdeD); }));
+  $('#tde-t').focus();
+  $('#tde-t').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#tde-ok').click(); } };
+  $('#tde-del')?.addEventListener('click', async () => { try { await api('DELETE', `/api/todos/${id}`); S.todos = S.todos.filter((x) => x.id !== id); close(); toast('İş silindi'); fillTodo(); } catch (e) { fail(e); } });
+  $('#tde-ok').onclick = async () => {
+    const body = { text: $('#tde-t').value, cat, due: $('#tde-d').value, rep: $('#tde-r').value };
+    if (!id && preset.link_kind) Object.assign(body, { link_kind: preset.link_kind, link_id: preset.link_id, link_label: preset.link_label });
+    try {
+      const r = id ? await api('PUT', `/api/todos/${id}`, body) : await api('POST', '/api/todos', body);
+      if (!S.todos) await loadTodos(); else if (id) Object.assign(S.todos.find((x) => x.id === id), r); else { S.todos.unshift(r); S.tdFresh = r.id; }
+      close(); toast(id ? 'Kaydedildi' : 'Yapılacaklara eklendi'); fillTodo();
+    } catch (e) { fail(e); }
+  };
+}
+async function tdOpenLink(id) {
+  const t = (S.todos || []).find((x) => x.id === id); if (!t) return;
+  if (t.link_kind === 'ty') return openOrderFromNotif(t.link_id);
+  if (t.link_kind === 'p') return openProductEditor(+t.link_id);
+  if (t.link_kind === 'co') { if (!S.orders?.some((o) => o.id === +t.link_id)) await loadOrders(); if (S.orders.some((o) => o.id === +t.link_id)) openOrderEditor(+t.link_id); else toast('Özel sipariş bulunamadı'); }
+}
+
 // ---------- Pano: yeni siparişler akışı (en yeni üstte, gün gün) + bugünün özeti
 const NO = { at: 0, busy: false, seen: null };
 async function dashNewLoad(force) {
@@ -6800,7 +7270,7 @@ PAGES.ayarlar = {
         <div class="field"><span>Mod</span><div class="seg" id="theme-seg">${[['auto', 'Sistem'], ['light', 'Açık'], ['dark', 'Koyu']].map(([v, l]) => `<button data-v="${v}" class="${theme === v ? 'on' : ''}">${l}</button>`).join('')}</div></div>
         <div class="field"><span>Koyu tema tonu</span><div class="swatches" id="tone-pick">${THEME_TONES.map(([v, l, c]) => `<button type="button" class="tone-sw${themeOpt('tone') === v ? ' on' : ''}" data-v="${v}" style="--c1:${c[0]};--c2:${c[1]};--c3:${c[2]}"><i></i><span>${l}</span></button>`).join('')}</div></div>
         <div class="row">
-          <div class="field"><span>Yoğunluk</span><div class="seg" id="density-seg">${[['comfy', 'Rahat'], ['compact', 'Sıkı']].map(([v, l]) => `<button data-v="${v}" class="${uiOpt('density', 'comfy') === v ? 'on' : ''}">${l}</button>`).join('')}</div><small>Sıkı: satırlar ve boşluklar daralır, ekrana daha çok şey sığar.</small></div>
+          <div class="field"><span>Yoğunluk <span class="faint">(Sıkı: aynı ekrana yaklaşık 1,5 kat fazla satır; Ctrl+K → “Sıkı görünüm”)</span></span><div class="seg" id="density-seg">${[['comfy', 'Rahat'], ['compact', 'Sıkı']].map(([v, l]) => `<button data-v="${v}" class="${uiOpt('density', 'comfy') === v ? 'on' : ''}">${l}</button>`).join('')}</div><small>Sıkı: satırlar ve boşluklar daralır, ekrana daha çok şey sığar.</small></div>
           <div class="field"><span>Yazı ve arayüz boyutu</span><div class="seg" id="uisize-seg">${UI_SIZES.map(([v, l]) => `<button data-v="${v}" class="${uiOpt('uisize', '100') === v ? 'on' : ''}">${l}</button>`).join('')}</div></div>
         </div>
         <div class="field"><span>Vurgu rengi</span><div class="swatches" id="accent-pick">${THEME_ACCENTS.map(([v, l, c]) => `<button type="button" class="acc-sw${themeOpt('accent') === v ? ' on' : ''}" data-v="${v}" style="--c:${c}" aria-label="${l}"><i></i><span>${l}</span></button>`).join('')}</div></div>
@@ -6895,12 +7365,12 @@ function advancedHTML() {
   return `<details class="panel adv" id="adv" ${S.advOpen ? 'open' : ''}>
     <summary><h2>${icon('gear')} Görünüm ve düzen <span class="faint">(gelişmiş)</span></h2><span class="muted">bu cihaza kaydedilir</span></summary>
     <div class="adv-body">
-      <section class="adv-g"><h3>Sol menü</h3><p class="muted">Sürükleyin ya da oklarla sıralayın; gizlenen sayfalar Ctrl+K aramasından ve adresinden yine açılır.</p>
+      <section class="adv-g"><h3>Menü sayfaları</h3><p class="muted">Sayfalar soldaki gruplarda (Siparişler, Üretim, Ürünler, Para) üstte sekme olarak durur. Buradaki sıra grup içindeki sekme sırasıdır; gizlenen sayfalar sekmelerde görünmez, Ctrl+K aramasından yine açılır.</p>
         <ol class="adv-nav" id="adv-nav">${nav.map((n, i) => `<li draggable="true" data-r="${n.r}" class="${hidden.includes(n.r) ? 'off' : ''}"><span class="grip" aria-hidden="true">⠿</span>${icon(n.icon)}<b>${n.label}</b>
           <span class="spacer"></span><button class="icon-btn" data-act="adv-nav-move" data-r="${n.r}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Yukarı">↑</button><button class="icon-btn" data-act="adv-nav-move" data-r="${n.r}" data-d="1" ${i === nav.length - 1 ? 'disabled' : ''} aria-label="Aşağı">↓</button>
           ${inv('nav.hidden', n.r, 'Göster')}</li>`).join('')}</ol>
         <div class="adv-row">${sw('nav.badges', 'Menüde sayı rozetleri')}</div>
-        <div class="field"><span>Telefonda alt çubuktaki 4 sayfa</span><div class="adv-tabs">${[0, 1, 2, 3].map((i) => `<select class="input" data-tab-i="${i}">${NAV.map((n) => `<option value="${n.r}" ${tabs[i] === n.r ? 'selected' : ''}>${n.label}</option>`).join('')}</select>`).join('')}</div></div>
+
       </section>
       <section class="adv-g"><h3>Üst çubuk</h3><div class="adv-sw">${grp('top', UI_LABELS.top)}</div>
         ${printers.length ? `<div class="field"><span>Barda gösterilecek yazıcılar</span><div class="adv-sw cols">${printers.map((n) => inv('top.pbarHidden', n, esc(n))).join('')}</div></div>` : ''}</section>
@@ -7204,7 +7674,7 @@ const ACTIONS = {
   'tyo-tab': (el) => { S.tyo.tab = el.dataset.v; S.tyo.sel.clear(); tyoRedraw(); },
   'tyo-clear': async () => { const f = S.tyo, reload = f.rD !== 'month'; Object.assign(f, { q: '', cat: 'all', pid: null, rA: 'all', rD: 'month' }); if (reload) { try { await loadTyOrders(); } catch (e) { fail(e); } } tyoRedraw(); },
   'tyo-sync': async (el) => { el.disabled = true; try { const r = await api('POST', '/api/trendyol/sync'); await Promise.all([loadTyOrders(), loadProducts()]); toast(r.deducted ? `Eşitlendi · ${r.deducted} adet stoktan düştü` : 'Eşitlendi'); render(); } catch (e) { fail(e); el.disabled = false; } },
-  'tyo-pick': (el) => tyoPick([el.dataset.id]),
+  'tyo-pick': (el) => ocGuard(el, () => tyoPick([el.dataset.id])),
   'oc-pmenu': (el, e) => { e?.stopPropagation?.(); ocMenu(el); },
   'tyo-pick-sel': () => tyoPick(tyoFiltered().filter((p) => p.can_pick && S.tyo.sel.has(p.package_id)).map((p) => p.package_id)),
   'tyo-match': async (el) => {
@@ -7324,6 +7794,28 @@ const ACTIONS = {
   },
   'np-mach-go': () => { const c = $('#np-printers'); if (!c) return; c.scrollIntoView({ behavior: REDUCED() ? 'auto' : 'smooth', block: 'center' }); c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash'); },
   'po-open': (el) => openOrderFromNotif(el.dataset.no),
+  'pk-item': (el, e) => { if (e?.target.closest('[data-act="pk-adj"],[data-act="pk-buy"]')) return; openPackItem(el.dataset.id ? +el.dataset.id : null); },
+  'pk-count': () => openPackCount(),
+  'pk-adj': (el, e) => { e.stopPropagation(); const card = el.closest('.pk-card'); card?.classList.remove('bump'); void card?.offsetWidth; card?.classList.add('bump'); pkDo('POST', `/api/pack/items/${el.dataset.id}/adjust`, { delta: +el.dataset.d, reason: 'manual' }); },
+  'pk-buy': (el, e) => { e.stopPropagation(); const x = S.pack.items.find((y) => y.id === +el.dataset.id); const v = parseFloat(String(prompt(`${x.name}: kaç ${x.unit} aldınız?`, '') || '').replace(',', '.')); if (v > 0) pkDo('POST', `/api/pack/items/${x.id}/adjust`, { delta: v, reason: 'buy' }, `${x.name} +${pkNum(v)}${pkU(x.unit)}`); },
+  'pk-rdel': (el) => pkDo('DELETE', `/api/pack/rules/${el.dataset.id}`, undefined, 'Kural silindi'),
+  'pk-radd': () => { const sc = $('#pkr-scope').value; pkDo('POST', '/api/pack/rules', { scope: sc, target: sc === 'category' ? $('#pkr-cat').value : sc === 'product' ? $('#pkr-prod').value : null, item_id: +$('#pkr-item').value, qty: $('#pkr-qty').value, per: $('#pkr-per').value }, 'Kural eklendi'); },
+  'pk-starter': async () => { for (const [name, ic, unit, min] of PK_STARTER) { try { S.pack = await api('POST', '/api/pack/items', { name, icon: ic, unit, min }); } catch (e) { return fail(e); } } await render(); openPackCount(); toast('Hazır liste eklendi; şimdi elinizdekileri sayın'); },
+  'cust-open': async (el, e) => {
+    e?.stopPropagation?.();
+    let k = el.dataset.key;
+    if (!k && (el.dataset.ty || el.dataset.co)) { try { k = (await api('GET', `/api/customers/find?${el.dataset.ty ? 'ty=' + encodeURIComponent(el.dataset.ty) : 'co=' + el.dataset.co}`)).key; } catch { /* */ } }
+    if (k) openCustomer(k); else toast('Müşteri kaydı bulunamadı');
+  },
+  'cust-merge': async (el) => { try { const r = await api('POST', '/api/customers/merge', { a: S.cuCur.key, b: el.dataset.b }); S.custs = null; toast('Müşteriler birleştirildi'); openCustomer(r.key); } catch (e) { fail(e); } },
+  'cust-nolink': async (el) => { try { await api('POST', '/api/customers/nolink', { a: S.cuCur.key, b: el.dataset.b }); el.closest('.cu-sug').remove(); toast('Farklı kişi olarak işaretlendi'); } catch (e) { fail(e); } },
+  'cust-unmerge': async (el) => { if (!confirm('Bu kayıt ayrı müşteri olarak ayrılsın mı?')) return; try { await api('POST', '/api/customers/unmerge', { key: el.dataset.k }); S.custs = null; openCustomer(S.cuCur.key); } catch (e) { fail(e); } },
+  'cust-co': () => { const c = S.cuCur; if (!c) return; const [fn, ...ln] = String(c.name || '').split(' '); if (!S.orders) loadOrders().catch(() => {}); openOrderEditor(); setTimeout(() => { $('#o-fn').value = fn || ''; $('#o-ln').value = ln.join(' '); if (c.phone) $('#o-phone').value = c.phone; $('#o-title')?.focus(); }, 50); },
+  'td-done': (el, e) => { e.stopPropagation(); tdToggle(+el.dataset.id, el); },
+  'td-link': (el, e) => { e.stopPropagation(); tdOpenLink(+el.dataset.id); },
+  'td-f': (el) => { S.tdF = el.dataset.v; fillTodo(); },
+  'td-donev': () => { S.tdDone = !S.tdDone; fillTodo(); },
+  'td-new': (el) => openTodoEdit(null, { link_kind: el.dataset.k, link_id: el.dataset.id, link_label: el.dataset.l, cat: el.dataset.c || 'diger' }),
   'no-all': () => { S.oSrc = 'ty'; try { localStorage.setItem('oSrc', 'ty'); } catch { /* */ } S.tyo.tab = 'new'; location.hash = '#/siparisler'; },
   'pf-sec': () => { S.pf.sec = !S.pf.sec; lsSet('pSec', S.pf.sec ? '1' : '0'); pfApply(); },
   psec: (el) => {
@@ -7532,7 +8024,7 @@ const ACTIONS = {
     const mode = $('#lp-mode button.on')?.dataset.v || 'browser';
     if (mode === 'browser') return printLabelPages([{ tracking: '7330000000000000', provider: 'Trendyol Express', name: 'Deneme Alıcı', address: 'Örnek Mahallesi Deneme Sokak No:1 Daire:2', neighborhood: 'Örnek Mah', district: 'Beykoz', city: 'İstanbul', order_number: '10000000000', boxes: 1 }]);
     el.disabled = true; try { await api('POST', '/api/label/test'); toast('Deneme etiketi yazıcıya gönderildi'); } catch (e) { fail(e); } finally { el.disabled = false; } },
-  'ty-label': (el) => tyLabel([el.dataset.id], el),
+  'ty-label': (el) => ocGuard(el, () => tyLabel([el.dataset.id], el)),
   'ty-label-all': (el) => { const ids = tyoFiltered().filter((p) => p.can_label && !p.label_at).map((p) => p.package_id); if (ids.length) tyLabel(ids, el); },
   'wk-save': async () => {
     const on = $('#wk-on').checked, t = $('#wk-time').value || '09:00';
@@ -8025,6 +8517,10 @@ const CK_ACTIONS = [
   { t: 'Toplu sonuç gir', s: 'T', icon: 'check', run: () => openBulkResults(), when: () => dueJobs().length > 0 },
   { t: 'Yeni ürün', icon: 'box', run: () => openProductEditor() },
   { t: 'Hata raporunu indir', icon: 'download', run: () => diagDownload() },
+  { t: 'Sıkı görünüm aç / kapat', icon: 'list', run: () => { const v = uiOpt('density', 'comfy') === 'compact' ? 'comfy' : 'compact'; try { localStorage.setItem('density', v); } catch { /* */ } applyTheme(); toast(v === 'compact' ? 'Sıkı görünüm açık' : 'Rahat görünüm'); } },
+  { t: 'Yapılacak ekle', icon: 'note', run: () => openTodoEdit(null) },
+  { t: 'Müşteriler', icon: 'users', run: () => { location.hash = '#/musteriler'; } },
+  { t: 'Ambalaj sayımı yap', icon: 'parcel', run: async () => { location.hash = '#/ambalaj'; setTimeout(() => S.pack?.items?.length && openPackCount(), 900); } },
   { t: 'Yeni özel sipariş', icon: 'clip', run: async () => { if (!S.orders?.length) await loadOrders().catch(() => {}); openOrderEditor(); } },
   { t: 'Diğer amaçlı kayıt ekle', icon: 'plus', run: () => openCompEditor(null, 'misc') },
   { t: 'Buybox şimdi kontrol et', icon: 'crown', run: () => { location.hash = '#/buybox'; setTimeout(() => $('[data-act="bb-check"]')?.click(), 700); } },

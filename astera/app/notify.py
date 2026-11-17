@@ -267,6 +267,38 @@ def _custom_orders():
     _sync_group("cord:", wanted)
 
 
+def _todos():
+    """Yapılacaklar: tarihi bugün ya da geçmiş açık işler."""
+    import datetime
+    import isler
+    try:
+        rows = isler.due_now()
+    except Exception:   # noqa — tablo henüz yoksa
+        return
+    today, wanted = datetime.date.today(), {}
+    for r in rows:
+        late = (today - datetime.date.fromisoformat(r["due"])).days
+        wanted[f"todo:{r['id']}:{r['due']}"] = ("todo", "warn" if late > 0 else "info", f"Yapılacak · {r['text'][:70]}",
+                                               "Bugün yapılacak" if late <= 0 else f"{late} gün gecikti", {"t": "go", "href": "#/"})
+    _sync_group("todo:", wanted)
+
+
+def _pack():
+    """Ambalaj: hazırlanan siparişler için düşüm, azalanlar için uyarı."""
+    import paket
+    try:
+        paket.apply()
+        low = paket.low()
+    except Exception:   # noqa — tablo henüz yoksa
+        return
+    wanted = {}
+    for r in low:
+        u = "" if r["unit"] == "adet" else " " + r["unit"]
+        wanted[f"pack:{r['id']}"] = ("stock", "bad" if r["stock"] <= 0 else "warn", f"Ambalaj azaldı · {r['name']}",
+                                     f"Elde {r['stock']:g}{u} kaldı (en az {r['min']:g}{u})", {"t": "go", "href": "#/ambalaj"})
+    _sync_group("pack:", wanted)
+
+
 def _questions():
     if not _db().execute("SELECT 1 FROM sqlite_master WHERE name='ty_questions'").fetchone():
         return
@@ -448,7 +480,7 @@ def tick(force=False):
     _last_tick = time.time()
     with _lock:
         try:
-            for f in (_printers, _jobs, _trendyol, _buybox, _stock, _idle, _weekly, _claims, _questions, _custom_orders):
+            for f in (_printers, _jobs, _trendyol, _buybox, _stock, _idle, _weekly, _claims, _questions, _custom_orders, _todos, _pack):
                 try:
                     f()
                 except Exception as e:  # noqa — bir kontrolün hatası diğerlerini durdurmasın

@@ -47,6 +47,9 @@ import etiket
 import finans
 import musteri
 import asama
+import isler
+import kisiler
+import paket
 import push
 import auth
 import updater
@@ -404,6 +407,12 @@ def init_db():
         asama.init(db, get_setting, set_setting)
         asama.migrate(db())
         asama.normalize_all()
+        isler.init(db)
+        isler.migrate(db())
+        kisiler.init(db)
+        kisiler.migrate(db())
+        paket.init(db)
+        paket.migrate(db())
         sync_part_grams()
         for col in ("order_date", "due_date"):   # eski örnek veriler tarihi saniye olarak yazmıştı → YYYY-AA-GG
             db().execute(f"UPDATE custom_orders SET {col}=date(CAST({col} AS INTEGER),'unixepoch','localtime') "
@@ -2528,6 +2537,133 @@ def api_orders(req):
     hist = asama.histories()
     return [asama.decorate(decorate_order(dict(r)), hist) for r in db().execute(
         ORDER_SELECT + " ORDER BY CASE WHEN o.due_date IS NULL OR o.due_date='' THEN 1 ELSE 0 END, o.due_date, o.id DESC")]
+
+
+@route("GET", "/api/pack")
+def api_pack(req):
+    paket.apply()
+    return paket.state()
+
+
+def _pk(fn, *a):
+    try:
+        return fn(*a)
+    except ValueError as e:
+        raise ApiError(str(e))
+
+
+@route("POST", "/api/pack/items")
+def api_pack_item_add(req):
+    _pk(paket.save_item, req.json())
+    return paket.state()
+
+
+@route("PUT", "/api/pack/items/{iid}")
+def api_pack_item_upd(req, iid):
+    _pk(paket.save_item, req.json(), int(iid))
+    return paket.state()
+
+
+@route("DELETE", "/api/pack/items/{iid}")
+def api_pack_item_del(req, iid):
+    paket.archive(int(iid))
+    return paket.state()
+
+
+@route("POST", "/api/pack/items/{iid}/adjust")
+def api_pack_adjust(req, iid):
+    b = req.json()
+    _pk(paket.adjust, int(iid), b.get("delta") or 0, b.get("reason") or "manual", b.get("ref"))
+    return paket.state()
+
+
+@route("POST", "/api/pack/count")
+def api_pack_count(req):
+    n = paket.count(req.json().get("values"))
+    return dict(paket.state(), changed=n)
+
+
+@route("POST", "/api/pack/rules")
+def api_pack_rule(req):
+    _pk(paket.save_rule, req.json())
+    return paket.state()
+
+
+@route("DELETE", "/api/pack/rules/{rid}")
+def api_pack_rule_del(req, rid):
+    paket.delete_rule(int(rid))
+    return paket.state()
+
+
+@route("GET", "/api/customers")
+def api_customers(req):
+    return kisiler.listing()
+
+
+@route("GET", "/api/customers/find")
+def api_customer_find(req):
+    return kisiler.find(ty=req.query.get("ty"), co=req.query.get("co")) or {}
+
+
+@route("GET", "/api/customers/{key}")
+def api_customer(req, key):
+    try:
+        return kisiler.detail(unquote(key))
+    except LookupError as e:
+        raise ApiError(str(e), 404)
+
+
+@route("PUT", "/api/customers/{key}")
+def api_customer_meta(req, key):
+    b = req.json()
+    return kisiler.save_meta(unquote(key), b.get("note"), b.get("tags"))
+
+
+@route("POST", "/api/customers/merge")
+def api_customer_merge(req):
+    b = req.json()
+    return {"key": kisiler.merge(b.get("a"), b.get("b"))}
+
+
+@route("POST", "/api/customers/nolink")
+def api_customer_nolink(req):
+    b = req.json()
+    kisiler.nolink(b.get("a"), b.get("b"))
+    return {"ok": True}
+
+
+@route("POST", "/api/customers/unmerge")
+def api_customer_unmerge(req):
+    kisiler.unmerge(req.json().get("key"))
+    return {"ok": True}
+
+
+@route("GET", "/api/todos")
+def api_todos(req):
+    return isler.items()
+
+
+@route("POST", "/api/todos")
+def api_todo_add(req):
+    try:
+        return isler.create(req.json())
+    except ValueError as e:
+        raise ApiError(str(e))
+
+
+@route("PUT", "/api/todos/{tid}")
+def api_todo_upd(req, tid):
+    try:
+        return isler.update(int(tid), req.json())
+    except ValueError as e:
+        raise ApiError(str(e))
+    except LookupError as e:
+        raise ApiError(str(e), 404)
+
+
+@route("DELETE", "/api/todos/{tid}")
+def api_todo_del(req, tid):
+    return isler.delete(int(tid))
 
 
 @route("GET", "/api/order-flow")

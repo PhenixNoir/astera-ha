@@ -1,5 +1,13 @@
 # Sürüm notları
 
+## 1.11.0
+- Yeni menü: solda 6 ikonlu ince şerit (Pano, Siparişler, Üretim, Ürünler, Para, Ayarlar); grubun sayfaları üstte sekme. Hazırla artık Siparişler'in sekmesi; Trendyol ve Özel siparişler ayrı sekmeler. Telefonda alt çubukta aynı gruplar.
+- Pano: yapışkan notlu yapılacaklar listesi. Hızlı yazım ("yarın", "cuma", "#alışveriş", "her pazartesi"), tekrarlayan işler, siparişe/ürüne bağlama, tarihi gelince bildirim.
+- Müşteriler: Trendyol ve özel sipariş müşterileri tek listede; müşteri kartında tüm geçmiş, not ve etiketler. Aynı isimli kayıtlar için "aynı kişi mi?" önerisi ve birleştirme. Müşteri notu siparişte sarı kutuda görünür.
+- Ambalaj stoğu (Üretim → Ambalaj): malzemeler, kurallar (her sipariş / kategori / ürün), sipariş hazırlanınca otomatik düşüm, sayım ekranı, azalınca uyarı.
+- Sıkı görünüm (Yoğunluk: Sıkı) yeni ekranları da kapsıyor; Ctrl+K → "Sıkı görünüm".
+- Sipariş ayrıntısı: 3+ kalemli siparişte kalem kontrol listesi ve "N kalem daha" balonu; işaretlenmeden hazırla/barkod uyarır.
+
 ## 1.10.0
 - Özel siparişler: aşamaları artık sen belirliyorsun. "Aşamaları düzenle" ile ekle, sil, yeniden adlandır, renk/simge seç, sürükleyerek sırala; hazır şablonlar (Basit, Kapora ile, Kargo ile, Atölye). İçinde sipariş olan aşama silinirken siparişler seçtiğin aşamaya taşınır.
 - Her aşama bir türe bağlı ("Ne demek": Bekliyor / Üretimde / Hazır / Kapandı); plan, kâr ve ciro buna göre çalışmaya devam eder.
