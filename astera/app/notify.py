@@ -299,6 +299,25 @@ def _pack():
     _sync_group("pack:", wanted)
 
 
+def _maint():
+    """Makine bakımı: ayarlanan saat ya da gün sınırı doldu."""
+    import makine
+    try:
+        due = makine.due()
+    except Exception:   # noqa — tablo henüz yoksa
+        return
+    wanted = {}
+    for m in due:
+        bits = []
+        if "hours" in m["due"]:
+            bits.append(f"son bakımdan beri {m['since_hours']:g} saat baskı (sınır {m['interval_hours']:g})")
+        if "days" in m["due"]:
+            bits.append(f"{m['since_days']} gün geçti (sınır {m['interval_days']})")
+        key = f"maint:{m['name']}:{(m['last'] or {}).get('id', 0)}"
+        wanted[key] = ("printer", "warn", f"Bakım zamanı · {m['name']}", " · ".join(bits), {"t": "go", "href": "#/makineler"})
+    _sync_group("maint:", wanted)
+
+
 def _questions():
     if not _db().execute("SELECT 1 FROM sqlite_master WHERE name='ty_questions'").fetchone():
         return
@@ -480,7 +499,7 @@ def tick(force=False):
     _last_tick = time.time()
     with _lock:
         try:
-            for f in (_printers, _jobs, _trendyol, _buybox, _stock, _idle, _weekly, _claims, _questions, _custom_orders, _todos, _pack):
+            for f in (_printers, _jobs, _trendyol, _buybox, _stock, _idle, _weekly, _claims, _questions, _custom_orders, _todos, _pack, _maint):
                 try:
                     f()
                 except Exception as e:  # noqa — bir kontrolün hatası diğerlerini durdurmasın

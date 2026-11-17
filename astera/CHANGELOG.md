@@ -1,5 +1,12 @@
 # Sürüm notları
 
+## 1.12.0
+- Makineler (Üretim → Makineler): her yazıcının toplam baskı saati, son 30 gün kullanımı ve 6 aylık grafiği. Bakım kaydı: tarih, tür (bakım, parça değişimi, temizlik, yağlama, kalibrasyon, onarım), parça, not ve masraf; toplam / yıllık / saat başı masraf. Saat ya da gün aralığıyla bakım hatırlatması, uygulama öncesi saatler için başlangıç saati.
+- Sağ tık menüleri her yerde: Trendyol ve özel siparişler, ürünler, baskılar, makine şeridi, yapılacaklar, ambalaj, makaralar, Hazırla, müşteriler, iadeler, sorular, bildirimler, plan. Telefonda basılı tutunca açılır; Shift + sağ tık tarayıcının menüsü.
+- Pano: ambalaj stoğu şeridi; panoda gösterilecek malzemeleri seçebilirsin.
+- Ambalaj: malzeme silme görünür oldu, "Geri al" ile geri gelir.
+- Sipariş ayrıntısı: ürün sayısı ve toplam adet kutusu; "kalem" yerine "ürün".
+
 ## 1.11.0
 - Yeni menü: solda 6 ikonlu ince şerit (Pano, Siparişler, Üretim, Ürünler, Para, Ayarlar); grubun sayfaları üstte sekme. Hazırla artık Siparişler'in sekmesi; Trendyol ve Özel siparişler ayrı sekmeler. Telefonda alt çubukta aynı gruplar.
 - Pano: yapışkan notlu yapılacaklar listesi. Hızlı yazım ("yarın", "cuma", "#alışveriş", "her pazartesi"), tekrarlayan işler, siparişe/ürüne bağlama, tarihi gelince bildirim.

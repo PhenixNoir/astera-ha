@@ -50,6 +50,7 @@ import asama
 import isler
 import kisiler
 import paket
+import makine
 import push
 import auth
 import updater
@@ -413,6 +414,8 @@ def init_db():
         kisiler.migrate(db())
         paket.init(db)
         paket.migrate(db())
+        makine.init(db, get_setting)
+        makine.migrate(db())
         sync_part_grams()
         for col in ("order_date", "due_date"):   # eski örnek veriler tarihi saniye olarak yazmıştı → YYYY-AA-GG
             db().execute(f"UPDATE custom_orders SET {col}=date(CAST({col} AS INTEGER),'unixepoch','localtime') "
@@ -2539,6 +2542,41 @@ def api_orders(req):
         ORDER_SELECT + " ORDER BY CASE WHEN o.due_date IS NULL OR o.due_date='' THEN 1 ELSE 0 END, o.due_date, o.id DESC")]
 
 
+@route("GET", "/api/machines")
+def api_machines(req):
+    return makine.summary()
+
+
+@route("POST", "/api/machines/maint")
+def api_maint_add(req):
+    try:
+        makine.add(req.json())
+    except ValueError as e:
+        raise ApiError(str(e))
+    return makine.summary()
+
+
+@route("PUT", "/api/machines/maint/{mid}")
+def api_maint_upd(req, mid):
+    try:
+        makine.update(int(mid), req.json())
+    except ValueError as e:
+        raise ApiError(str(e))
+    return makine.summary()
+
+
+@route("DELETE", "/api/machines/maint/{mid}")
+def api_maint_del(req, mid):
+    makine.delete(int(mid))
+    return makine.summary()
+
+
+@route("PUT", "/api/machines/cfg/{name}")
+def api_machine_cfg(req, name):
+    makine.set_cfg(unquote(name), req.json())
+    return makine.summary()
+
+
 @route("GET", "/api/pack")
 def api_pack(req):
     paket.apply()
@@ -2567,6 +2605,18 @@ def api_pack_item_upd(req, iid):
 @route("DELETE", "/api/pack/items/{iid}")
 def api_pack_item_del(req, iid):
     paket.archive(int(iid))
+    return paket.state()
+
+
+@route("PUT", "/api/pack/items/{iid}/pin")
+def api_pack_pin(req, iid):
+    paket.set_pin(int(iid), bool(req.json().get("pin")))
+    return paket.state()
+
+
+@route("POST", "/api/pack/items/{iid}/restore")
+def api_pack_item_restore(req, iid):
+    paket.restore(int(iid))
     return paket.state()
 
 

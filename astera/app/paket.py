@@ -36,6 +36,8 @@ def migrate(c):
     c.execute("""CREATE TABLE IF NOT EXISTS pack_log (id INTEGER PRIMARY KEY AUTOINCREMENT, item_id INTEGER, delta REAL, stock_after REAL,
                  reason TEXT, ref TEXT, created_at INTEGER)""")
     c.execute("CREATE TABLE IF NOT EXISTS pack_done (ref TEXT PRIMARY KEY, at INTEGER)")
+    if "pin" not in {r[1] for r in c.execute("PRAGMA table_info(pack_items)")}:
+        c.execute("ALTER TABLE pack_items ADD COLUMN pin INTEGER DEFAULT 0")
     if fresh:
         _mark_existing(c)
 
@@ -84,8 +86,17 @@ def save_item(b, iid=None):
 
 
 def archive(iid):
+    """Siler (arşive alır); kuralları saklanır ki "Geri al" ile her şey geri gelsin."""
     _db().execute("UPDATE pack_items SET archived=1 WHERE id=?", (iid,))
-    _db().execute("DELETE FROM pack_rules WHERE item_id=?", (iid,))
+
+
+def set_pin(iid, on):
+    """Panodaki ambalaj şeridinde göster / gizle."""
+    _db().execute("UPDATE pack_items SET pin=? WHERE id=?", (1 if on else 0, iid))
+
+
+def restore(iid):
+    _db().execute("UPDATE pack_items SET archived=0 WHERE id=?", (iid,))
 
 
 def _log(iid, delta, reason, ref=None):
@@ -124,7 +135,7 @@ def log(limit=40):
 # ---------------------------------------------------------------- kurallar
 
 def rules():
-    return [dict(r) for r in _db().execute("SELECT * FROM pack_rules ORDER BY CASE scope WHEN 'order' THEN 0 WHEN 'category' THEN 1 ELSE 2 END, target, id")]
+    return [dict(r) for r in _db().execute("SELECT * FROM pack_rules WHERE item_id IN (SELECT id FROM pack_items WHERE archived=0) ORDER BY CASE scope WHEN 'order' THEN 0 WHEN 'category' THEN 1 ELSE 2 END, target, id")]
 
 
 def save_rule(b):
