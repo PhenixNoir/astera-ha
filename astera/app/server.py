@@ -46,6 +46,7 @@ import yedek
 import etiket
 import finans
 import musteri
+import asama
 import push
 import auth
 import updater
@@ -400,6 +401,9 @@ def init_db():
         finans.migrate(db())
         musteri.migrate(db())
         migrate()
+        asama.init(db, get_setting, set_setting)
+        asama.migrate(db())
+        asama.normalize_all()
         sync_part_grams()
         for col in ("order_date", "due_date"):   # eski örnek veriler tarihi saniye olarak yazmıştı → YYYY-AA-GG
             db().execute(f"UPDATE custom_orders SET {col}=date(CAST({col} AS INTEGER),'unixepoch','localtime') "
@@ -1835,6 +1839,7 @@ def _create_job(req):
              _order_label(o), start, start + minutes * 60, json.dumps(alloc) if alloc else None))
         db().execute("UPDATE custom_orders SET status='printing', printer=COALESCE(NULLIF(?,''),printer), "
                      "print_minutes=COALESCE(print_minutes,?), updated_at=? WHERE id=?", (printer, minutes, now(), oid))
+        asama.sync(oid)
         return job_rows("j.id=?", (cur.lastrowid,))[0]
 
     pid = int(b.get("product_id") or 0)
@@ -2067,6 +2072,7 @@ def api_job_change(req, jid):
                      (oid, qty, _order_label(o), jid))
         old = j["order_id"]
         db().execute("UPDATE custom_orders SET status='printing', updated_at=? WHERE id=? AND status IN ('new','ready')", (now(), oid))
+        asama.sync(oid)
         if old and old != oid:
             order_after_job(old)
         return job_rows("j.id=?", (jid,))[0]
@@ -2304,7 +2310,7 @@ def api_plan(req):
 
 ORDER_FIELDS = ["first_name", "last_name", "phone", "title", "details", "quantity", "price", "paid",
                 "order_date", "due_date", "print_minutes", "printer", "status", "image", "file_name", "resin", "grams", "print_type",
-                "items", "item_opts"]
+                "items", "item_opts", "tags", "delivery_method", "cargo_company", "tracking_no"]
 
 
 # --- özel sipariş kalemleri: [{id, name, qty, grams, price, color_hex, color_name, printed, parts:[{id, name, qty, grams, color_hex, color_name, printed}]}]
@@ -2447,6 +2453,7 @@ def order_after_job(oid):
                                COALESCE(SUM(status='printing'),0) busy FROM print_jobs WHERE order_id=?""", (oid,)).fetchone()
     st = "printing" if r["busy"] else ("ready" if r["done"] >= max(1, o["quantity"] or 1) else "new")
     db().execute("UPDATE custom_orders SET status=?, updated_at=? WHERE id=? AND status IN ('new','printing')", (st, now(), oid))
+    asama.sync(oid)
 
 
 def clean_order(b):
@@ -2474,6 +2481,13 @@ def clean_order(b):
             out[f] = v or None
     if out.get("order_date") and out.get("due_date") and out["due_date"] < out["order_date"]:
         raise ApiError("Termin, siparişin geldiği günden önce olamaz")
+    if "tags" in out:
+        out["tags"] = asama.clean_tags(out["tags"])
+    if "delivery_method" in out:
+        out["delivery_method"] = out["delivery_method"] if out["delivery_method"] in asama.DELIVERY else None
+    for f in ("cargo_company", "tracking_no"):
+        if f in out:
+            out[f] = (str(out[f] or "").strip()[:60]) or None
     if "item_opts" in out:
         o = out["item_opts"] if isinstance(out["item_opts"], dict) else {}
         out["item_opts"] = json.dumps({k: bool(o.get(k)) for k in ("parts", "priced", "color")})
@@ -2504,13 +2518,42 @@ def order_row(oid):
     r = db().execute(ORDER_SELECT + " WHERE o.id=?", (oid,)).fetchone()
     if not r:
         raise ApiError("Sipariş bulunamadı", 404)
-    return decorate_order(dict(r))
+    return asama.decorate(decorate_order(dict(r)), asama.histories([oid]))
 
 
 @route("GET", "/api/orders")
 def api_orders(req):
-    return [decorate_order(dict(r)) for r in db().execute(
+    asama.normalize_all()
+    asama.apply_rules()
+    hist = asama.histories()
+    return [asama.decorate(decorate_order(dict(r)), hist) for r in db().execute(
         ORDER_SELECT + " ORDER BY CASE WHEN o.due_date IS NULL OR o.due_date='' THEN 1 ELSE 0 END, o.due_date, o.id DESC")]
+
+
+@route("GET", "/api/order-flow")
+def api_order_flow(req):
+    counts = {r["stage"]: r["n"] for r in db().execute("SELECT stage, COUNT(*) n FROM custom_orders GROUP BY stage")}
+    return {"flow": asama.flow(), "stats": asama.stats(), "counts": counts}
+
+
+@route("PUT", "/api/order-flow")
+def api_order_flow_save(req):
+    try:
+        asama.save_flow(req.json())
+    except ValueError as e:
+        raise ApiError(str(e))
+    asama.normalize_all()
+    asama.apply_rules()
+    return api_order_flow(req)
+
+
+@route("POST", "/api/order-flow/tags")
+def api_order_tag_add(req):
+    b = req.json()
+    try:
+        return asama.add_tag(b.get("name"), b.get("color"))
+    except ValueError as e:
+        raise ApiError(str(e))
 
 
 @route("POST", "/api/orders")
@@ -2520,11 +2563,17 @@ def api_order_create(req):
         raise ApiError("Müşteri adı boş olamaz")
     data = apply_items(clean_order(b), None, b.get("total_grams"))
     data["status"] = "new" if data.get("status") in (None, "printing") else data["status"]
+    m = asama.stage_map()
+    stage = b.get("stage") if b.get("stage") in m else asama.target_for(asama.flow(), data["status"], None)
+    data["status"] = m[stage]["kind"]
     data.setdefault("order_date", time.strftime("%Y-%m-%d"))
     t = now()
+    data["stage"], data["stage_at"] = stage, t
     cols = list(data.keys()) + ["created_at", "updated_at"]
     cur = db().execute(f"INSERT INTO custom_orders({','.join(cols)}) VALUES({','.join('?' * len(cols))})",
                        list(data.values()) + [t, t])
+    asama._log(cur.lastrowid, stage, m[stage]["name"], "Sipariş eklendi", False, t)
+    asama.apply_rules()
     return order_row(cur.lastrowid)
 
 
@@ -2534,8 +2583,15 @@ def api_order_update(req, oid):
     b = req.json()
     cur = order_row(oid)
     data = apply_items(clean_order(b), cur["items"], b.get("total_grams"))
+    m = asama.stage_map()
+    stage = b.get("stage") if b.get("stage") in m and b.get("stage") != cur.get("stage") else None
+    if stage:   # aşama seçildi: durum aşamanın türü olur; üretim türündeki elle aşama (boyama vs.) baskısız da olabilir
+        data["status"] = m[stage]["kind"]
     new_status = data.get("status")
-    if new_status == "printing" and not cur["active_job_id"]:
+    if new_status == cur["status"] and not stage:
+        data.pop("status", None)
+        new_status = None
+    if new_status == "printing" and not cur["active_job_id"] and not stage:
         # Baskıda durumuna yalnızca bir baskı başlatılarak geçilir; istemci baskı penceresini açar
         data.pop("status")
     if new_status and new_status != "printing" and cur["active_job_id"]:
@@ -2543,9 +2599,16 @@ def api_order_update(req, oid):
         job_status = "success" if new_status in ("ready", "delivered") else "cancelled"
         db().execute("UPDATE print_jobs SET status=?, good_quantity=CASE WHEN ?='success' THEN quantity ELSE 0 END, "
                      "finished_at=? WHERE id=?", (job_status, job_status, now(), cur["active_job_id"]))
+    if new_status == "printing" and cur["status"] == "printing":
+        new_status = None
     if data:
         sets = ", ".join(f"{k}=?" for k in data)
         db().execute(f"UPDATE custom_orders SET {sets}, updated_at=? WHERE id=?", list(data.values()) + [now(), oid])
+    if stage:
+        asama.move(oid, stage, b.get("stage_note"))
+    elif new_status:
+        asama.sync(oid, b.get("stage_note"))
+    asama.apply_rules()
     return order_row(oid)
 
 

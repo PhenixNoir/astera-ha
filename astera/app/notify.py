@@ -245,6 +245,28 @@ def _claims():
     _sync_group("claim:", wanted)
 
 
+def _custom_orders():
+    """Özel sipariş bir aşamada o aşamanın bekleme sınırından uzun kaldı."""
+    import asama
+    try:
+        m = asama.stage_map()
+    except Exception:   # noqa — akış henüz kurulmadıysa
+        return
+    wanted, t = {}, _now()
+    for r in _db().execute("SELECT id, first_name, last_name, title, stage, stage_at FROM custom_orders WHERE status<>'cancelled' AND stage_at IS NOT NULL"):
+        s = m.get(r["stage"])
+        if not s or not s.get("warn_days"):
+            continue
+        days = (t - r["stage_at"]) // 86400
+        if days < s["warn_days"]:
+            continue
+        who = f"{r['first_name'] or ''} {r['last_name'] or ''}".strip() or "Özel sipariş"
+        wanted[f"cord:{r['id']}:{r['stage']}"] = ("order", "warn", f"Özel sipariş bekliyor · {who}",
+                                                  f"“{s['name']}” aşamasında {days} gündür" + (f" · {r['title']}" if r["title"] else ""),
+                                                  {"t": "corder", "id": r["id"]})
+    _sync_group("cord:", wanted)
+
+
 def _questions():
     if not _db().execute("SELECT 1 FROM sqlite_master WHERE name='ty_questions'").fetchone():
         return
@@ -426,7 +448,7 @@ def tick(force=False):
     _last_tick = time.time()
     with _lock:
         try:
-            for f in (_printers, _jobs, _trendyol, _buybox, _stock, _idle, _weekly, _claims, _questions):
+            for f in (_printers, _jobs, _trendyol, _buybox, _stock, _idle, _weekly, _claims, _questions, _custom_orders):
                 try:
                     f()
                 except Exception as e:  # noqa — bir kontrolün hatası diğerlerini durdurmasın

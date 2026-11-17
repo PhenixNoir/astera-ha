@@ -1,5 +1,15 @@
 # Sürüm notları
 
+## 1.10.0
+- Özel siparişler: aşamaları artık sen belirliyorsun. "Aşamaları düzenle" ile ekle, sil, yeniden adlandır, renk/simge seç, sürükleyerek sırala; hazır şablonlar (Basit, Kapora ile, Kargo ile, Atölye). İçinde sipariş olan aşama silinirken siparişler seçtiğin aşamaya taşınır.
+- Her aşama bir türe bağlı ("Ne demek": Bekliyor / Üretimde / Hazır / Kapandı); plan, kâr ve ciro buna göre çalışmaya devam eder.
+- Otomatik geçişler: baskı başlayınca / bitince seçilen aşamaya; aşama başına "ödeme tamamlanınca" ve "N gün sonra" kuralları.
+- Ödeme rozeti (Ödendi / Kapora / Ödenmedi) ve "Ödemesi bekleyen", "Teslimi yaklaşan", "Takılı kalan" akıllı sekmeleri.
+- Bekleme süresi uyarısı: aşamaya gün sınırı; aşan kart işaretlenir ve bildirim gelir.
+- Geçişte zorunlu bilgi: teslimat (kargo + takip no ya da elden teslim / kurye), alınan ödeme ya da not.
+- Etiketler: siparişe etiket ekle, yenisini yaz; istersen panoda sekme olarak göster.
+- Aşama geçmişi: siparişin hangi gün hangi aşamaya geçtiği, ne kadar kaldığı ve notlar.
+
 ## 1.9.22
 - Pano: yeni "Yeni siparişler" bölümü. En yeni üstte, gün gün ayrılmış zaman akışı; yanında bugünün sipariş sayısı, cirosu, tahmini kârı ve saat saat gelen siparişler. Yeni sipariş düşünce satır kayarak en üste girer.
 - Siparişler: sekme sayıları durum renginde rozet oldu; seçili sekme kendi rengini alır.

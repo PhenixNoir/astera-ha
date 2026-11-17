@@ -400,7 +400,7 @@ function applyBrand() {
 async function loadProducts() { S.products = await api('GET', '/api/products'); }
 async function loadJobs() { S.jobs = await api('GET', '/api/jobs'); renderPBar(); }
 async function loadDash() { S.dash = await api('GET', '/api/dashboard'); }
-async function loadOrders() { S.orders = await api('GET', '/api/orders'); }
+async function loadOrders() { const [o] = await Promise.all([api('GET', '/api/orders'), loadFlow()]); S.orders = o; }
 async function loadSettings() { S.settings = await api('GET', '/api/settings'); applyBrand(); renderPBar(); }
 const productById = (id) => S.products.find((p) => p.id === id);
 
@@ -700,8 +700,8 @@ function termsPanel() {
   return `<section class="panel"><div class="panel-h"><h2>Yaklaşan terminler</h2><a class="btn btn-ghost btn-sm" href="#/siparisler">Siparişler</a></div>
     <div class="panel-b"><ul class="lst">${open.map(({ o, d }) => `<li>${miniThumb(o.image)}<div class="grow">
       <div class="t">${esc(o.first_name)} ${esc(o.last_name || '')}${o.title ? ` <span class="muted" style="font-weight:500">· ${esc(o.title)}</span>` : ''}</div>
-      <div class="s">${OST[o.status].l} · ${o.quantity} adet${o.printer ? ' · ' + esc(o.printer) : ''} · ${d.html}</div></div>
-      ${o.status === 'new' ? `<button class="btn btn-sm" data-act="order-advance" data-id="${o.id}">Baskıya al</button>` : ''}</li>`).join('')}</ul></div></section>`;
+      <div class="s">${esc(stOf(o).name)} · ${o.quantity} adet${o.printer ? ' · ' + esc(o.printer) : ''} · ${d.html}</div></div>
+      ${o.status === 'new' && !o.active_job_id && orderLeft(o) > 0 ? `<button class="btn btn-sm" data-act="order-print" data-id="${o.id}">Baskıya al</button>` : ''}</li>`).join('')}</ul></div></section>`;
 }
 
 function bedHTML() {
@@ -840,6 +840,12 @@ function notifBind() {
     else if (a.t === 'plan') planStart(a);
     else if (a.t === 'spool') { location.hash = '#/filament'; setTimeout(() => openSpoolEditor(a.id), 400); }
     else if (a.t === 'order' && (a.pkg || a.pkgs?.length)) openOrderFromNotif(a.pkg || a.pkgs[0]);
+    else if (a.t === 'corder') {
+      S.oSrc = 'custom'; try { localStorage.setItem('oSrc', 'custom'); } catch { /* */ }
+      if (route() === 'siparisler') await render(); else { location.hash = '#/siparisler'; await new Promise((r) => setTimeout(r, 700)); }
+      if (!S.orders?.some((o) => o.id === a.id)) await loadOrders();
+      if (S.orders.some((o) => o.id === a.id)) openOrderEditor(a.id); else toast('Sipariş bulunamadı');
+    }
     else if (a.href) location.hash = a.href;
   });
   nfSwipeBind();
@@ -2875,7 +2881,7 @@ function jcRender() {
     ${miniThumb(x.thumbnail)}<span><span class="t">${esc(x.name)}</span>${cur(k, x.id)}<br><span class="s">${sub}</span></span></button>`;
   const g = (title, html) => html ? `<div class="pick-group">${title}</div>${html}` : '';
   $('#jc-list').innerHTML = g('Ürünler', prods.slice(0, 60).map((p) => item('p', p, `${p.category ? esc(p.category) + ' · ' : ''}stok ${p.stock}${p.parts?.length ? ` · ${p.parts_total} parçalı set` : ''}`)).join(''))
-    + g('Özel siparişler', (S.orders || []).filter((o) => ['new', 'printing', 'ready'].includes(o.status)).map((o) => ({ ...o, name: `${o.first_name} ${o.last_name || ''}${o.title ? ' — ' + o.title : ''}`.trim(), thumbnail: o.image })).filter(hit).map((o) => item('o', o, `${OST[o.status].l} · ${o.printed || 0}/${o.quantity} basılmış`)).join(''))
+    + g('Özel siparişler', (S.orders || []).filter((o) => ['new', 'printing', 'ready'].includes(o.status)).map((o) => ({ ...o, name: `${o.first_name} ${o.last_name || ''}${o.title ? ' — ' + o.title : ''}`.trim(), thumbnail: o.image })).filter(hit).map((o) => item('o', o, `${esc(stOf(o).name)} · ${o.printed || 0}/${o.quantity} basılmış`)).join(''))
     + g('Ortak parçalar', (S.components || []).filter(hit).map((c) => item('c', c, `havuzda ${c.stock}`)).join(''))
     + g('Diğer amaçlı', (S.misc || []).filter(hit).map((c) => item('c', c, 'stoğa eklenmez')).join(''))
     || '<p class="muted">Eşleşen yok.</p>';
@@ -2952,7 +2958,199 @@ function coSorted(list) {
     name: (a, b) => `${a.first_name} ${a.last_name || ''}`.localeCompare(`${b.first_name} ${b.last_name || ''}`, 'tr') }[S.coSort] || null;
   return by ? [...list].sort(by) : list;
 }
-// Özel sipariş kartlarını sütunlar arasında sürükle-bırak: Baskıda'ya bırakınca baskı penceresi açılır
+// ---------- Özel sipariş aşamaları: kullanıcının tanımladığı akış (sunucuda asama.py)
+// Her aşama dört türden birine bağlı ("Ne demek"); siparişin status alanı aşamasının türüdür.
+const ST_COL = { gray: 'var(--ink-3)', acc: 'var(--pei)', yel: '#D69E2E', ok: 'var(--ok)', teal: '#1A9C9C', blue: '#3C7DD9', pur: 'var(--resin)', pink: '#D2457E', bad: 'var(--bad)' };
+const ST_KINDS = [['new', 'Bekliyor', 'henüz üretime girmedi, plana girer'], ['printing', 'Üretimde', 'baskıda ya da işleniyor (boya, montaj)'], ['ready', 'Hazır', 'ürün hazır, teslim bekliyor'], ['delivered', 'Kapandı', 'teslim edildi, ciroya sayılır']];
+const ST_ICONS = ['📥', '💬', '🧾', '✏️', '💰', '🖨️', '🎨', '🔧', '✅', '🎁', '🚚', '📦', '💳', '⏸️', '⭐', '🔥'];
+const ST_ASK = [['', 'Bir şey sorma'], ['delivery', 'Teslimat bilgisi sor (kargo / elden)'], ['payment', 'Alınan ödemeyi sor'], ['note', 'Not yazdır']];
+const DELIV = { kargo: 'Kargo', elden: 'Elden teslim', kurye: 'Kurye', diger: 'Diğer' };
+const CARGO_CO = ['Yurtiçi Kargo', 'Aras Kargo', 'MNG Kargo', 'PTT Kargo', 'Sürat Kargo', 'HepsiJet', 'Trendyol Express', 'Kolay Gelsin', 'UPS'];
+const ST_FALLBACK = [{ key: 'new', name: 'Yeni', color: 'gray', icon: '📥', kind: 'new' }, { key: 'printing', name: 'Baskıda', color: 'blue', icon: '🖨️', kind: 'printing' },
+  { key: 'ready', name: 'Hazır', color: 'ok', icon: '✅', kind: 'ready' }, { key: 'delivered', name: 'Teslim edildi', color: 'teal', icon: '📦', kind: 'delivered' }];
+const ST_CANCEL = { key: 'cancelled', name: 'İptal', color: 'bad', icon: '✕', kind: 'cancelled' };
+const ST_TPL = {
+  basit: ['Basit', [['Yeni', 'gray', '📥', 'new'], ['Baskıda', 'blue', '🖨️', 'printing'], ['Hazır', 'ok', '✅', 'ready'], ['Teslim edildi', 'teal', '📦', 'delivered', { ask: 'delivery' }]]],
+  kapora: ['Kapora ile', [['Yeni', 'gray', '📥', 'new'], ['Kapora bekliyor', 'yel', '💰', 'new', { warn_days: 3 }], ['Baskıda', 'blue', '🖨️', 'printing'], ['Hazır', 'ok', '✅', 'ready', { warn_days: 5 }],
+    ['Ödeme bekliyor', 'bad', '💳', 'delivered', { ask: 'delivery', auto_paid: '#5' }], ['Teslim edildi', 'teal', '📦', 'delivered', { ask: 'delivery' }]]],
+  kargo: ['Kargo ile', [['Yeni', 'gray', '📥', 'new'], ['Baskıda', 'blue', '🖨️', 'printing'], ['Paketlendi', 'pur', '🎁', 'ready', { warn_days: 2 }], ['Kargoda', 'acc', '🚚', 'delivered', { ask: 'delivery' }], ['Teslim edildi', 'teal', '📦', 'delivered', { auto: '#3:7' }]]],
+  atolye: ['Atölye (onay + tasarım)', [['Teklif verildi', 'gray', '🧾', 'new', { warn_days: 4 }], ['Tasarım onayı', 'pink', '✏️', 'new', { warn_days: 3 }], ['Baskıda', 'blue', '🖨️', 'printing'], ['Boyamada', 'pur', '🎨', 'printing', { warn_days: 5 }],
+    ['Hazır', 'ok', '✅', 'ready', { ask: 'note' }], ['Teslim edildi', 'teal', '📦', 'delivered', { ask: 'delivery' }]]],
+};
+const stList = () => S.oflow?.flow?.stages || ST_FALLBACK;
+const stGet = (k) => (k === 'cancelled' ? ST_CANCEL : stList().find((s) => s.key === k));
+const stOf = (o) => stGet(o.stage) || (o.status === 'cancelled' ? ST_CANCEL : stList().find((s) => s.kind === o.status) || stList()[0]);
+const stColor = (s) => ST_COL[s?.color] || 'var(--ink-3)';
+const printStart = () => S.oflow?.flow?.print_start || 'printing';
+const stDays = (o) => (o.stage_at ? Math.max(0, Math.floor((Date.now() / 1000 - o.stage_at) / 86400)) : 0);
+const stLate = (o) => { const s = stOf(o); return !!s.warn_days && o.status !== 'cancelled' && stDays(o) >= s.warn_days; };
+const stNext = (o) => { const L = stList(), i = L.findIndex((x) => x.key === stOf(o).key); return i >= 0 ? L[i + 1] || null : null; };
+const oRem = (o) => (o.price > 0 ? Math.max(0, (o.price || 0) - (o.paid || 0)) : 0);
+const fmtStDur = (sec) => { const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600); return d ? `${d} gün${h ? ` ${h} sa` : ''}` : h ? `${h} sa` : `${Math.max(1, Math.round(sec / 60))} dk`; };
+const fmtDays = (x) => String(x).replace('.', ',');
+async function loadFlow() { try { S.oflow = await api('GET', '/api/order-flow'); } catch { /* eski sunucu: sabit aşamalar */ } }
+function payBadge(o) {
+  if (!(o.price > 0)) return '';
+  const rem = oRem(o);
+  if (rem <= 0.004) return '<span class="pay-b ok">Ödendi</span>';
+  if ((o.paid || 0) > 0) return `<span class="pay-b part" title="Alınan ${fmtMoney(o.paid)}">Kapora alındı · ${fmtMoney(rem)} kaldı</span>`;
+  return `<span class="pay-b no">Ödenmedi · ${fmtMoney(rem)}</span>`;
+}
+const tagColor = (n) => ST_COL[(S.oflow?.flow?.tags || []).find((t) => t.name === n)?.color] || ST_COL.pink;
+const tagChips = (o) => (o.tags || []).map((t) => `<span class="o-tag" style="--c:${tagColor(t)}">${esc(t)}</span>`).join('');
+const lateBadge = (o) => (stLate(o) ? `<span class="st-late" title="Bu aşamanın uyarı süresi ${stOf(o).warn_days} gün">🐢 ${stDays(o)} gündür ${esc(stOf(o).name)}</span>` : '');
+function delivChip(o) {
+  if (!o.delivery_method) return '';
+  const t = [DELIV[o.delivery_method], o.cargo_company, o.tracking_no].filter(Boolean).join(' · ');
+  return `<span class="o-deliv" title="${esc(t)}">${o.delivery_method === 'kargo' ? '🚚' : o.delivery_method === 'elden' ? '🤝' : '🛵'} ${esc(t)}</span>`;
+}
+// akıllı sekmeler: kurala uyan siparişler hangi aşamada olursa olsun
+const CO_SMART = {
+  unpaid: { l: 'Ödemesi bekleyen', ic: '💳', c: 'bad', f: (o) => o.status !== 'cancelled' && oRem(o) > 0.004 },
+  due: { l: 'Teslimi yaklaşan', ic: '⏰', c: 'yel', f: (o) => ['new', 'printing', 'ready'].includes(o.status) && !!o.due_date && dayNum(o.due_date) - dayNum(localToday()) <= 3 },
+  late: { l: 'Takılı kalan', ic: '🐢', c: 'pur', f: stLate },
+};
+const coSmartList = () => [...Object.entries(CO_SMART), ...(S.oflow?.flow?.tags || []).filter((t) => t.tab).map((t) => ['tag:' + t.name, { l: t.name, ic: '🏷️', c: t.color, f: (o) => (o.tags || []).includes(t.name) }])];
+function kcolRules(s, late, avg) {
+  const nm = (k) => esc(stGet(k)?.name || '');
+  const r = [];
+  if (s.warn_days) r.push(`<span class="${late ? 'hot' : ''}" title="Bu aşamada ${s.warn_days} günden uzun kalan siparişler uyarılır">🐢 ${s.warn_days} gün${late ? ` · ${late} gecikti` : ''}</span>`);
+  if (s.ask) r.push(`<span title="Bu aşamaya geçerken sorulur">📝 ${{ delivery: 'teslimat sorar', payment: 'ödeme sorar', note: 'not ister' }[s.ask]}</span>`);
+  if (s.auto_paid) r.push(`<span title="Ödeme tamamlanınca kendiliğinden geçer">⚡ ödenince → ${nm(s.auto_paid)}</span>`);
+  if (s.auto_days) r.push(`<span title="Bu aşamada bu kadar gün kalınca kendiliğinden geçer">⚡ ${s.auto_days} gün → ${nm(s.auto_days_to)}</span>`);
+  if (avg?.n >= 2) r.push(`<span class="faint" title="${avg.n} geçişten">ort. ${fmtDays(avg.avg_days)} gün</span>`);
+  return r.length ? `<div class="kc-rules">${r.join('')}</div>` : '';
+}
+function customOrdersHTML(src) {
+  const stages = stList(), smart = coSmartList(), sm = smart.find(([k]) => k === S.coSmart)?.[1];
+  if (S.coSmart && !sm) S.coSmart = '';
+  const base = sm ? S.orders.filter(sm.f) : S.orders;
+  const cols = stages.concat(S.showCancelled ? [ST_CANCEL] : []);
+  const inCol = (s) => base.filter((o) => stOf(o).key === s.key);
+  if (!cols.some((s) => s.key === S.ordersTab)) S.ordersTab = stages[0].key;
+  return `<div class="toolbar">${src}<span class="spacer"></span>
+      <label class="flt"><span>Sırala</span><select class="input" id="co-sort">${CO_SORTS.map(([k, l]) => `<option value="${k}"${(S.coSort || 'due') === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="switch"><input type="checkbox" id="show-cancel" ${S.showCancelled ? 'checked' : ''}> İptalleri göster</label>
+      <button class="btn" data-act="flow-edit">${icon('edit')} Aşamaları düzenle</button>
+      <button class="btn btn-primary" data-act="new-order">${icon('plus')} Sipariş ekle</button></div>
+    <div class="co-smart">${smart.map(([k, v]) => { const l = S.orders.filter(v.f), amt = k === 'unpaid' ? l.reduce((a, o) => a + oRem(o), 0) : 0;
+      return `<button type="button" class="co-sm${S.coSmart === k ? ' on' : ''}${l.length ? '' : ' zero'}" data-act="co-smart" data-v="${esc(k)}" style="--c:${ST_COL[v.c] || ST_COL.pink}"><span class="ic">${v.ic}</span>${esc(v.l)} <b>${l.length}</b>${amt ? `<small>${fmtMoney(amt)}</small>` : ''}</button>`; }).join('')}
+      ${sm ? `<button type="button" class="btn btn-sm btn-ghost" data-act="co-smart" data-v="">${icon('x')} Filtreyi kaldır</button>` : ''}</div>
+    <div class="toolbar"><div class="seg stc" id="otabs">${cols.map((s) => { const n = inCol(s).length; return `<button style="--c:${stColor(s)}" class="${S.ordersTab === s.key ? 'on' : ''}${n ? '' : ' zero'}" data-act="otab" data-v="${s.key}">${esc(s.name)} <span class="faint">${n}</span></button>`; }).join('')}</div></div>
+    <div class="kanban tabs" style="--kc:${cols.length}">${cols.map((s, ci) => {
+      let list = inCol(s);
+      const closed = s.kind === 'delivered' || s.kind === 'cancelled', total = list.length;
+      list = closed && !sm ? list.sort((a, b) => b.updated_at - a.updated_at).slice(0, 30) : coSorted(list);
+      return `<section class="kcol${S.ordersTab === s.key ? ' on' : ''}" data-col="${s.key}" style="--dot:${stColor(s)};--ci:${ci}"><div class="kcol-h"><h3><span class="kic">${s.icon}</span>${esc(s.name)}</h3><span class="n">${total}</span></div>
+        ${kcolRules(s, list.filter(stLate).length, S.oflow?.stats?.[s.key])}
+        <div class="cards">${list.length ? list.map(orderCard).join('') : `<div class="kempty">${sm ? 'Bu filtrede sipariş yok' : ci === 0 ? 'Yeni özel sipariş geldiğinde buraya ekleyin.' : 'Kartları buraya sürükleyebilirsiniz'}</div>`}</div></section>`;
+    }).join('')}</div>`;
+}
+function orderCardCompact(o) {
+  const day = o.updated_at ? new Date(o.updated_at * 1000).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) : '';
+  const rem = oRem(o);
+  return `<article class="ocard compact" data-act="edit-order" data-id="${o.id}" draggable="true" style="view-transition-name:o-${o.id}">
+    <span class="who">${esc(o.first_name)} ${esc(o.last_name || '')}</span>
+    <span class="what">${esc(o.title || o.details || '')}</span>
+    <span class="muted">${day}</span>
+    ${rem > 0.004 && o.status !== 'cancelled' || o.tags?.length || o.delivery_method ? `<span class="oc-x">${rem > 0.004 && o.status !== 'cancelled' ? payBadge(o) : ''}${delivChip(o)}${tagChips(o)}</span>` : ''}</article>`;
+}
+function orderCard(o) {
+  if (o.status === 'delivered' || o.status === 'cancelled') return orderCardCompact(o);
+  const nx = stNext(o), left = orderLeft(o);
+  const machine = o.job_printer || o.printer;
+  const job = o.active_job_id ? S.jobs.find((j) => j.id === o.active_job_id) : null;
+  const toPrint = nx && nx.key === printStart() && !o.active_job_id && left > 0;
+  return `<article class="ocard${stLate(o) ? ' late' : ''}" data-act="edit-order" data-id="${o.id}" draggable="true" style="view-transition-name:o-${o.id}">
+    ${o.image ? `<div class="img" style="${thumbStyle(o.image)}"></div>` : ''}
+    ${o.tags?.length || stLate(o) ? `<div class="oc-x">${lateBadge(o)}${tagChips(o)}</div>` : ''}
+    <div class="who">${esc(o.first_name)} ${esc(o.last_name || '')}</div>
+    ${o.title || o.details ? `<div class="what">${esc(o.title || o.details)}</div>` : ''}
+    <div class="dates">${o.order_date ? `<span class="muted">Geldi ${fmtDay(o.order_date)}</span>` : ''}${dueLabel(o).html}</div>
+    ${o.items?.length ? `<div class="o-items">${o.items.slice(0, 4).map((k) => `<span>${esc(k.name)}${k.qty > 1 ? ` <b>×${k.qty}</b>` : ''}</span>`).join('')}${o.items.length > 4 ? `<span class="faint">+${o.items.length - 4} kalem</span>` : ''}</div>` : ''}
+    <div class="bottom"><span class="muted">${o.quantity} ${o.item_opts?.parts ? 'parça' : 'adet'}${o.resin ? ' · ' + esc(o.resin) : ''}</span>${machine ? `<span class="tag tag-mute pr-inline" style="padding-left:3px">${printerThumb(machine, 'xs')}${esc(machine)}</span>` : ''}</div>
+    ${job ? `<div class="oprog"><div class="prog ${job.print_type}"><i data-prog="${job.id}"></i></div><span data-countdown="${job.id}"></span></div>` : ''}
+    ${(o.quantity || 1) > 1 && (o.printed || o.in_print) ? (() => { const q = o.quantity, d = Math.min(q, o.printed || 0), ip = Math.min(q - d, o.in_print || 0);
+      return `<div class="opart"><div class="opart-bar"><i class="d" style="width:${d / q * 100}%"></i><i class="p" style="width:${ip / q * 100}%"></i></div>
+        <div class="opart-t"><span>Basılan <b>${d}/${q}</b>${ip ? ` · baskıda <b>${ip}</b>${o.active_jobs > 1 ? ` <span class="faint">(${o.active_jobs} makinede)</span>` : ''}` : ''}</span>
+        ${left && o.status === 'printing' ? `<button class="btn btn-sm" data-act="order-print" data-id="${o.id}">${icon('plus')} Kalan ${left} adedi bas</button>` : left ? `<span class="faint">${left} kaldı</span>` : ''}</div></div>`; })() : ''}
+    ${o.price != null ? `<div class="bottom"><span>${fmtMoney(o.price)}</span>${payBadge(o)}</div>` : ''}
+    ${(() => { const c = orderCost(o); return c.grams ? `<div class="bottom o-cost-line"><span class="muted">${fmtGram(c.grams)}${c.cost != null ? ` · malzeme ${fmtTL(c.cost)}` : ''}</span>${c.cost != null && o.price ? `<span class="${o.price - c.cost >= 0 ? 'ok-text' : 'bad-text'}">kalan ${fmtTL(o.price - c.cost)}</span>` : ''}</div>` : ''; })()}
+    ${o.status === 'printing' && !o.active_job_id && stOf(o).key === printStart() && left > 0
+      ? `<div class="nojob"><span>Baskı süresi girilmemiş, Baskılar'da görünmüyor.</span><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm btn-primary" data-act="order-print" data-id="${o.id}">Süreyi gir, baskıya ekle</button></div></div>` : ''}
+    ${nx ? `<button class="btn btn-sm advance" data-act="order-advance" data-id="${o.id}" style="--c:${stColor(nx)}">${toPrint ? 'Baskıya al' : `${nx.icon} ${esc(nx.name)}`} <span aria-hidden="true">→</span></button>` : ''}
+  </article>`;
+}
+// Siparişi bir aşamaya taşı: baskı aşaması baskı penceresini açar, sorusu olan aşama önce sorar
+async function coMove(o, key) {
+  const to = stGet(key), from = stOf(o);
+  if (!to || from.key === key) return;
+  if (key === printStart() && !o.active_job_id && orderLeft(o) > 0) return openNewPrint({ orderId: o.id });
+  if (o.active_job_id && to.kind !== 'printing' && !confirm(`${o.first_name} siparişinin baskısı sürüyor. “${to.name}” aşamasına geçerse baskı ${to.kind === 'ready' || to.kind === 'delivered' ? 'başarılı olarak kapanır' : 'iptal edilir'}. Devam edilsin mi?`)) return;
+  const extra = await coAsk(o, to);
+  if (extra === null) return;
+  try {
+    const r = await api('PUT', `/api/orders/${o.id}`, { stage: key, ...extra }), now = stGet(r.stage) || to;
+    toast(`${o.first_name}: ${now.name}${now.key !== key ? ` · otomatik geçti (${to.name} → ${now.name})` : ''}`, o.active_job_id ? {} : { action: 'Geri al', onAction: async () => { await api('PUT', `/api/orders/${o.id}`, { stage: from.key, stage_note: 'Geri alındı' }); render(); } });
+    await loadJobs(); render();
+  } catch (err) { fail(err); }
+}
+// Geçişte zorunlu bilgi: teslimat (kargo / elden), ödeme ya da not
+function coAsk(o, to) {
+  const rem = oRem(o);
+  const need = to.ask === 'delivery' || to.ask === 'note' || (to.ask === 'payment' && rem > 0.004);
+  if (!need) return Promise.resolve({});
+  return new Promise((resolve) => {
+    let done = false;
+    const fin = (v) => { if (done) return; done = true; closeModal(true); resolve(v); };
+    let m = o.delivery_method || 'elden';
+    const pay = rem > 0.004 && (to.ask === 'payment' || to.ask === 'delivery');
+    openModal(`<div class="modal-h"><h2><span class="ca-ic" style="--c:${stColor(to)}">${to.icon}</span> ${esc(to.name)}</h2><button class="icon-btn" data-ca="x" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+      <div class="modal-b co-ask"><p class="ca-who">${esc(o.first_name)} ${esc(o.last_name || '')}${o.title ? ` · <span class="muted">${esc(o.title)}</span>` : ''} · <span class="muted">${esc(stOf(o).name)} → </span><b>${esc(to.name)}</b></p>
+        ${to.ask === 'delivery' ? `<div class="field"><span>Nasıl teslim edildi?</span><div class="seg ca-m" id="ca-m">${Object.entries(DELIV).map(([k, l]) => `<button type="button" data-v="${k}" class="${k === m ? 'on' : ''}">${{ kargo: '🚚', elden: '🤝', kurye: '🛵', diger: '📍' }[k]} ${l}</button>`).join('')}</div></div>
+          <div class="row ca-kargo" id="ca-kargo" ${m === 'kargo' ? '' : 'hidden'}><label class="field"><span>Kargo firması</span><input class="input" id="ca-co" list="ca-col" value="${esc(o.cargo_company || '')}" placeholder="Yurtiçi Kargo"><datalist id="ca-col">${CARGO_CO.map((c) => `<option value="${c}">`).join('')}</datalist></label>
+            <label class="field"><span>Takip numarası</span><input class="input" id="ca-tr" value="${esc(o.tracking_no || '')}" placeholder="zorunlu"></label></div>
+          <label class="field"><span>Not <small class="faint">isteğe bağlı · ör. kime teslim edildi</small></span><input class="input" id="ca-note"></label>` : ''}
+        ${to.ask === 'note' ? `<label class="field"><span>Not</span><textarea class="input" id="ca-note" rows="3" placeholder="Bu aşamaya neden geçti, ne yapıldı…"></textarea></label>` : ''}
+        ${pay ? `<div class="ca-pay"><div class="ca-pl"><b>${fmtMoney(rem)}</b> ödeme kaldı <span class="muted">· fiyat ${fmtMoney(o.price)}, alınan ${fmtMoney(o.paid || 0)}</span></div>
+          <div class="ca-pr"><div class="input-group"><input class="input" id="ca-paid" type="number" inputmode="decimal" min="0" step="0.01" value="${to.ask === 'payment' ? rem : ''}" placeholder="Şimdi alınan"><span class="suffix">₺</span></div>
+          <button type="button" class="btn" data-ca="all">Tamamı alındı</button><button type="button" class="btn btn-ghost" data-ca="none">Alınmadı</button></div></div>` : ''}
+        <p class="bad-text ca-err" id="ca-err" hidden></p>
+      </div>
+      <div class="modal-f"><div class="right"><button class="btn" data-ca="x">Vazgeç</button><button class="btn btn-primary" data-ca="ok">${esc(to.name)} aşamasına geçir</button></div></div>`, 'co-ask-m', () => fin(null));
+    const err = (t) => { const e = $('#ca-err'); e.textContent = t; e.hidden = false; };
+    $('#ca-m')?.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; m = b.dataset.v; $$('#ca-m button').forEach((x) => x.classList.toggle('on', x === b)); $('#ca-kargo').hidden = m !== 'kargo'; if (m === 'kargo') $('#ca-tr').focus(); });
+    $('.co-ask-m').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-ca]'); if (!b) return;
+      const a = b.dataset.ca;
+      if (a === 'x') return fin(null);
+      if (a === 'all') { $('#ca-paid').value = rem; return; }
+      if (a === 'none') { $('#ca-paid').value = 0; return; }
+      const out = {}, notes = [];
+      if (to.ask === 'delivery') {
+        out.delivery_method = m;
+        if (m === 'kargo') {
+          out.cargo_company = $('#ca-co').value.trim(); out.tracking_no = $('#ca-tr').value.trim();
+          if (!out.tracking_no) { $('#ca-tr').focus(); return err('Kargo için takip numarasını yazın; elden teslimse yukarıdan “Elden teslim” seçin.'); }
+        }
+        notes.push([DELIV[m], out.cargo_company, out.tracking_no].filter(Boolean).join(' · '));
+      }
+      const nt = ($('#ca-note')?.value || '').trim();
+      if (to.ask === 'note' && !nt) { $('#ca-note').focus(); return err('Bu aşamaya geçerken not yazmak gerekiyor.'); }
+      if (nt) notes.push(nt);
+      if (pay) {
+        const p = parseFloat(($('#ca-paid').value || '').replace(',', '.'));
+        if (to.ask === 'payment' && $('#ca-paid').value === '') { $('#ca-paid').focus(); return err('Alınan ödemeyi yazın ya da “Alınmadı” seçin.'); }
+        if (p > 0) { out.paid = Math.round(((o.paid || 0) + Math.min(p, rem)) * 100) / 100; notes.push(`${fmtMoney(Math.min(p, rem))} ödeme alındı`); }
+        else if (to.ask === 'payment') notes.push('ödeme alınmadı');
+      }
+      out.stage_note = notes.filter(Boolean).join(' · ');
+      fin(out);
+    });
+    setTimeout(() => ($('#ca-tr:not([hidden])') && m === 'kargo' ? $('#ca-tr') : $('#ca-note') || $('#ca-paid'))?.focus(), 60);
+  });
+}
+// Özel sipariş kartlarını sütunlar (aşamalar) arasında sürükle-bırak
 function kanbanDnD() {
   let drag = null;
   $$('.kanban .ocard[draggable]').forEach((c) => {
@@ -2962,74 +3160,181 @@ function kanbanDnD() {
   $$('.kanban .kcol').forEach((col) => {
     col.addEventListener('dragover', (e) => { if (drag == null) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; col.classList.add('drop-on'); });
     col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('drop-on'); });
-    col.addEventListener('drop', async (e) => {
+    col.addEventListener('drop', (e) => {
       e.preventDefault(); col.classList.remove('drop-on');
-      const o = S.orders.find((x) => x.id === drag), to = col.dataset.col; if (!o || o.status === to) return;
-      if (to === 'printing') return openNewPrint({ orderId: o.id });
-      const from = o.status;
-      if (from === 'printing' && o.active_job_id && !confirm(`${o.first_name} siparişinin baskısı sürüyor. ${OST[to].l} olarak işaretlenirse baskı ${to === 'ready' || to === 'delivered' ? 'başarılı olarak kapanır' : 'iptal edilir'}. Devam edilsin mi?`)) return;
-      try {
-        await api('PUT', `/api/orders/${o.id}`, { status: to });
-        toast(`${o.first_name}: ${OST[to].l}`, from === 'printing' ? {} : { action: 'Geri al', onAction: async () => { await api('PUT', `/api/orders/${o.id}`, { status: from }); render(); } });
-        await loadJobs(); render();
-      } catch (err) { fail(err); }
+      const o = S.orders.find((x) => x.id === drag); if (o) coMove(o, col.dataset.col);
     });
   });
 }
-function customOrdersHTML(src) {
-    const cols = ['new', 'printing', 'ready', 'delivered'].concat(S.showCancelled ? ['cancelled'] : []);
-    return `<div class="toolbar">${src}<span class="spacer"></span>
-        <label class="flt"><span>Sırala</span><select class="input" id="co-sort">${CO_SORTS.map(([k, l]) => `<option value="${k}"${(S.coSort || 'due') === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
-        <label class="switch"><input type="checkbox" id="show-cancel" ${S.showCancelled ? 'checked' : ''}> İptalleri göster</label>
-        <button class="btn btn-primary" data-act="new-order">${icon('plus')} Sipariş ekle</button></div>
-      <div class="toolbar"><div class="seg stc" id="otabs">${['new', 'printing', 'ready', 'delivered'].map((s) => { const n = S.orders.filter((o) => o.status === s).length; return `<button class="stc-${{ printing: 'picking', ready: 'shipped' }[s] || s}${S.ordersTab === s ? ' on' : ''}${n ? '' : ' zero'}" data-act="otab" data-v="${s}">${s === 'delivered' ? 'Teslim' : OST[s].l} <span class="faint">${n}</span></button>`; }).join('')}</div></div>
-      <div class="kanban tabs">${cols.map((s) => {
-        let list = S.orders.filter((o) => o.status === s);
-        if (s === 'delivered') list = list.sort((a, b) => b.updated_at - a.updated_at).slice(0, 30);
-        else list = coSorted(list);
-        return `<section class="kcol${S.ordersTab === s ? ' on' : ''}" data-col="${s}"><div class="kcol-h"><h3 style="--dot:${OST[s].dot}"><i></i>${OST[s].l}</h3><span class="n">${list.length}</span></div>
-          <div class="cards">${list.length ? list.map(orderCard).join('') : `<div class="kempty">${s === 'new' ? 'Yeni özel sipariş geldiğinde buraya ekleyin.' : s === 'printing' ? 'Siparişteki "Baskıya al" ile başlatılan baskılar burada görünür.' : 'Boş'}</div>`}</div></section>`;
-      }).join('')}</div>`;
-}
 
-function orderCardCompact(o) {
-  const day = o.updated_at ? new Date(o.updated_at * 1000).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) : '';
-  return `<article class="ocard compact" data-act="edit-order" data-id="${o.id}" draggable="true" style="view-transition-name:o-${o.id}">
-    <span class="who">${esc(o.first_name)} ${esc(o.last_name || '')}</span>
-    <span class="what">${esc(o.title || o.details || '')}</span>
-    <span class="muted">${day}</span></article>`;
+// ---------- Aşama düzenleyici
+let FE = null;
+async function openFlowEditor() {
+  await loadFlow();
+  if (!S.oflow) return toast('Aşamalar yüklenemedi', { bad: true });
+  const f = structuredClone(S.oflow.flow);
+  FE = { st: f.stages, del: [], ps: f.print_start, pd: f.print_done, tags: f.tags.map((t) => ({ ...t, orig: t.name })), tab: 'st', open: null, fresh: null };
+  openModal(`<div class="modal-h"><h2>Sipariş aşamaları</h2><div class="seg" id="fe-tabs"><button type="button" data-v="st" class="on">Aşamalar</button><button type="button" data-v="tg">Etiketler</button></div><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+    <div class="modal-b fe" id="fe-b"></div>
+    <div class="modal-f"><span class="fe-hint" id="fe-hint"></span><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" data-act="fe-save" id="fe-save">Kaydet</button></div></div>`, 'wide fe-modal');
+  $('#fe-tabs').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; FE.tab = b.dataset.v; $$('#fe-tabs button').forEach((x) => x.classList.toggle('on', x === b)); feRender(); };
+  feBind(); feRender();
 }
-function orderCard(o) {
-  if (o.status === 'delivered' || o.status === 'cancelled') return orderCardCompact(o);
-  const rem = o.price != null ? (o.price || 0) - (o.paid || 0) : null;
-  const nx = OST[o.status]?.next;
-  const machine = o.job_printer || o.printer;
-  const job = o.active_job_id ? S.jobs.find((j) => j.id === o.active_job_id) : null;
-  return `<article class="ocard" data-act="edit-order" data-id="${o.id}" draggable="true" style="view-transition-name:o-${o.id}">
-    ${o.image ? `<div class="img" style="${thumbStyle(o.image)}"></div>` : ''}
-    <div class="who">${esc(o.first_name)} ${esc(o.last_name || '')}</div>
-    ${o.title || o.details ? `<div class="what">${esc(o.title || o.details)}</div>` : ''}
-    <div class="dates">${o.order_date ? `<span class="muted">Geldi ${fmtDay(o.order_date)}</span>` : ''}${dueLabel(o).html}</div>
-    ${o.items?.length ? `<div class="o-items">${o.items.slice(0, 4).map((k) => `<span>${esc(k.name)}${k.qty > 1 ? ` <b>×${k.qty}</b>` : ''}</span>`).join('')}${o.items.length > 4 ? `<span class="faint">+${o.items.length - 4} kalem</span>` : ''}</div>` : ''}
-    <div class="bottom"><span class="muted">${o.quantity} ${o.item_opts?.parts ? 'parça' : 'adet'}${o.resin ? ' · ' + esc(o.resin) : ''}</span>${machine ? `<span class="tag tag-mute pr-inline" style="padding-left:3px">${printerThumb(machine, 'xs')}${esc(machine)}</span>` : ''}</div>
-    ${job ? `<div class="oprog"><div class="prog ${job.print_type}"><i data-prog="${job.id}"></i></div><span data-countdown="${job.id}"></span></div>` : ''}
-    ${(o.quantity || 1) > 1 && (o.printed || o.in_print) ? (() => { const q = o.quantity, d = Math.min(q, o.printed || 0), ip = Math.min(q - d, o.in_print || 0), left = orderLeft(o);
-      return `<div class="opart"><div class="opart-bar"><i class="d" style="width:${d / q * 100}%"></i><i class="p" style="width:${ip / q * 100}%"></i></div>
-        <div class="opart-t"><span>Basılan <b>${d}/${q}</b>${ip ? ` · baskıda <b>${ip}</b>${o.active_jobs > 1 ? ` <span class="faint">(${o.active_jobs} makinede)</span>` : ''}` : ''}</span>
-        ${left && o.status === 'printing' ? `<button class="btn btn-sm" data-act="order-print" data-id="${o.id}">${icon('plus')} Kalan ${left} adedi bas</button>` : left ? `<span class="faint">${left} kaldı</span>` : ''}</div></div>`; })() : ''}
-    ${o.price != null ? `<div class="bottom"><span>${fmtMoney(o.price)}</span>${rem > 0 ? `<span class="tag tag-warn">${fmtMoney(rem)} kaldı</span>` : '<span class="tag tag-ok">Ödendi</span>'}</div>` : ''}
-    ${(() => { const c = orderCost(o); return c.grams ? `<div class="bottom o-cost-line"><span class="muted">${fmtGram(c.grams)}${c.cost != null ? ` · malzeme ${fmtTL(c.cost)}` : ''}</span>${c.cost != null && o.price ? `<span class="${o.price - c.cost >= 0 ? 'ok-text' : 'bad-text'}">kalan ${fmtTL(o.price - c.cost)}</span>` : ''}</div>` : ''; })()}
-    ${o.status === 'printing' && !o.active_job_id
-      ? `<div class="nojob"><span>Baskı süresi girilmemiş, Baskılar'da görünmüyor.</span><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm btn-primary" data-act="order-print" data-id="${o.id}">Süreyi gir, baskıya ekle</button><button class="btn btn-sm" data-act="order-advance" data-id="${o.id}">Hazır</button></div></div>`
-      : nx ? `<button class="btn btn-sm advance" data-act="order-advance" data-id="${o.id}">${OST[o.status].nl}</button>` : ''}
-  </article>`;
+const feCount = (k) => S.oflow?.counts?.[k] || 0;
+function feSel(attr, i, val, opts, none) {
+  return `<select class="input fe-sel" ${attr}="${i}">${none != null ? `<option value="">${none}</option>` : ''}${opts.map((s) => `<option value="${s.key}"${s.key === val ? ' selected' : ''}>${s.icon} ${esc(s.name)}</option>`).join('')}</select>`;
+}
+function feRowSum(s) {
+  const nm = (k) => esc(FE.st.find((x) => x.key === k)?.name || '');
+  const r = [];
+  if (s.warn_days) r.push(`🐢 ${s.warn_days} gün`);
+  if (s.ask) r.push(`📝 ${{ delivery: 'teslimat', payment: 'ödeme', note: 'not' }[s.ask]}`);
+  if (s.auto_paid) r.push(`⚡ ödenince → ${nm(s.auto_paid)}`);
+  if (s.auto_days && s.auto_days_to) r.push(`⚡ ${s.auto_days} gün → ${nm(s.auto_days_to)}`);
+  return r.length ? r.map((x) => `<span>${x}</span>`).join('') : '<span class="faint">kural yok</span>';
+}
+function feRender() {
+  const b = $('#fe-b'); if (!b) return;
+  if (FE.tab === 'tg') return feTags(b);
+  const kinds = new Set(FE.st.map((s) => s.kind)), miss = ST_KINDS.filter(([k]) => !kinds.has(k));
+  const others = (i) => FE.st.filter((_, j) => j !== i);
+  b.innerHTML = `<div class="fe-tpl"><span class="muted">Hazır şablon:</span>${Object.entries(ST_TPL).map(([k, [l]]) => `<button type="button" class="chip" data-fe="tpl" data-v="${k}">${l}</button>`).join('')}</div>
+    <div class="fe-grp">Akış · soldan sağa, sırayla ilerler</div>
+    <div class="fe-rows" id="fe-rows">${FE.st.map((s, i) => {
+      const avg = S.oflow?.stats?.[s.key], n = s.key ? feCount(s.key) : 0, op = FE.open === i;
+      return `<div class="fe-row${op ? ' open' : ''}${FE.fresh === i ? ' fresh' : ''}" draggable="true" data-i="${i}" style="--c:${stColor(s)}">
+        <div class="fe-main"><span class="grip" title="Sürükleyerek sırala">⠿</span>
+          <button type="button" class="fe-sw" data-fe="open" data-i="${i}" title="Renk, simge ve kurallar">${s.icon}</button>
+          <div class="fe-nm"><input class="fe-name" data-fe-name="${i}" value="${esc(s.name)}" maxlength="40" aria-label="Aşama adı"><div class="fe-sum">${feRowSum(s)}</div></div>
+          <label class="fe-kind" title="Program bu aşamayı nasıl anlasın"><small>Ne demek</small><select class="input" data-fe-kind="${i}">${ST_KINDS.map(([k, l]) => `<option value="${k}"${s.kind === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+          <span class="fe-cnt">${n ? `${n} sipariş` : '<span class="faint">boş</span>'}${avg?.n >= 2 ? `<small>ort. ${fmtDays(avg.avg_days)} gün</small>` : ''}</span>
+          <button type="button" class="icon-btn fe-more-b" data-fe="open" data-i="${i}" aria-label="Kurallar" aria-expanded="${op}">${icon('chevron-down')}</button>
+          <button type="button" class="icon-btn fe-del" data-fe="del" data-i="${i}" aria-label="Sil" title="Sil">${icon('trash')}</button></div>
+        ${op ? `<div class="fe-more">
+          <div class="fe-line"><span class="fe-l">Renk</span><span class="fe-cols">${Object.keys(ST_COL).map((c) => `<i data-fe="col" data-i="${i}" data-v="${c}" class="${s.color === c ? 'on' : ''}" style="--c:${ST_COL[c]}"></i>`).join('')}</span></div>
+          <div class="fe-line"><span class="fe-l">Simge</span><span class="fe-ics">${ST_ICONS.map((x) => `<button type="button" data-fe="ic" data-i="${i}" data-v="${x}" class="${s.icon === x ? 'on' : ''}">${x}</button>`).join('')}</span></div>
+          <div class="fe-line"><span class="fe-l">Ne demek</span><span class="muted">${ST_KINDS.find(([k]) => k === s.kind)[2]}</span></div>
+          <div class="fe-line"><span class="fe-l">🐢 Bekleme uyarısı</span><span class="fe-in"><input class="input" type="number" min="0" max="365" data-fe-w="${i}" value="${s.warn_days || ''}" placeholder="—"> günden uzun kalırsa kartı işaretle ve bildirim gönder</span></div>
+          <div class="fe-line"><span class="fe-l">📝 Geçerken sor</span><select class="input fe-sel" data-fe-ask="${i}">${ST_ASK.map(([k, l]) => `<option value="${k}"${(s.ask || '') === k ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+          <div class="fe-line"><span class="fe-l">⚡ Ödeme tamamlanınca</span>${feSel('data-fe-ap', i, s.auto_paid, others(i), 'bir şey yapma')}</div>
+          <div class="fe-line"><span class="fe-l">⚡ Süre dolunca</span><span class="fe-in"><input class="input" type="number" min="0" max="365" data-fe-ad="${i}" value="${s.auto_days || ''}" placeholder="—"> gün sonra ${feSel('data-fe-adt', i, s.auto_days_to, others(i), 'aşama seçin')}</span></div>
+          <div class="fe-line"><span class="fe-l">Sıra</span><span class="fe-in"><button type="button" class="btn btn-sm" data-fe="up" data-i="${i}" ${i ? '' : 'disabled'}>↑ Yukarı</button><button type="button" class="btn btn-sm" data-fe="down" data-i="${i}" ${i < FE.st.length - 1 ? '' : 'disabled'}>↓ Aşağı</button></span></div>
+        </div>` : ''}</div>`;
+    }).join('')}</div>
+    <button type="button" class="fe-add" data-fe="add">+ Aşama ekle</button>
+    ${FE.del.length ? `<div class="fe-grp">Silinecek</div>${FE.del.map((d, j) => `<div class="fe-gone"><span>“${esc(d.s.name)}”${d.n ? ` · içindeki <b>${d.n} sipariş</b> şuraya taşınacak:` : ' · boş'}</span>${d.n ? feSel('data-fe-mv', j, d.to, FE.st) : ''}<button type="button" class="btn btn-sm btn-ghost" data-fe="undel" data-j="${j}">Geri al</button></div>`).join('')}` : ''}
+    <div class="fe-grp">Her zaman en sonda</div>
+    <div class="fe-row lock" style="--c:${ST_COL.bad}"><div class="fe-main"><span class="grip">🔒</span><span class="fe-sw">✕</span><div class="fe-nm"><b>İptal</b><div class="fe-sum"><span class="faint">sabit · silinemez</span></div></div><span></span><span class="fe-cnt">${feCount('cancelled') ? `${feCount('cancelled')} sipariş` : ''}</span></div></div>
+    <div class="fe-grp">Baskı olunca kendiliğinden</div>
+    <div class="fe-print"><label>🖨️ Baskı başlayınca → ${feSel('data-fe-ps', 0, FE.ps, FE.st.filter((s) => s.kind === 'printing'))}</label>
+      <label>✅ Baskı tamamlanınca → ${feSel('data-fe-pd', 0, FE.pd, FE.st.filter((s) => s.kind === 'ready'))}</label></div>
+    ${miss.length ? `<p class="fe-miss">Her türden en az bir aşama gerekli. Eksik: <b>${miss.map(([, l]) => l).join(', ')}</b>. Bir aşamanın “Ne demek” seçimini değiştirin ya da yeni aşama ekleyin.</p>` : ''}`;
+  $('#fe-save').disabled = !!miss.length;
+  $('#fe-hint').textContent = FE.del.some((d) => d.n) ? 'Silinen aşamalardaki siparişler kaydedince taşınır.' : '';
+  FE.fresh = null;
+}
+function feTags(b) {
+  const used = (n) => S.orders.filter((o) => (o.tags || []).includes(n)).length;
+  b.innerHTML = `<p class="muted fe-p">Etiketler aşamadan bağımsızdır: Acil, Hediye, Toptan, Okul siparişi… Siparişi açıp etiket ekleyebilirsiniz. “Sekme” açıksa panonun üstünde akıllı sekme olarak görünür.</p>
+    <div class="fe-rows">${FE.tags.map((t, i) => `<div class="fe-row tg" style="--c:${ST_COL[t.color] || ST_COL.pink}"><div class="fe-main">
+        <button type="button" class="fe-sw tg" data-fe="tcol" data-i="${i}" title="Rengi değiştir">🏷️</button>
+        <div class="fe-nm"><input class="fe-name" data-fe-tn="${i}" value="${esc(t.name)}" maxlength="30"></div>
+        <label class="switch sm"><input type="checkbox" data-fe-tt="${i}" ${t.tab ? 'checked' : ''}> Sekme</label>
+        <span class="fe-cnt">${t.orig && used(t.orig) ? `${used(t.orig)} sipariş` : '<span class="faint">kullanılmıyor</span>'}</span>
+        <button type="button" class="icon-btn fe-del" data-fe="tdel" data-i="${i}" aria-label="Sil">${icon('trash')}</button></div></div>`).join('') || '<p class="faint fe-p">Henüz etiket yok.</p>'}</div>
+    <div class="fe-tadd"><input class="input" id="fe-tnew" placeholder="Yeni etiket adı" maxlength="30"><button type="button" class="btn" data-fe="tadd">${icon('plus')} Ekle</button></div>`;
+}
+function feBind() {
+  const b = $('#fe-b');
+  b.addEventListener('click', (e) => {
+    const x = e.target.closest('[data-fe]'); if (!x) return;
+    const i = +x.dataset.i, a = x.dataset.fe, s = FE.st[i];
+    if (a === 'open') FE.open = FE.open === i ? null : i;
+    else if (a === 'col') s.color = x.dataset.v;
+    else if (a === 'ic') s.icon = x.dataset.v;
+    else if (a === 'up' || a === 'down') { const j = a === 'up' ? i - 1 : i + 1; [FE.st[i], FE.st[j]] = [FE.st[j], FE.st[i]]; FE.open = j; }
+    else if (a === 'add') { FE.st.push({ key: `n${Date.now().toString(36)}`, _new: true, name: 'Yeni aşama', color: Object.keys(ST_COL)[(FE.st.length * 3 + 1) % 9], icon: '⭐', kind: 'new' }); FE.open = FE.st.length - 1; FE.fresh = FE.open; feRender(); const inp = $(`[data-fe-name="${FE.open}"]`); inp.focus(); inp.select(); return; }
+    else if (a === 'del') {
+      FE.st.splice(i, 1); FE.open = null;
+      if (s.key && !s._new) { const to = (FE.st.find((y) => y.kind === s.kind && y.key) || FE.st.find((y) => y.key))?.key; FE.del.push({ s, n: feCount(s.key), to }); }
+    } else if (a === 'undel') { const [d] = FE.del.splice(+x.dataset.j, 1); FE.st.push(d.s); FE.del.forEach((z) => { if (z.to === undefined) z.to = d.s.key; }); }
+    else if (a === 'tpl') {
+      const [l, rows] = ST_TPL[x.dataset.v];
+      if (!confirm(`“${l}” şablonu uygulansın mı? Aynı adlı aşamalar korunur; diğerlerindeki siparişler benzer aşamalara taşınır (kaydetmeden önce görebilirsiniz).`)) return;
+      const old = FE.st.filter((y) => y.key), used = new Set();
+      const ns = rows.map(([name, color, ic, kind, ex = {}]) => { const m = old.find((y) => !used.has(y.key) && y.name.toLocaleLowerCase('tr') === name.toLocaleLowerCase('tr')); if (m) used.add(m.key);
+        return { key: m?.key, name, color, icon: ic, kind, warn_days: ex.warn_days || null, ask: ex.ask || '', _ap: ex.auto_paid, _auto: ex.auto }; });
+      ns.forEach((y) => { if (y._auto) y.auto_days = +y._auto.split(':')[1]; });
+      FE.st = ns; FE.open = null;
+      old.filter((y) => !used.has(y.key)).forEach((y) => FE.del.push({ s: y, n: feCount(y.key), to: (ns.find((z) => z.kind === y.kind && z.key) || ns.find((z) => z.key))?.key }));
+      // anahtarı olmayan yeni aşamalar kural hedefi olabilsin diye geçici anahtar alır; sunucu kalıcısını verir
+      ns.forEach((y, k) => { if (!y.key) { y.key = `n${Date.now().toString(36)}${k}`; y._new = true; } });
+      ns.forEach((y) => { if (y._ap) y.auto_paid = ns[+y._ap.slice(1)]?.key || ''; if (y._auto) { const [t] = y._auto.slice(1).split(':'); y.auto_days_to = ns[+t]?.key || ''; } delete y._ap; delete y._auto; });
+      FE.del.forEach((d) => { if (!d.to || !FE.st.some((z) => z.key === d.to)) d.to = (FE.st.find((z) => z.kind === d.s.kind) || FE.st[0]).key; });
+    }
+    else if (a === 'tcol') { const t = FE.tags[i], k = Object.keys(ST_COL); t.color = k[(k.indexOf(t.color) + 1) % k.length]; }
+    else if (a === 'tdel') { const t = FE.tags[i]; if (t.orig && S.orders.some((o) => (o.tags || []).includes(t.orig)) && !confirm(`“${t.name}” etiketi siparişlerden de kaldırılsın mı?`)) return; FE.tags.splice(i, 1); }
+    else if (a === 'tadd') { const v = $('#fe-tnew').value.trim(); if (!v) return $('#fe-tnew').focus(); if (FE.tags.some((t) => t.name.toLocaleLowerCase('tr') === v.toLocaleLowerCase('tr'))) return toast('Bu etiket zaten var', { bad: true }); FE.tags.push({ name: v, color: Object.keys(ST_COL)[(FE.tags.length * 3 + 7) % 9], tab: false }); }
+    else return;
+    feRender();
+  });
+  b.addEventListener('input', (e) => {
+    const t = e.target, d = t.dataset;
+    if (d.feName != null) { FE.st[+d.feName].name = t.value; return; }
+    if (d.feTn != null) { FE.tags[+d.feTn].name = t.value; return; }
+    const n = (v) => Math.max(0, Math.min(365, parseInt(v) || 0)) || null;
+    if (d.feW != null) FE.st[+d.feW].warn_days = n(t.value);
+    if (d.feAd != null) FE.st[+d.feAd].auto_days = n(t.value);
+  });
+  b.addEventListener('change', (e) => {
+    const t = e.target, d = t.dataset;
+    if (d.feKind != null) FE.st[+d.feKind].kind = t.value;
+    else if (d.feAsk != null) FE.st[+d.feAsk].ask = t.value;
+    else if (d.feAp != null) FE.st[+d.feAp].auto_paid = t.value;
+    else if (d.feAdt != null) FE.st[+d.feAdt].auto_days_to = t.value;
+    else if (d.feMv != null) { FE.del[+d.feMv].to = t.value; return; }
+    else if (d.fePs != null) { FE.ps = t.value; return; }
+    else if (d.fePd != null) { FE.pd = t.value; return; }
+    else if (d.feTt != null) { FE.tags[+d.feTt].tab = t.checked; return; }
+    else if (d.feW != null || d.feAd != null) { /* sayı: özeti tazele */ }
+    else return;
+    feRender();
+  });
+  b.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.id === 'fe-tnew') { e.preventDefault(); b.querySelector('[data-fe="tadd"]').click(); } });
+  let dragI = null;
+  b.addEventListener('dragstart', (e) => { const r = e.target.closest?.('.fe-row[draggable]'); if (!r || e.target.closest('input,select')) return; dragI = +r.dataset.i; r.classList.add('drag'); e.dataTransfer.effectAllowed = 'move'; });
+  b.addEventListener('dragend', () => { $$('.fe-row').forEach((r) => r.classList.remove('drag', 'over')); dragI = null; });
+  b.addEventListener('dragover', (e) => { if (dragI == null) return; const r = e.target.closest('.fe-row[draggable]'); if (!r) return; e.preventDefault(); $$('.fe-row').forEach((x) => x.classList.toggle('over', x === r && +r.dataset.i !== dragI)); });
+  b.addEventListener('drop', (e) => { const r = e.target.closest('.fe-row[draggable]'); if (dragI == null || !r) return; e.preventDefault(); const to = +r.dataset.i; const [m] = FE.st.splice(dragI, 1); FE.st.splice(to, 0, m); FE.open = null; dragI = null; feRender(); });
+}
+async function feSave() {
+  const st = FE.st.map(({ _new, ...s }) => ({ ...s, name: (s.name || '').trim() || 'Aşama' }));
+  const moves = {}; FE.del.forEach((d) => { if (d.s.key) moves[d.s.key] = d.to; });
+  const ren = {}; FE.tags.forEach((t) => { if (t.orig && t.orig !== t.name.trim()) ren[t.orig] = t.name.trim(); });
+  try {
+    S.oflow = await api('PUT', '/api/order-flow', { stages: st, print_start: FE.ps, print_done: FE.pd, moves, tags: FE.tags.map((t) => ({ name: t.name.trim(), color: t.color, tab: t.tab })), tag_renames: ren });
+    closeModal(true); toast('Aşamalar kaydedildi'); render();
+  } catch (e) { fail(e); }
+}
+// Sipariş penceresinde aşama geçmişi: hangi gün hangi aşamaya geçti, ne kadar kaldı
+function orderHistHTML(o) {
+  if (!o.id) return '';
+  const h = o.history || [];
+  if (!h.length) return `<div class="o-hist"><div class="o-hist-h">Aşama geçmişi</div><p class="faint">Bu sürümden önceki geçişler kayıtlı değil. Şu an <b>${esc(stOf(o).name)}</b> · ${stDays(o)} gündür.</p></div>`;
+  const now = Date.now() / 1000;
+  return `<div class="o-hist"><div class="o-hist-h">Aşama geçmişi</div><ol>${h.map((x, i) => {
+    const s = stGet(x.stage), end = h[i + 1]?.at ?? (o.status === 'cancelled' || o.status === 'delivered' ? null : now), cur = i === h.length - 1;
+    return `<li class="${cur ? 'cur' : ''}" style="--c:${stColor(s || ST_CANCEL)}"><i></i><div><b>${s?.icon || ''} ${esc(s?.name || x.name || x.stage)}</b>${x.auto ? '<span class="o-auto">otomatik</span>' : ''}
+      <small>${fmtWhen(x.at)}${end ? ` · ${cur ? 'şu an, ' : ''}${fmtStDur(end - x.at)}${cur ? '' : ' kaldı'}` : ''}</small>${x.note ? `<small class="o-hn">${esc(x.note)}</small>` : ''}</div></li>`; }).join('')}</ol></div>`;
 }
 
 let OE = null;
 function openOrderEditor(id) {
   const o = id ? structuredClone(S.orders.find((x) => x.id === id))
     : { first_name: '', last_name: '', phone: '', title: '', details: '', quantity: 1, price: '', paid: '', order_date: localToday(), due_date: '', print_minutes: null, printer: '', status: 'new', image: null, file_name: '', resin: '', grams: null, print_type: 'SLA', items: [], item_opts: {} };
-  OE = o; OE.print_type ||= 'SLA'; OE.items = OE.items || []; OE.item_opts = { parts: false, priced: false, color: false, ...(OE.item_opts || {}) };
+  OE = o; OE.print_type ||= 'SLA';
+  OE.stage = id ? stOf(o).key : stList()[0].key; OE.stage0 = id ? OE.stage : null; OE.tags = [...(o.tags || [])];
+  OE.delivery_method = o.delivery_method || ''; OE.items = OE.items || []; OE.item_opts = { parts: false, priced: false, color: false, ...(OE.item_opts || {}) };
   OE.open = new Set(); OE.sel = new Set(); OE.fresh = true;
   if (!S.profit) loadProfit().then(orderCostHint).catch(() => {});
   if (!S.spools) loadSpools().then(() => { if (OE?.item_opts.color) oeRender(); }).catch(() => {});
@@ -3039,7 +3344,7 @@ function openOrderEditor(id) {
   const hasItems = OE.items.length > 0;
   const totalG = hasItems && !OE.item_opts.priced && o.grams ? Math.round(o.grams * (o.quantity || 1) * 10) / 10 : '';
   openModal(`
-    <div class="modal-h"><h2>${id ? 'Özel sipariş' : 'Yeni özel sipariş'}</h2>${id ? `<span class="tag oe-st">${OST[o.status]?.l || ''}</span>` : ''}<button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+    <div class="modal-h"><h2>${id ? 'Özel sipariş' : 'Yeni özel sipariş'}</h2>${id ? `<span class="tag oe-st" style="--c:${stColor(stOf(o))}">${stOf(o).icon} ${esc(stOf(o).name)}${stDays(o) ? ` · ${stDays(o)} gündür` : ''}</span>` : ''}<button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
     <div class="modal-b oe">
       <div class="oe-left">
         <div class="drop oe-drop ${o.image ? 'has' : ''}" id="o-drop" style="${o.image ? `--img:url('${esc(o.image)}')` : ''}" tabindex="0" role="button" aria-label="Referans görseli yükle"><div class="hint">${icon('upload')}<span>Görsel / referans</span><small class="paste-hint">Ctrl+V ile yapıştırın</small></div></div>
@@ -3055,8 +3360,13 @@ function openOrderEditor(id) {
         <div class="row"><label class="field"><span>Toplam fiyat</span><div class="input-group"><input class="input" id="o-price" type="number" inputmode="decimal" min="0" step="0.01" value="${o.price ?? ''}" ${OE.item_opts.priced && hasItems ? 'readonly' : ''}><span class="suffix">₺</span></div></label>
           <label class="field"><span>Alınan ödeme</span><div class="input-group"><input class="input" id="o-paid" type="number" inputmode="decimal" min="0" step="0.01" value="${o.paid ?? ''}"><span class="suffix">₺</span></div></label></div>
         <label class="field"><span>Not</span><textarea class="input" id="o-details" rows="3" placeholder="Ölçü, boya, referans linki…">${esc(o.details || '')}</textarea></label>
-        <div class="field"><span>Durum</span><div class="seg" id="o-status" style="flex-wrap:wrap">${Object.entries(OST).map(([k, v]) => `<button type="button" data-v="${k}" class="${o.status === k ? 'on' : ''}">${v.l}</button>`).join('')}</div>
-          <small id="o-status-hint">${o.active_job_id ? 'Baskısı sürüyor. Hazır veya Teslim seçerseniz baskı başarılı olarak kapanır.' : 'Baskıda seçip kaydettiğinizde makine ve süreyi sorup Baskılar listesine eklerim.'}</small></div>
+        <div class="field"><span>Aşama</span><div class="st-pick" id="o-stage">${[...stList(), ST_CANCEL].map((st) => `<button type="button" data-v="${st.key}" style="--c:${stColor(st)}" class="${OE.stage === st.key ? 'on' : ''}">${st.icon} ${esc(st.name)}</button>`).join('')}</div>
+          <small id="o-status-hint">${o.active_job_id ? 'Baskısı sürüyor. Hazır ya da kapanış aşamasına geçerse baskı başarılı olarak kapanır.' : 'Baskı aşamasını seçip kaydederseniz makine ve süreyi sorup Baskılar listesine eklerim. Sorusu olan aşamada kaydedince sorulur.'}</small></div>
+        <div class="field"><span>Etiketler</span><div class="o-tags" id="o-tags"></div></div>
+        <div class="field"><span>Teslimat</span><div class="seg o-dm" id="o-dm"><button type="button" data-v="" class="${OE.delivery_method ? '' : 'on'}">—</button>${Object.entries(DELIV).map(([k, l]) => `<button type="button" data-v="${k}" class="${OE.delivery_method === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+          <div class="row" id="o-dk" ${OE.delivery_method === 'kargo' ? '' : 'hidden'}><label class="field"><span>Kargo firması</span><input class="input" id="o-cco" list="o-col" value="${esc(o.cargo_company || '')}"><datalist id="o-col">${CARGO_CO.map((c) => `<option value="${c}">`).join('')}</datalist></label>
+            <label class="field"><span>Takip no</span><input class="input" id="o-ctr" value="${esc(o.tracking_no || '')}"></label></div></div>
+        ${orderHistHTML(o)}
       </div>
       <div class="oe-right">
         <div class="oe-tb"><h3>Kalemler</h3>
@@ -3090,7 +3400,9 @@ function openOrderEditor(id) {
   const drop = $('#o-drop'), fi = $('#o-file-in');
   drop.onclick = () => fi.click();
   fi.onchange = () => fi.files[0] && uploadOrderImage(fi.files[0]);
-  $('#o-status').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; OE.status = b.dataset.v; $$('#o-status button').forEach((x) => x.classList.toggle('on', x === b)); };
+  $('#o-stage').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; OE.stage = b.dataset.v; $$('#o-stage button').forEach((x) => x.classList.toggle('on', x === b)); };
+  $('#o-dm').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; OE.delivery_method = b.dataset.v; $$('#o-dm button').forEach((x) => x.classList.toggle('on', x === b)); $('#o-dk').hidden = OE.delivery_method !== 'kargo'; };
+  oeTags();
   $('#o-printers')?.addEventListener('click', (e) => { const b = e.target.closest('.chip'); if (!b) return; OE.printer = OE.printer === b.dataset.v ? '' : b.dataset.v; $$('#o-printers .chip').forEach((c) => c.classList.toggle('on', c.dataset.v === OE.printer)); });
   ['#o-odate', '#o-due'].forEach((x) => $(x).addEventListener('input', dueHint));
   dueHint();
@@ -3261,6 +3573,19 @@ function waLink(phone) {
   else if (d.length === 10 && d.startsWith('5')) d = '90' + d;
   return `https://wa.me/${d}`;
 }
+// sipariş penceresinde etiket seçimi: var olanlara dokun, yenisini yazıp Enter
+function oeTags() {
+  const box = $('#o-tags'); if (!box) return;
+  const all = [...new Set([...(S.oflow?.flow?.tags || []).map((t) => t.name), ...OE.tags])];
+  box.innerHTML = all.map((t) => `<button type="button" class="o-tag pick${OE.tags.includes(t) ? ' on' : ''}" data-t="${esc(t)}" style="--c:${tagColor(t)}">${OE.tags.includes(t) ? '✓ ' : ''}${esc(t)}</button>`).join('')
+    + `<span class="o-tag-add"><input id="o-tag-new" placeholder="+ yeni etiket" maxlength="30" aria-label="Yeni etiket"></span>`;
+  box.onclick = (e) => { const b = e.target.closest('[data-t]'); if (!b) return; const t = b.dataset.t; OE.tags = OE.tags.includes(t) ? OE.tags.filter((x) => x !== t) : [...OE.tags, t]; oeTags(); };
+  $('#o-tag-new').onkeydown = async (e) => {
+    if (e.key !== 'Enter') return; e.preventDefault();
+    const v = e.target.value.trim(); if (!v) return;
+    try { const t = await api('POST', '/api/order-flow/tags', { name: v }); await loadFlow(); if (!OE.tags.includes(t.name)) OE.tags.push(t.name); oeTags(); $('#o-tag-new').focus(); } catch (err) { fail(err); }
+  };
+}
 async function saveOrder(opts = {}) {
   const v = (x) => ($(x)?.value || '').trim();
   const mins = (parseInt(v('#o-h')) || 0) * 60 + (parseInt(v('#o-m')) || 0);
@@ -3268,19 +3593,23 @@ async function saveOrder(opts = {}) {
   const hasItems = items.length > 0;
   const body = { first_name: v('#o-fn'), last_name: v('#o-ln'), phone: v('#o-phone'), title: v('#o-title'), details: v('#o-details'),
     quantity: parseInt(v('#o-qty')) || 1, order_date: v('#o-odate'), due_date: v('#o-due'), print_minutes: mins || null, printer: OE.printer || '',
-    price: v('#o-price'), paid: v('#o-paid'), resin: v('#o-resin'), file_name: v('#o-file'), status: OE.status, image: OE.image,
+    price: v('#o-price'), paid: v('#o-paid'), resin: v('#o-resin'), file_name: v('#o-file'), image: OE.image,
+    tags: OE.tags, delivery_method: OE.delivery_method || null, cargo_company: OE.delivery_method === 'kargo' ? v('#o-cco') : null, tracking_no: OE.delivery_method === 'kargo' ? v('#o-ctr') : null,
     print_type: OE.print_type || 'SLA', items, item_opts: OE.item_opts };
   if (hasItems && !OE.item_opts.priced) body.total_grams = v('#o-grams');
   else if (!hasItems) body.grams = v('#o-grams');
   if (!body.first_name) { $('#o-fn').focus(); toast('Müşterinin adını yazın', { bad: true }); return null; }
-  const wantsPrint = !opts.keepOpen && OE.status === 'printing' && !OE.active_job_id;
+  // Aşama değişti: soru soran ya da baskı başlatan aşamaya geçiş kayıttan sonra ayrıca yapılır (pencere sorar)
+  const tgt = stGet(OE.stage), changed = OE.stage !== OE.stage0;
+  const later = changed && !opts.keepOpen && tgt && (OE.stage === printStart() && !OE.active_job_id || (OE.id && tgt.ask) || (OE.active_job_id && tgt.kind !== 'printing'));
+  if (changed && !later) body.stage = OE.stage;
   try {
     const r = OE.id ? await api('PUT', `/api/orders/${OE.id}`, body) : await api('POST', '/api/orders', body);
-    if (opts.keepOpen) { OE.id = r.id; return r.id; }
+    if (opts.keepOpen) { OE.id = r.id; OE.stage0 = r.stage; return r.id; }
     closeModal(true);
     toast(OE.id ? 'Sipariş kaydedildi' : 'Sipariş eklendi');
     await render();
-    if (wantsPrint) openNewPrint({ orderId: r.id });
+    if (later) { const o = S.orders.find((x) => x.id === r.id) || r; await coMove(o, OE.stage); }
     return r.id;
   } catch (e) { fail(e); return null; }
 }
@@ -7087,14 +7416,12 @@ const ACTIONS = {
   'delete-order': async (el) => { if (!confirm(OE?.active_job_id ? 'Siparişin devam eden baskısı da iptal edilecek. Silinsin mi?' : 'Sipariş silinsin mi?')) return; try { await api('DELETE', `/api/orders/${el.dataset.id}`); closeModal(); toast('Sipariş silindi'); render(); } catch (e) { fail(e); } },
   'order-advance': async (el, e) => {
     e.stopPropagation();
-    const o = S.orders.find((x) => x.id === +el.dataset.id); const nx = OST[o.status].next;
-    if (nx === 'printing') return openNewPrint({ orderId: o.id });
-    try {
-      await api('PUT', `/api/orders/${o.id}`, { status: nx });
-      toast(`${o.first_name}: ${OST[nx].l}`, o.status === 'printing' ? {} : { action: 'Geri al', onAction: async () => { await api('PUT', `/api/orders/${o.id}`, { status: o.status }); render(); } });
-      await loadJobs(); render();
-    } catch (err) { fail(err); }
+    const o = S.orders.find((x) => x.id === +el.dataset.id), nx = o && stNext(o);
+    if (nx) coMove(o, nx.key);
   },
+  'flow-edit': () => openFlowEditor(),
+  'fe-save': () => feSave(),
+  'co-smart': (el) => { S.coSmart = S.coSmart === el.dataset.v ? '' : el.dataset.v; render(); },
   'order-print': (el, e) => { e.stopPropagation(); openNewPrint({ orderId: +el.dataset.id }); },
   'o-due-quick': (el) => { const base = $('#o-odate').value || localToday(); $('#o-due').value = addDays(base, +el.dataset.n); dueHint(); },
   'otab': (el) => { S.ordersTab = el.dataset.v; $$('#otabs button').forEach((b) => b.classList.toggle('on', b === el)); $$('.kcol').forEach((c) => c.classList.toggle('on', c.dataset.col === S.ordersTab)); },
@@ -7723,7 +8050,7 @@ function ckBuild() {
   add('Ürünler', S.products.map((p) => ({ key: `p:${p.id}`, t: p.name, sub: `${p.category ? p.category + ' · ' : ''}stok ${p.stock}${p.in_production ? ` · +${p.in_production} baskıda` : ''}`, thumb: p.thumbnail,
     sc: Math.max(ckScore(p.name, q) * 2, ckScore(p.barcodes, q), ckScore(p.file_name, q)), run: () => { location.hash = `#/urun?id=${p.id}`; }, alt: () => openNewPrint(p.id), altLabel: 'Bas', alt2: () => openProductEditor(p.id) })), 8);
   add('Baskıda', (S.jobs || []).filter((j) => j.status === 'printing').map((j) => ({ t: `${j.product_name} ×${j.quantity}`, sub: `${j.printer || 'makinesiz'} · ${j.ends_at <= nowS() ? 'sonuç bekliyor' : 'bitiş ' + fmtClock(j.ends_at)}`, thumb: j.thumbnail, sc: ckScore(j.product_name + ' ' + (j.printer || ''), q), run: () => (j.ends_at <= nowS() ? openResult(j.id) : openJobMenu(j.id)) })), 4);
-  add('Özel siparişler', (S.orders || []).map((o) => ({ t: `${o.first_name} ${o.last_name || ''}`.trim(), sub: `${o.title || o.details || ''} · ${OST[o.status]?.l || ''}`, thumb: o.image, sc: Math.max(ckScore(`${o.first_name} ${o.last_name || ''}`, q), ckScore(o.title, q), ckScore(o.phone, q)), run: () => openOrderEditor(o.id) })), 4);
+  add('Özel siparişler', (S.orders || []).map((o) => ({ t: `${o.first_name} ${o.last_name || ''}`.trim(), sub: `${o.title || o.details || ''} · ${stOf(o).name}`, thumb: o.image, sc: Math.max(ckScore(`${o.first_name} ${o.last_name || ''}`, q), ckScore(o.title, q), ckScore(o.phone, q)), run: () => openOrderEditor(o.id) })), 4);
   add('Makaralar', (S.spools || []).map((x) => ({ t: `#${x.code} ${x.color_name || colorName(x.color_hex) || ''}`, sub: `${[x.brand, x.material].filter(Boolean).join(' · ')} · ${Math.round(x.remaining)} g`, swatch: x.color_hex, sc: Math.max(ckScore(x.code, q) * 2, ckScore(x.color_name || colorName(x.color_hex), q), ckScore(x.brand, q)), run: () => { location.hash = '#/filament'; setTimeout(() => openSpoolEditor(x.id), 350); } })), 4);
   add('Ortak parça / diğer amaçlı', [...(S.components || []), ...(S.misc || [])].map((c) => ({ t: c.name, sub: c.kind === 'misc' ? 'Diğer amaçlı' : `Ortak parça · havuzda ${c.stock}`, thumb: c.thumbnail, sc: ckScore(c.name + ' ' + (c.file_name || ''), q), run: () => openCompEditor(c.id), alt: () => openNewPrint({ componentId: c.id }), altLabel: 'Bas' })), 4);
   return out;
