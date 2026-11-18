@@ -124,6 +124,7 @@ const TABS = [['baskilar', 'Baskılar', 'print'], ['stok', 'Stok', 'box'], ['fil
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, '');
   const [r, qs] = h.split('?');
+  if (r === 'urun') return { r: 'stok', q: new URLSearchParams(qs || ''), urun: true };   // raf etiketindeki QR
   return { r: TABS.some((t) => t[0] === r) ? r : 'baskilar', q: new URLSearchParams(qs || '') };
 }
 function renderTabs() {
@@ -146,9 +147,10 @@ function render() {
   renderTabs(); tick();
 }
 async function go() {
-  const { r, q } = parseHash();
+  const { r, q, urun } = parseHash();
   M.route = r;
   render();
+  if (urun && q.get('id')) { const p = M.products.find((x) => x.id === +q.get('id')); if (p) productSheet(p, null); else toast('Ürün bulunamadı', true); }
   if (q.get('job')) { const j = M.jobs.find((x) => x.id === +q.get('job')); if (j && j.status === 'printing') openResult(j); }
   if (q.get('ev')) { const e = (M.bambu.events || []).find((x) => x.id === q.get('ev')); if (e) openNewPrint(e); }
 }
@@ -398,10 +400,15 @@ function scanBindManual() {
   $('#sc-go').onclick = go; $('#sc-code').onkeydown = (e) => { if (e.key === 'Enter') go(); };
 }
 function scanFound(code) {
-  const c = code.trim().toLowerCase();
-  const p = M.products.find((x) => (x.barcodes || '').toLowerCase().split(/[,\s;]+/).includes(c));
-  if (!p) { toast(`“${code}” barkodlu ürün yok`, true); return; }
-  sheet(`<div class="m-sh-h">${thumb(p.thumbnail, 'lg')}<div><h3>${esc(p.name)}</h3><small>Barkod ${esc(code)} · stok ${p.stock}</small></div></div>
+  const raw = code.trim(), c = raw.toLowerCase();
+  // raf etiketindeki QR: ".../m/#urun?id=142" ya da "P-0142"
+  const qid = (raw.match(/urun\?id=(\d+)/) || [])[1] || (raw.match(/^P-(\d{1,7})$/i) || [])[1];
+  const p = qid ? M.products.find((x) => x.id === +qid) : M.products.find((x) => (x.barcodes || '').toLowerCase().split(/[,\s;]+/).includes(c));
+  if (!p) { toast(qid ? 'Bu etiketin ürünü bulunamadı (silinmiş olabilir)' : `“${code}” barkodlu ürün yok`, true); return; }
+  productSheet(p, qid ? null : raw);
+}
+function productSheet(p, code) {
+  sheet(`<div class="m-sh-h">${thumb(p.thumbnail, 'lg')}<div><h3>${esc(p.name)}</h3><small>${code ? `Barkod ${esc(code)}` : `P-${String(p.id).padStart(4, '0')}${p.shelf ? ' · raf ' + esc(p.shelf) : ''}`} · stok <b id="sc-stk">${p.stock}</b></small></div></div>
     <p class="m-lbl">Adet</p>${stepper('sc-n', 1, 1, 999)}
     <div class="m-res"><button class="m-choice bad" id="sc-sale">${icon('minus')}<b>Satıldı</b><small>stoktan düş</small></button>
       <button class="m-choice ok" id="sc-add">${icon('plus')}<b>Stoğa ekle</b><small>rafa koydum</small></button></div>
@@ -409,7 +416,7 @@ function scanFound(code) {
   bindSteppers();
   $('#m-sheet [data-close]').onclick = closeSheet;
   const n = () => Math.max(1, parseInt($('#sc-n').value) || 1);
-  $('#sc-sale').onclick = async () => { try { const r = await api('POST', '/api/scan', { code, quantity: n() }); p.stock = r.stock; toast(`${p.name}: −${n()} · stok ${r.stock}`); closeSheet(); } catch (e) { fail(e); } };
+  $('#sc-sale').onclick = async () => { try { const r = code ? await api('POST', '/api/scan', { code, quantity: n() }) : await api('POST', `/api/products/${p.id}/stock`, { delta: -n(), reason: 'sale', note: 'Mobil: raf etiketinden' }); p.stock = r.stock; toast(`${p.name}: −${n()} · stok ${r.stock}`); closeSheet(); } catch (e) { fail(e); } };
   $('#sc-add').onclick = async () => { try { const r = await api('POST', `/api/products/${p.id}/stock`, { delta: n(), reason: 'manual', note: 'Mobil: barkodla eklendi' }); p.stock = r.stock; toast(`${p.name}: +${n()} · stok ${r.stock}`); closeSheet(); } catch (e) { fail(e); } };
   $('#sc-again').onclick = () => { closeSheet(); setTimeout(openScan, 260); };
 }

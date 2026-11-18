@@ -1,5 +1,19 @@
 # Sürüm notları
 
+## 1.13.0
+- Home Assistant: olaylar (baskı bitti/başarısız, yeni sipariş, sabah özeti, azalan stok, bakım, yeni yorum, kargo teslim) ve sensörler (bekleyen sipariş, bugün çıkacak, yazıcı kalan süre, azalan stok, bugünkü ciro). Ayarlar → Home Assistant.
+- Elektrik: ölçer prizin kWh sensöründen tüketim yazıcılara paylaştırılır (güçler kendiliğinden öğrenilir); makine kartında aylık kWh ve ₺, kâr hesabında ürün başı elektrik.
+- Plan: 24 saatlik gece/gündüz şeridi ve yatmadan önce başlatılacak iş önerisi; panoda akşamları "Bu geceki iş".
+- Filament: açılış/kurutma takibi, makara kartında damla rozeti, sağ tık → Kuruttum.
+- Trendyol yorumları: yeni Yorumlar sekmesi, düşük puanda bildirim; başka satıcıların yorumları ayrı.
+- Özel siparişlerde Geliver ile kargo takibi; teslim edilince aşama kendiliğinden ilerler.
+- Aksesuar stoğu (halka, mıknatıs…): ürüne bağlanır, baskı sonucunda düşer, baskı başlatırken yetmezse uyarır.
+- Özel günler: panoda geri sayım, ürün bağlama ve basılacak adet önerisi.
+- Ürün maliyet kartı: maliyet çubuğu ve hedef kâr kaydırıcısı.
+- QR raf etiketi: 100×80 etikete 5 şerit; telefonla okutunca ürün kartı açılır.
+- Günaydın kartı: günün ilk açılışında özet.
+- Düzeltme: ambalaja eklenen malzemenin ilk stoğu iki kez sayılıyordu.
+
 ## 1.12.0
 - Makineler (Üretim → Makineler): her yazıcının toplam baskı saati, son 30 gün kullanımı ve 6 aylık grafiği. Bakım kaydı: tarih, tür (bakım, parça değişimi, temizlik, yağlama, kalibrasyon, onarım), parça, not ve masraf; toplam / yıllık / saat başı masraf. Saat ya da gün aralığıyla bakım hatırlatması, uygulama öncesi saatler için başlangıç saati.
 - Sağ tık menüleri her yerde: Trendyol ve özel siparişler, ürünler, baskılar, makine şeridi, yapılacaklar, ambalaj, makaralar, Hazırla, müşteriler, iadeler, sorular, bildirimler, plan. Telefonda basılı tutunca açılır; Shift + sağ tık tarayıcının menüsü.

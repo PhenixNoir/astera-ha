@@ -14,7 +14,8 @@ _db = _lock = _get = _set = None
 bambu = None
 _last_tick = 0
 on_new = None          # sunucu verir: telefona push yollar
-PUSH_PREFIXES = ("pe:", "perr:", "job:", "tylate:", "bb:", "idle:", "week:", "claim:", "qna:")
+on_event = None        # sunucu verir: yeni bildirim açılınca Home Assistant'a olay (ha.from_notification)
+PUSH_PREFIXES = ("pe:", "perr:", "job:", "tylate:", "bb:", "idle:", "week:", "claim:", "qna:", "rev:", "ship:")
 plan_fn = None          # sunucu verir: üretim planı (boşa çıkan yazıcıya öneri için)
 weekly_fn = None        # sunucu verir: weekly_summary(start, end)
 _busy_prev = None       # önceki kontrolde meşgul olan yazıcılar
@@ -70,6 +71,11 @@ def _upsert(key, kind, level, title, body, action):
         return   # kullanıcı kapattı ve şart hâlâ sürüyor: tekrar açma
     cur = _db().execute("""INSERT INTO notifications(key,kind,level,title,body,action,created_at,updated_at)
                      VALUES(?,?,?,?,?,?,?,?)""", (key, kind, level, title, body, act, t, t))
+    if on_event:
+        try:
+            on_event(key, kind, level, title, body)
+        except Exception as e:  # noqa
+            print("HA olay hatası:", e)
     if key.startswith(PUSH_PREFIXES):
         global _push
         _push = True
@@ -203,6 +209,11 @@ def _trendyol():
                              VALUES('tynew','trendyol','info',?,?,?,?,?,1)""",
                           (f"{n} yeni Trendyol siparişi", names, json.dumps({"t": "order", "href": "#/siparisler", "n": n, "pkgs": pkgs, "imgs": imgs}), t, t)).lastrowid
         _set("nf_ty_seen", max(g["date"] for g in new))
+        if on_event:
+            try:
+                on_event("tynew", "trendyol", "info", f"{len(new)} yeni Trendyol siparişi", names)
+            except Exception as e:  # noqa
+                print("HA olay hatası:", e)
         global _push
         _push = True
         _push_ids.append(nid)
@@ -294,9 +305,59 @@ def _pack():
     wanted = {}
     for r in low:
         u = "" if r["unit"] == "adet" else " " + r["unit"]
-        wanted[f"pack:{r['id']}"] = ("stock", "bad" if r["stock"] <= 0 else "warn", f"Ambalaj azaldı · {r['name']}",
-                                     f"Elde {r['stock']:g}{u} kaldı (en az {r['min']:g}{u})", {"t": "go", "href": "#/ambalaj"})
+        wanted[f"pack:{r['id']}"] = ("stock", "bad" if r["stock"] <= 0 else "warn", f"{'Aksesuar' if r.get('kind') == 'acc' else 'Ambalaj'} azaldı · {r['name']}",
+                                     f"Elde {r['stock']:g}{u} kaldı (en az {r['min']:g}{u})", {"t": "go", "href": "#/ambalaj" + ("?acc" if r.get("kind") == "acc" else "")})
     _sync_group("pack:", wanted)
+
+
+def _reviews():
+    """Bizim mağazaya gelen, Yorumlar ekranında henüz görülmemiş yorumlar."""
+    import yorum
+    try:
+        rows = yorum.unseen_ours()
+    except Exception:   # noqa — tablo henüz yoksa
+        return
+    wanted = {}
+    for r in rows:
+        stars = "★" * (r["rate"] or 0) + "☆" * (5 - (r["rate"] or 0))
+        wanted[f"rev:{r['id']}"] = ("trendyol", "warn" if (r["rate"] or 0) <= 3 else "info", f"Yeni yorum {stars} · {r['product_title'] or 'ürün'}",
+                                   (r["comment"] or "")[:160], {"t": "go", "href": "#/yorumlar"})
+    _sync_group("rev:", wanted)
+
+
+def _ship():
+    """Geliver: son 24 saatte teslim edilen ya da sorunlu (iade, başarısız) kargolar."""
+    try:
+        rows = _db().execute("""SELECT id, first_name, last_name, ship_status, ship_detail, cargo_company FROM custom_orders
+                                 WHERE ship_status IN ('DELIVERED','RETURNED','RETURN_SHIPPED','FAILED') AND ship_at>?""", (_now() - 86400,)).fetchall()
+    except Exception:   # noqa — sütun henüz yoksa
+        return
+    wanted = {}
+    for r in rows:
+        name = f"{r['first_name'] or ''} {r['last_name'] or ''}".strip()
+        ok = r["ship_status"] == "DELIVERED"
+        wanted[f"ship:{r['id']}:{r['ship_status']}"] = ("order", "ok" if ok else "bad", f"{'Kargo teslim edildi' if ok else 'Kargoda sorun'} · {name}",
+                                                       r["ship_detail"] or r["cargo_company"] or "", {"t": "corder", "id": r["id"]})
+    _sync_group("ship:", wanted)
+
+
+def _days():
+    """Özel gün hazırlık penceresi açıldı."""
+    import gunler
+    try:
+        ds = gunler.upcoming()
+    except Exception:   # noqa
+        return
+    wanted = {}
+    for d in ds:
+        if d["hidden"] or not d["prep"]:
+            continue
+        n = len(d["products"])
+        body = (f"Bağlı {n} ürün" + (f" · geçen yıl bu dönemde {d['last_year']} satış" if d["last_year"] else "")) if n else "Ürünleri bu güne bağla, stok önerisi çıksın"
+        wanted[f"day:{d['id']}:{d['date']}"] = ("stock", "warn" if d["days_left"] <= 7 else "info",
+                                                f"{d['icon']} {d['name']} · {d['days_left']} gün kaldı" if d["days_left"] else f"{d['icon']} {d['name']} bugün",
+                                                body, {"t": "go", "href": "#/"})
+    _sync_group("day:", wanted)
 
 
 def _maint():
@@ -499,7 +560,7 @@ def tick(force=False):
     _last_tick = time.time()
     with _lock:
         try:
-            for f in (_printers, _jobs, _trendyol, _buybox, _stock, _idle, _weekly, _claims, _questions, _custom_orders, _todos, _pack, _maint):
+            for f in (_printers, _jobs, _trendyol, _buybox, _stock, _idle, _weekly, _claims, _questions, _custom_orders, _todos, _pack, _maint, _reviews, _ship, _days):
                 try:
                     f()
                 except Exception as e:  # noqa — bir kontrolün hatası diğerlerini durdurmasın

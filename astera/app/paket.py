@@ -36,8 +36,16 @@ def migrate(c):
     c.execute("""CREATE TABLE IF NOT EXISTS pack_log (id INTEGER PRIMARY KEY AUTOINCREMENT, item_id INTEGER, delta REAL, stock_after REAL,
                  reason TEXT, ref TEXT, created_at INTEGER)""")
     c.execute("CREATE TABLE IF NOT EXISTS pack_done (ref TEXT PRIMARY KEY, at INTEGER)")
-    if "pin" not in {r[1] for r in c.execute("PRAGMA table_info(pack_items)")}:
+    cols = {r[1] for r in c.execute("PRAGMA table_info(pack_items)")}
+    if "pin" not in cols:
         c.execute("ALTER TABLE pack_items ADD COLUMN pin INTEGER DEFAULT 0")
+    if "kind" not in cols:   # pack = ambalaj, acc = aksesuar (halka, mıknatıs… ürüne takılır, baskıda düşer)
+        c.execute("ALTER TABLE pack_items ADD COLUMN kind TEXT DEFAULT 'pack'")
+    if "cost" not in cols:   # birim fiyat (₺); maliyet kartında kullanılır
+        c.execute("ALTER TABLE pack_items ADD COLUMN cost REAL")
+    c.execute("""CREATE TABLE IF NOT EXISTS product_acc (product_id INTEGER NOT NULL, item_id INTEGER NOT NULL, qty REAL DEFAULT 1,
+                 PRIMARY KEY (product_id, item_id))""")
+    c.execute("CREATE TABLE IF NOT EXISTS acc_done (job_id INTEGER PRIMARY KEY, at INTEGER)")
     if fresh:
         _mark_existing(c)
 
@@ -57,7 +65,7 @@ def items():
     rows = [dict(r) for r in _db().execute("SELECT * FROM pack_items WHERE archived=0 ORDER BY sort, id")]
     since = _now() - 14 * 86400
     use = {r["item_id"]: (-r["s"], r["t0"]) for r in _db().execute(
-        "SELECT item_id, SUM(delta) s, MIN(created_at) t0 FROM pack_log WHERE reason='order' AND created_at>? GROUP BY item_id", (since,))}
+        "SELECT item_id, SUM(delta) s, MIN(created_at) t0 FROM pack_log WHERE reason IN ('order','print') AND created_at>? GROUP BY item_id", (since,))}
     for r in rows:
         u, t0 = use.get(r["id"], (0, None))
         # takip 14 günden kısaysa (yeni başlandıysa) geçen gün sayısına böl; en az 3 gün say ki ilk sipariş tahmini uçurmasın
@@ -73,12 +81,17 @@ def save_item(b, iid=None):
     if not name:
         raise ValueError("Malzeme adı boş olamaz")
     unit = b.get("unit") if b.get("unit") in ("adet", "m", "kg", "paket") else "adet"
-    vals = (name, str(b.get("icon") or "📦")[:4], unit, max(0.0, float(b.get("min") or 0)))
+    try:
+        cost = max(0.0, float(str(b.get("cost")).replace(",", "."))) if b.get("cost") not in (None, "") else None
+    except ValueError:
+        raise ValueError("Birim fiyat bir sayı olmalı")
+    vals = (name, str(b.get("icon") or "📦")[:4], unit, max(0.0, float(b.get("min") or 0)), cost)
     if iid:
-        _db().execute("UPDATE pack_items SET name=?, icon=?, unit=?, min=? WHERE id=?", vals + (iid,))
+        _db().execute("UPDATE pack_items SET name=?, icon=?, unit=?, min=?, cost=? WHERE id=?", vals + (iid,))
     else:
-        cur = _db().execute("INSERT INTO pack_items(name, icon, unit, min, stock, created_at) VALUES(?,?,?,?,?,?)",
-                            vals + (max(0.0, float(b.get("stock") or 0)), _now()))
+        kind = "acc" if b.get("kind") == "acc" else "pack"
+        cur = _db().execute("INSERT INTO pack_items(name, icon, unit, min, cost, stock, kind, created_at) VALUES(?,?,?,?,?,?,?,?)",
+                            vals + (0.0, kind, _now()))   # ilk stok aşağıda "ilk sayım" olarak yazılır (iki kez sayılmasın)
         iid = cur.lastrowid
         if float(b.get("stock") or 0):
             _log(iid, float(b["stock"]), "count", "ilk sayım")
@@ -226,8 +239,71 @@ def apply():
 
 
 def low():
-    return [dict(r) for r in _db().execute("SELECT id, name, icon, unit, stock, min FROM pack_items WHERE archived=0 AND min>0 AND stock<=min")]
+    return [dict(r) for r in _db().execute("SELECT id, name, icon, unit, stock, min, kind FROM pack_items WHERE archived=0 AND min>0 AND stock<=min")]
 
 
 def state():
-    return {"items": items(), "rules": rules(), "log": log()}
+    return {"items": items(), "rules": rules(), "log": log(), "acc": acc_map(), "acc_use": acc_use()}
+
+
+# ---------------------------------------------------------------- aksesuar (ürüne takılan; baskı sonucu girilince düşer)
+
+def acc_map():
+    """{ürün id: [{item_id, qty}]}"""
+    out = {}
+    for r in _db().execute("""SELECT a.product_id, a.item_id, a.qty FROM product_acc a JOIN pack_items i ON i.id=a.item_id
+                              WHERE i.archived=0 ORDER BY a.product_id, a.item_id"""):
+        out.setdefault(r["product_id"], []).append({"item_id": r["item_id"], "qty": r["qty"]})
+    return out
+
+
+def acc_use():
+    """Aksesuar başına kaç ürün kullanıyor (depo kartında gösterilir)."""
+    return {r["item_id"]: r["n"] for r in _db().execute("SELECT item_id, COUNT(*) n FROM product_acc GROUP BY item_id")}
+
+
+def set_acc(pid, lst):
+    pid = int(pid)
+    _db().execute("DELETE FROM product_acc WHERE product_id=?", (pid,))
+    for x in lst or []:
+        iid, q = int(x.get("item_id") or 0), float(x.get("qty") or 0)
+        if iid and q > 0 and _db().execute("SELECT 1 FROM pack_items WHERE id=? AND archived=0", (iid,)).fetchone():
+            _db().execute("INSERT OR REPLACE INTO product_acc(product_id, item_id, qty) VALUES(?,?,?)", (pid, iid, min(q, 999)))
+
+
+def acc_need(pid, units):
+    """Baskı başlatırken uyarı: bu kadar adet için gereken aksesuar ve depodaki miktar."""
+    out = []
+    for r in _db().execute("""SELECT i.id, i.name, i.icon, i.unit, i.stock, i.min, a.qty FROM product_acc a JOIN pack_items i ON i.id=a.item_id
+                              WHERE a.product_id=? AND i.archived=0""", (int(pid),)):
+        need = round(r["qty"] * units, 3)
+        out.append({"id": r["id"], "name": r["name"], "icon": r["icon"], "unit": r["unit"], "need": need, "stock": r["stock"],
+                    "after": round((r["stock"] or 0) - need, 3), "min": r["min"]})
+    return out
+
+
+def acc_unit_cost(pid):
+    r = _db().execute("""SELECT SUM(a.qty * COALESCE(i.cost,0)) c FROM product_acc a JOIN pack_items i ON i.id=a.item_id
+                         WHERE a.product_id=? AND i.archived=0""", (int(pid),)).fetchone()
+    return round(r["c"] or 0, 4)
+
+
+def acc_costs():
+    return {r["product_id"]: round(r["c"] or 0, 4) for r in _db().execute(
+        """SELECT a.product_id, SUM(a.qty * COALESCE(i.cost,0)) c FROM product_acc a JOIN pack_items i ON i.id=a.item_id
+           WHERE i.archived=0 GROUP BY a.product_id""")}
+
+
+def on_print(job_id, pid, units, label=""):
+    """Baskı sonucu girildi: sağlam çıkan (ya da birleşen set) adedi kadar aksesuar düşer. Her baskı bir kez."""
+    if not pid or units <= 0:
+        return []
+    if _db().execute("SELECT 1 FROM acc_done WHERE job_id=?", (int(job_id),)).fetchone():
+        return []
+    out = []
+    for x in acc_need(pid, units):
+        _log(x["id"], -x["need"], "print", f"Baskı #{job_id}{(' · ' + label) if label else ''}")
+        out.append({"name": x["name"], "icon": x["icon"], "qty": x["need"], "unit": x["unit"]})
+    if out:
+        _db().execute("INSERT OR IGNORE INTO acc_done(job_id, at) VALUES(?,?)", (int(job_id), _now()))
+    return out

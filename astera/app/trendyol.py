@@ -40,6 +40,14 @@ def init(db, lock, get_setting, set_setting, change_stock, split_codes, now):
 USE_MODES = ("ty", "custom", "stock", "farm")   # pazar yeri, özel sipariş, stok için üretim, çok makine
 
 
+def _json_get(k, default):
+    try:
+        v = json.loads(_get(k, "") or "null")
+    except ValueError:
+        v = None
+    return v if isinstance(v, type(default)) else default
+
+
 def public_settings():
     with _lock:
         secret = _get("ty_api_secret") or ""
@@ -74,6 +82,13 @@ def public_settings():
             "ship_days": int(_get("ship_days", "1") or 1),
             "ship_skip_sunday": _get("ship_skip_sunday", "0") == "1",
             "plan_days": int(_get("plan_days", "14") or 14),
+            "sleep_from": _get("sleep_from", "00:30") or "00:30",
+            "sleep_to": _get("sleep_to", "08:30") or "08:30",
+            "dry_days": _json_get("dry_days", {}),
+            "days_off": _json_get("days_off", []),
+            "days_custom": _json_get("days_custom", []),
+            "days_lead": int(_get("days_lead", "21") or 21),
+            "geliver_set": bool(_get("geliver_token", "")),
             "weekly_at": _get("weekly_at") or "1 09:00",
             "ty_write": _get("ty_write", "0") == "1",
         }
@@ -182,6 +197,30 @@ def save_settings(b):
             _set("ship_days", max(0, min(7, int(b["ship_days"] or 0))))
         if "plan_days" in b:
             _set("plan_days", max(3, min(60, int(b["plan_days"] or 14))))
+        for k in ("sleep_from", "sleep_to"):
+            if k in b:
+                v = str(b[k] or "")
+                if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v):
+                    raise TrendyolError("Saat 00:30 biçiminde olmalı")
+                _set(k, v)
+        if "dry_days" in b and isinstance(b["dry_days"], dict):
+            _set("dry_days", json.dumps({str(k)[:20]: max(1, min(365, int(v))) for k, v in b["dry_days"].items() if str(v).strip()}, ensure_ascii=False))
+        if "days_off" in b and isinstance(b["days_off"], list):
+            _set("days_off", json.dumps([str(x)[:20] for x in b["days_off"]][:40]))
+        if "days_custom" in b and isinstance(b["days_custom"], list):
+            out = []
+            for x in b["days_custom"][:30]:
+                if not isinstance(x, dict) or not str(x.get("name") or "").strip():
+                    continue
+                if not re.fullmatch(r"\d{2}-\d{2}|\d{4}-\d{2}-\d{2}", str(x.get("date") or "")):
+                    raise TrendyolError("Özel gün tarihi AA-GG (her yıl) ya da YYYY-AA-GG olmalı")
+                out.append({"name": str(x["name"]).strip()[:40], "date": x["date"], "icon": str(x.get("icon") or "📅")[:4],
+                            "id": str(x.get("id") or ("c" + re.sub(r"\W", "", x["date"])))[:20]})
+            _set("days_custom", json.dumps(out, ensure_ascii=False))
+        if "days_lead" in b:
+            _set("days_lead", max(3, min(90, int(b["days_lead"] or 21))))
+        if "geliver_token" in b and b["geliver_token"] is not None:
+            _set("geliver_token", str(b["geliver_token"]).strip()[:500])
         if "weekly_at" in b:
             v = (b["weekly_at"] or "").strip()
             if v != "off" and not re.fullmatch(r"[1-7] ([01]\d|2[0-3]):[0-5]\d", v):

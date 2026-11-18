@@ -239,3 +239,40 @@ def print_packages(package_ids, refetch=False):
         trendyol.mark_label(pid)
         printed.append(pid)
     return {"printed": printed, "errors": errors}
+
+
+# ---------------------------------------------------------------- raf etiketi (QR)
+def _zpl_txt(s):
+    """ZPL alanı: ^ ve ~ komut karakteridir, çıkar."""
+    return str(s or "").replace("^", " ").replace("~", " ").strip()
+
+
+def shelf_zpl(items, dpi=203, w_mm=100, h_mm=80, cols=5):
+    """Raf etiketi: 100×80 mm etikete yan yana 5 tane 20×80 mm dikey şerit. items: [{name, code, shelf, url}].
+    Her şeridin üstünde QR (yazıcı kendisi üretir), altında boyuna yazılmış ürün adı, kod ve raf yeri."""
+    k = dpi / 25.4
+    W, H = int(w_mm * k), int(h_mm * k)
+    cw = W // cols
+    out = []
+    for i in range(0, len(items), cols):
+        page = [f"^XA^CI28^PW{W}^LL{H}^LH0,0"]
+        for j, it in enumerate(items[i:i + cols]):
+            x0 = j * cw
+            url = _zpl_txt(it.get("url"))
+            n = len(url.encode())
+            mods = 21 if n <= 14 else 25 if n <= 26 else 29 if n <= 42 else 33 if n <= 62 else 37 if n <= 84 else 41
+            mag = max(2, min(10, int((cw - 16) / (mods + 2))))
+            qx = x0 + max(4, (cw - mag * mods) // 2) - mag * 2
+            page.append(f"^FO{qx},{int(3 * k)}^BQN,2,{mag}^FDMA,{url}^FS")
+            ty = int(3 * k) + mag * (mods + 4) + int(2 * k)
+            name = _zpl_txt(it.get("name"))[:30]
+            fh = int(min(cw * 0.32, 5.4 * k))
+            page.append(f"^FO{x0 + int(cw * 0.48)},{ty}^A0R,{fh},{int(fh * 0.86)}^FB{H - ty - int(3 * k)},1,0,L^FD{name}^FS")
+            sub = "  ".join(x for x in (_zpl_txt(it.get("code")), _zpl_txt(it.get("shelf"))) if x)
+            sh = int(fh * 0.62)
+            page.append(f"^FO{x0 + int(cw * 0.16)},{ty}^A0R,{sh},{int(sh * 0.9)}^FD{sub}^FS")
+            if j < cols - 1:
+                page.append(f"^FO{x0 + cw - 1},{int(2 * k)}^GB1,{H - int(4 * k)},1^FS")
+        page.append("^XZ")
+        out.append("".join(page))
+    return "\n".join(out)

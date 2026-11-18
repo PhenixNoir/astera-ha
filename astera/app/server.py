@@ -51,6 +51,10 @@ import isler
 import kisiler
 import paket
 import makine
+import ha
+import yorum
+import kargo
+import gunler
 import push
 import auth
 import updater
@@ -356,7 +360,7 @@ def migrate():
     for col, typ in (("category", "TEXT"), ("set_size", "INTEGER DEFAULT 1"), ("parts_same_color", "INTEGER DEFAULT 1"),
                      ("group_id", "INTEGER"), ("variant_label", "TEXT"),
                      ("sale_price", "REAL"), ("cargo_fee", "REAL"), ("extra_cost", "REAL"), ("commission_pct", "REAL"),
-                     ("ty_commission", "REAL"), ("ty_title", "TEXT"), ("ty_url", "TEXT"), ("ty_barcode", "TEXT")):
+                     ("ty_commission", "REAL"), ("ty_title", "TEXT"), ("ty_url", "TEXT"), ("ty_barcode", "TEXT"), ("shelf", "TEXT")):
         if col not in pcols:
             c.execute(f"ALTER TABLE products ADD COLUMN {col} {typ}")
     jcols = _columns("print_jobs")
@@ -366,6 +370,9 @@ def migrate():
             c.execute(f"ALTER TABLE print_jobs ADD COLUMN {col} {typ}")
     if "price" not in _columns("spools"):
         c.execute("ALTER TABLE spools ADD COLUMN price REAL")
+    for col in ("opened_at", "dried_at"):   # kurutma takibi: açıldığı ve son kurutulduğu gün (YYYY-AA-GG)
+        if col not in _columns("spools"):
+            c.execute(f"ALTER TABLE spools ADD COLUMN {col} TEXT")
     ocols = _columns("custom_orders")
     for col, typ in (("grams", "REAL"), ("print_type", "TEXT DEFAULT 'SLA'"), ("items", "TEXT"), ("item_opts", "TEXT")):
         if col not in ocols:
@@ -416,6 +423,11 @@ def init_db():
         paket.migrate(db())
         makine.init(db, get_setting)
         makine.migrate(db())
+        ha.migrate(db())
+        yorum.migrate(db())
+        kargo.migrate(db())
+        gunler.init(db, get_setting)
+        gunler.migrate(db())
         sync_part_grams()
         for col in ("order_date", "due_date"):   # eski örnek veriler tarihi saniye olarak yazmıştı → YYYY-AA-GG
             db().execute(f"UPDATE custom_orders SET {col}=date(CAST({col} AS INTEGER),'unixepoch','localtime') "
@@ -526,9 +538,17 @@ def load_products(include_archived=False, pid=None):
     printed90 = {r["product_id"]: r["q"] for r in db().execute(
         """SELECT product_id, SUM(quantity) q FROM print_jobs WHERE product_id IS NOT NULL AND started_at>=?
            AND status<>'cancelled' GROUP BY product_id""", (now() - 90 * 86400,))}
+    kwh = ha.product_kwh()
+    accc = paket.acc_costs()
+    lw = [x["watt"] for k, x in ha.learned().items() if k and x.get("watt")]
+    avg_w = sum(lw) / len(lw) if lw else ha.DEFAULT_W
     out = []
     for r in rows:
         d = product_dict(r, mats, prod)
+        d["kwh_unit"] = kwh.get(r["id"])   # ölçülen (ölçer prizden), 1 adet
+        d["acc_cost"] = accc.get(r["id"]) or 0
+        if r["print_minutes"]:
+            d["kwh_est"] = round(r["print_minutes"] / 60 * avg_w / 1000 / max(1, r["pieces_per_print"] or 1), 4)
         d["last_order_at"] = last_order.get(r["id"])
         d["sold_30"] = max(0, sold30.get(r["id"], 0) or 0)
         d["printed_90"] = printed90.get(r["id"], 0)
@@ -769,7 +789,7 @@ def save_materials(pid, materials, optional=False):
 
 PRODUCT_FIELDS = ["name", "print_type", "thumbnail", "grams", "print_minutes", "pieces_per_print",
                   "file_name", "min_stock", "barcodes", "notes", "category", "set_size", "parts_same_color", "variant_label",
-                  "sale_price", "cargo_fee", "extra_cost", "commission_pct"]
+                  "sale_price", "cargo_fee", "extra_cost", "commission_pct", "shelf"]
 # Renk varyantlarında ortak tutulan alanlar (renk, görsel, stok, barkod varyanta özeldir)
 VARIANT_SHARED = ["name", "print_type", "grams", "print_minutes", "file_name", "notes", "category", "set_size", "parts_same_color",
                  "sale_price", "cargo_fee", "extra_cost", "commission_pct"]
@@ -804,6 +824,8 @@ def clean_product(body, partial=False):
                 raise ApiError("Komisyon oranı 100'den küçük olmalı")
     if "variant_label" in out:
         out["variant_label"] = (out["variant_label"] or "").strip() or None
+    if "shelf" in out:   # raf yeri (QR etiketinde yazar)
+        out["shelf"] = str(out["shelf"] or "").strip()[:20] or None
     if "parts_same_color" in out:
         out["parts_same_color"] = 1 if out["parts_same_color"] else 0
     if "set_size" in out:
@@ -1128,7 +1150,7 @@ def api_product_add_barcode(req, pid):
     return {"ok": True, **trendyol.rematch_code(code)}
 
 
-SPOOL_FIELDS = ["code", "brand", "material", "color_hex", "color_name", "net_weight", "remaining", "tare", "photo", "notes", "price"]
+SPOOL_FIELDS = ["code", "brand", "material", "color_hex", "color_name", "net_weight", "remaining", "tare", "photo", "notes", "price", "opened_at", "dried_at"]
 MATERIALS = ["PLA", "PLA+", "PLA Matte", "PLA Silk", "PETG", "ABS", "ASA", "TPU", "PA / Nylon", "PC", "CF katkılı", "Reçine", "Diğer"]
 
 
@@ -1175,6 +1197,11 @@ def clean_spool(b):
             out[f] = round(max(0.0, float(out[f])), 2 if f == "price" else 1) if out[f] not in (None, "") else (None if f in ("tare", "price") else 0)
     if out.get("color_hex") and not re.fullmatch(r"#[0-9a-fA-F]{6}|transparent", out["color_hex"]):
         raise ApiError("Renk geçersiz")
+    for f in ("opened_at", "dried_at"):
+        if f in out:
+            out[f] = str(out[f] or "").strip()[:10] or None
+            if out[f] and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", out[f]):
+                raise ApiError("Tarih YYYY-AA-GG biçiminde olmalı")
     for f in ("brand", "color_name", "notes"):
         if f in out:
             out[f] = (out[f] or "").strip() or None
@@ -1743,6 +1770,8 @@ def consume_spools(j, b):
         db().execute("UPDATE job_spools SET used=? WHERE id=?", (used, r["id"]))
         if used:
             spool_change(r["spool_id"], -used, "print", ref=f"baskı #{j['id']}")
+            # ilk kez kullanılan makara: açıldığı gün bugündür (kurutma takibi bundan sayar)
+            db().execute("UPDATE spools SET opened_at=? WHERE id=? AND opened_at IS NULL", (time.strftime("%Y-%m-%d"), r["spool_id"]))
 
 
 def spool_change(sid, delta, reason, ref=None):
@@ -1896,6 +1925,13 @@ def api_job_complete(req, jid):
     if j and j["status"] == "printing":
         consume_spools(j, req.json())
         res["spools"] = job_rows("j.id=?", (int(jid),))[0]["spools"]
+        if j["product_id"] and not j["order_id"]:
+            # aksesuar (halka, mıknatıs…): sağlam çıkan adet ya da birleşen set kadar düşer
+            units = res.get("assembled") if res.get("assembled") is not None else (res.get("good_quantity") or 0)
+            try:
+                res["acc_used"] = paket.on_print(int(jid), j["product_id"], int(units or 0), res.get("product_name") or "")
+            except Exception as e:  # noqa
+                print("Aksesuar düşüm hatası:", e)
     return res
 
 
@@ -2544,7 +2580,187 @@ def api_orders(req):
 
 @route("GET", "/api/machines")
 def api_machines(req):
-    return makine.summary()
+    """Makineler: baskı saatleri, bakım ve elektrik (ölçer priz ayarlıysa)."""
+    out = makine.summary()
+    e = ha.summary()
+    for m in out:
+        m["kwh_month"] = round(e["month"].get(m["name"], 0) or 0, 3)
+        m["kwh_days"] = [x for x in e["days"] if x["printer"] == m["name"]]
+        m["watt"] = (e["learned"].get(m["name"]) or {}).get("watt")
+        m["tariff"], m["elec_on"] = e["tariff"], e["configured"]
+    return out
+
+
+@route("GET", "/api/reviews")
+def api_reviews(req):
+    return yorum.state()
+
+
+@route("POST", "/api/reviews/fetch", lock=False)
+def api_reviews_fetch(req):
+    r = yorum.run(force=True)
+    with DB_LOCK:
+        st = yorum.state()
+    st["run"] = r
+    return st
+
+
+@route("POST", "/api/reviews/seen")
+def api_reviews_seen(req):
+    yorum.mark_seen()
+    return {"ok": True}
+
+
+@route("GET", "/api/geliver/shipments", lock=False)
+def api_geliver_list(req):
+    try:
+        return kargo.recent(50)
+    except RuntimeError as e:
+        raise ApiError(str(e), 502)
+
+
+@route("POST", "/api/geliver/sync", lock=False)
+def api_geliver_sync(req):
+    r = kargo.run(force=True)
+    if r.get("error") and not r.get("matched"):
+        raise ApiError(r["error"], 502)
+    return r
+
+
+@route("POST", "/api/orders/{oid}/ship-link")
+def api_order_ship_link(req, oid):
+    ship = req.json().get("ship") or {}
+    if not ship.get("id"):
+        raise ApiError("Gönderi seçin")
+    kargo.link(int(oid), ship)
+    return {"ok": True}
+
+
+@route("GET", "/api/orders/{oid}/ship-log")
+def api_order_ship_log(req, oid):
+    return kargo.log(int(oid))
+
+
+@route("GET", "/api/days")
+def api_days(req):
+    return gunler.upcoming()
+
+
+@route("PUT", "/api/days/{did}/products")
+def api_day_products(req, did):
+    if not re.fullmatch(r"[\w-]{1,20}", did or ""):
+        raise ApiError("Gün geçersiz")
+    gunler.set_products(did, req.json().get("ids") or [])
+    return gunler.upcoming()
+
+
+@route("GET", "/api/morning")
+def api_morning(req):
+    return morning_summary()
+
+
+def morning_summary():
+    """Sabah özeti (Günaydın kartı ve Home Assistant): bugün çıkacaklar, gece biten baskılar, azalanlar, ödemeler, işler, özel gün."""
+    t = now()
+    lt = time.localtime(t)
+    d0 = int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1)))
+    out = {"date": time.strftime("%Y-%m-%d", lt)}
+    pk = {}
+    for r in db().execute("""SELECT COALESCE(package_id, order_number) k, MIN(deadline) dl FROM ty_lines
+                             WHERE ty_status IN ('Created','Awaiting','Picking','Invoiced') GROUP BY k"""):
+        pk[r["k"]] = r["dl"]
+    today = [k for k, dl in pk.items() if dl and dl < (d0 + 86400) * 1000]
+    urgent = [k for k, dl in pk.items() if dl and dl < (t + 4 * 3600) * 1000]
+    out["orders_today"], out["orders_urgent"], out["orders_open"] = len(today), len(urgent), len(pk)
+    out["jobs_done"] = [dict(r) for r in db().execute(f"{JOB_SELECT} WHERE j.status='printing' AND j.ends_at<=?", (t,))]
+    out["jobs_done"] = [{"id": j["id"], "name": j["product_name"], "qty": j["quantity"], "printer": j["printer"]} for j in out["jobs_done"]]
+    out["low"] = [{"title": r["title"], "key": r["key"]} for r in db().execute(
+        """SELECT key, title FROM notifications WHERE resolved_at IS NULL AND (key LIKE 'low:%' OR key LIKE 'spool:%' OR key LIKE 'pack:%')
+           ORDER BY id DESC LIMIT 8""")]
+    unpaid = db().execute("""SELECT COUNT(*) n, COALESCE(SUM(price-COALESCE(paid,0)),0) s FROM custom_orders
+                             WHERE status<>'cancelled' AND price>0 AND price-COALESCE(paid,0)>0.004""").fetchone()
+    out["unpaid"] = {"n": unpaid["n"], "sum": round(unpaid["s"] or 0, 2)}
+    try:
+        out["todos"] = [dict(r) for r in db().execute("""SELECT id, text, due FROM todos WHERE done_at IS NULL AND due IS NOT NULL AND due<>'' AND due<=?
+                                                         ORDER BY due LIMIT 8""", (out["date"],))]
+    except sqlite3.Error:
+        out["todos"] = []
+    try:
+        out["reviews"] = [dict(r) for r in db().execute("SELECT rate, product_title FROM ty_reviews WHERE ours=1 AND created>=? ORDER BY created DESC",
+                                                        (t - 86400,))]
+    except sqlite3.Error:
+        out["reviews"] = []
+    try:
+        nd = gunler.next_one()
+        out["day"] = {"name": nd["name"], "icon": nd["icon"], "days_left": nd["days_left"]} if nd else None
+    except Exception:  # noqa
+        out["day"] = None
+    parts = []
+    if out["orders_today"]:
+        parts.append(f"{out['orders_today']} sipariş bugün çıkacak" + (f" ({out['orders_urgent']} acil)" if out["orders_urgent"] else ""))
+    if out["jobs_done"]:
+        parts.append(f"{len(out['jobs_done'])} baskı bitti")
+    if out["low"]:
+        parts.append(f"{len(out['low'])} şey azaldı")
+    if out["unpaid"]["n"]:
+        parts.append(f"{out['unpaid']['n']} ödeme bekliyor")
+    if out["todos"]:
+        parts.append(f"{len(out['todos'])} iş bugün")
+    out["title"] = "Günaydın"
+    out["body"] = " · ".join(parts) or "Bugün acil bir şey yok"
+    return out
+
+
+@route("POST", "/api/label/shelf", lock=False)
+def api_label_shelf(req):
+    b = req.json()
+    items = [x for x in (b.get("items") or []) if isinstance(x, dict) and x.get("url")][:200]
+    if not items:
+        raise ApiError("Etiket için ürün seçin")
+    dpi = 300 if int(b.get("dpi") or 203) == 300 else 203
+    err = etiket.send(etiket.shelf_zpl(items, dpi=dpi))
+    if err:
+        raise ApiError(err, 502)
+    return {"printed": len(items), "labels": (len(items) + 4) // 5}
+
+
+@route("GET", "/api/energy")
+def api_energy(req):
+    return ha.summary()
+
+
+@route("GET", "/api/ha")
+def api_ha(req):
+    return ha.public_conf()
+
+
+@route("PUT", "/api/ha")
+def api_ha_save(req):
+    try:
+        return ha.save_conf(req.json())
+    except ValueError as e:
+        raise ApiError(str(e))
+
+
+@route("POST", "/api/ha/test", lock=False)
+def api_ha_test(req):
+    st = ha.check()
+    if not st["ok"]:
+        raise ApiError(st["error"] or "Home Assistant'a ulaşılamadı", 502)
+    try:
+        ha.fire_now("test", {"title": "Astera test olayı", "body": "Bağlantı çalışıyor"})
+        ha.publish_sensors()
+    except RuntimeError as e:
+        raise ApiError(str(e), 502)
+    return st
+
+
+@route("GET", "/api/ha/entities", lock=False)
+def api_ha_entities(req):
+    try:
+        return ha.entities()
+    except RuntimeError as e:
+        raise ApiError(str(e), 502)
 
 
 @route("POST", "/api/machines/maint")
@@ -2553,7 +2769,7 @@ def api_maint_add(req):
         makine.add(req.json())
     except ValueError as e:
         raise ApiError(str(e))
-    return makine.summary()
+    return api_machines(None)
 
 
 @route("PUT", "/api/machines/maint/{mid}")
@@ -2562,19 +2778,19 @@ def api_maint_upd(req, mid):
         makine.update(int(mid), req.json())
     except ValueError as e:
         raise ApiError(str(e))
-    return makine.summary()
+    return api_machines(None)
 
 
 @route("DELETE", "/api/machines/maint/{mid}")
 def api_maint_del(req, mid):
     makine.delete(int(mid))
-    return makine.summary()
+    return api_machines(None)
 
 
 @route("PUT", "/api/machines/cfg/{name}")
 def api_machine_cfg(req, name):
     makine.set_cfg(unquote(name), req.json())
-    return makine.summary()
+    return api_machines(None)
 
 
 @route("GET", "/api/pack")
@@ -2588,6 +2804,17 @@ def _pk(fn, *a):
         return fn(*a)
     except ValueError as e:
         raise ApiError(str(e))
+
+
+@route("PUT", "/api/products/{pid}/acc")
+def api_product_acc(req, pid):
+    paket.set_acc(int(pid), req.json().get("items") or [])
+    return {"acc": paket.acc_map().get(int(pid), []), "cost": paket.acc_unit_cost(int(pid))}
+
+
+@route("GET", "/api/products/{pid}/acc-need")
+def api_product_acc_need(req, pid):
+    return paket.acc_need(int(pid), max(0, float(req.query.get("n") or 1)))
 
 
 @route("POST", "/api/pack/items")
@@ -3363,7 +3590,7 @@ def api_weekly(req):
 
 @route("GET", "/api/profit")
 def api_profit(req):
-    return {"cfg": profit_cfg(), "prices": spool_prices()}
+    return {"cfg": profit_cfg(), "prices": spool_prices(), "elec_tariff": ha.conf()["tariff"]}
 
 
 @route("PUT", "/api/profit")
@@ -3395,7 +3622,7 @@ def api_profit_save(req):
         cfg["min_qty"] = mq[:8]
     set_setting("profit", json.dumps({k: cfg[k] for k in PROFIT_DEFAULTS}))
     db().commit()
-    return {"cfg": cfg, "prices": spool_prices()}
+    return {"cfg": cfg, "prices": spool_prices(), "elec_tariff": ha.conf()["tariff"]}
 
 
 @route("GET", "/api/backups")
@@ -4657,6 +4884,15 @@ def main():
         auth.init(db, DB_LOCK, get_setting, set_setting)
         db().commit()
     notify.on_new = push.send_async
+    ha.init(db, DB_LOCK, get_setting, set_setting, bambu)
+    ha.summary_fn = morning_summary
+    notify.on_event = ha.from_notification
+    ha.start()
+    yorum.init(db, DB_LOCK, get_setting, set_setting)
+    yorum.code_map = trendyol._code_map
+    yorum.start()
+    kargo.init(db, DB_LOCK, get_setting, set_setting)
+    kargo.start()
     notify.plan_fn = build_plan
     notify.weekly_fn = weekly_summary
     notify.start()

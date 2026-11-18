@@ -173,6 +173,7 @@ const NAV = [
   { r: 'siparisler', label: 'Siparişler', icon: 'clip', title: 'Siparişler' },
   { r: 'iadeler', label: 'İadeler', icon: 'return', title: 'İadeler' },
   { r: 'sorular', label: 'Sorular', icon: 'chat', title: 'Müşteri soruları' },
+  { r: 'yorumlar', label: 'Yorumlar', icon: 'star', title: 'Trendyol yorumları' },
   { r: 'satis', label: 'Satış', icon: 'cart', title: 'Satış ve Trendyol' },
   { r: 'buybox', label: 'Buybox', icon: 'crown', title: 'Buybox' },
   { r: 'filament', label: 'Filamentler', icon: 'spool', title: 'Filamentler' },
@@ -186,7 +187,7 @@ const NAV = [
 // Menü grupları: solda ince ikon şeridi, grubun sayfaları içeriğin üstünde sekme. "sayfa?kaynak" = Siparişler'in Trendyol / Özel görünümü
 const NAV_GROUPS = [
   { k: 'pano', label: 'Pano', icon: 'home', tabs: [''] },
-  { k: 'siparis', label: 'Siparişler', icon: 'clip', tabs: ['siparisler?ty', 'siparisler?custom', 'hazirla', 'iadeler', 'sorular', 'musteriler'] },
+  { k: 'siparis', label: 'Siparişler', icon: 'clip', tabs: ['siparisler?ty', 'siparisler?custom', 'hazirla', 'iadeler', 'sorular', 'yorumlar', 'musteriler'] },
   { k: 'uretim', label: 'Üretim', icon: 'layers', tabs: ['baskilar', 'plan', 'makineler', 'filament', 'ambalaj'] },
   { k: 'urun', label: 'Ürünler', icon: 'box', tabs: ['urunler', 'satis', 'buybox'] },
   { k: 'para', label: 'Para', icon: 'coin', tabs: ['kar', 'finans', 'istatistik'] },
@@ -287,6 +288,7 @@ function navBadge(r, src) {
   if (r === 'baskilar') return { n: dueJobs().length };
   if (r === 'iadeler') return { n: nf('claim:'), cls: 'bad' };
   if (r === 'sorular') return { n: nf('qna:') };
+  if (r === 'yorumlar') return { n: nf('rev:'), cls: (S.notif?.items || []).some((x) => !x.resolved_at && String(x.key).startsWith('rev:') && x.level === 'warn') ? 'bad' : '' };
   if (r === 'buybox') return { n: nf('bb:'), cls: 'bad' };
   if (r === 'ambalaj') return { n: nf('pack:'), cls: 'bad' };
   if (r === 'siparisler') {
@@ -615,6 +617,7 @@ PAGES[''] = {
     dashNewLoad();
     todoBind();
     bindPackBar();
+    loadDays().then(fillDays);
     if (!S.pack || Date.now() - (S.packAt || 0) > 60000) api('GET', '/api/pack').then((r) => { S.pack = r; S.packAt = Date.now(); fillPackBar(); }).catch(() => {});
     if (!S.todos || Date.now() - (S.todosAt || 0) > 30000) loadTodos().then(() => { S.todosAt = Date.now(); fillTodo(); });
   },
@@ -643,6 +646,8 @@ PAGES[''] = {
 // ---------- pano bölümleri: sırası, genişliği ve görünürlüğü cihaz başına kaydedilir
 const DASH_SECTIONS = {
   packbar: { title: 'Ambalaj şeridi', w: 'full', html: () => packBarHTML() },
+  tonight: { title: 'Bu geceki iş (akşamları)', w: 'full', html: () => tonightHTML() },
+  days: { title: 'Özel günler', w: 'full', html: () => daysHTML() },
   todo: { title: 'Yapılacaklar', w: 'full', html: () => todoHTML() },
   neworders: { title: 'Yeni siparişler', w: 'full', html: () => dashNewHTML() },
   timeline: { title: 'Makine çizelgesi', w: 'full', html: () => timelineHTML() },
@@ -655,7 +660,7 @@ const DASH_SECTIONS = {
   log: { title: 'Son stok hareketleri', w: 'half', html: () => `<section class="panel"><div class="panel-h"><h2>Son stok hareketleri</h2></div><div class="panel-b">${logList(S.log)}</div></section>` },
   colors: { title: 'Kullanılan renkler', w: 'full', html: () => colorsHTML() },
 };
-const DASH_DEFAULT = ['packbar', 'todo', 'neworders', 'plan', 'timeline', 'bed', 'terms', 'ty', 'readout', 'low', 'log', 'colors'];
+const DASH_DEFAULT = ['packbar', 'tonight', 'days', 'todo', 'neworders', 'plan', 'timeline', 'bed', 'terms', 'ty', 'readout', 'low', 'log', 'colors'];
 const DASH_W = { full: 'Tam', half: 'Yarım', third: 'Üçte bir' };
 function dashLayout() {
   let saved = [];
@@ -1016,6 +1021,7 @@ PAGES.urunler = {
         </div>
         <span class="spacer"></span>
         <button class="btn${S.psel ? ' on' : ''}" data-act="psel-mode" title="Birden çok ürün seç" aria-label="${S.psel ? 'Seçimi bitir' : 'Seç'}">${icon('check')}<span class="hide-sm"> ${S.psel ? 'Bitir' : 'Seç'}</span></button>
+        <button class="btn" data-act="shelf-labels" title="QR raf etiketleri" aria-label="Raf etiketleri">${icon('barcode')}<span class="hide-md"> Raf etiketi</span></button>
         <button class="btn" data-act="ty-products" title="Trendyol ürünleri" aria-label="Trendyol ürünleri">${icon('cart')}<span class="hide-md"> Trendyol</span></button>
         <button class="btn btn-primary" data-act="new-product" title="Ürün ekle" aria-label="Ürün ekle">${icon('plus')}<span class="hide-sm"> Ekle</span></button>
       </div>
@@ -1395,7 +1401,7 @@ async function quickStock(id, d) {
 // ---------- product editor
 let ED = null;
 // Ürün düzenleyicideki bölümlerin açık/kapalı hali cihaz başına hatırlanır (ilk seferde Notlar ve Stok geçmişi kapalı)
-const ED_SEC_DEFAULT = { notes: false, hist: false };
+const ED_SEC_DEFAULT = { notes: false, hist: false, acc: false };
 function edSecOpen(k) { try { const v = JSON.parse(localStorage.getItem('edSecs') || '{}'); return k in v ? !!v[k] : ED_SEC_DEFAULT[k] ?? true; } catch { return ED_SEC_DEFAULT[k] ?? true; } }
 function edSecSave(k, open) { try { const v = JSON.parse(localStorage.getItem('edSecs') || '{}'); v[k] = open; localStorage.setItem('edSecs', JSON.stringify(v)); } catch { /* */ } }
 async function openProductEditor(id) {
@@ -1491,8 +1497,12 @@ async function openProductEditor(id) {
           </div>
           <div class="pf-box" id="pf-box"></div>
         </div><div id="ty-box"></div></div></details>
+      <details class="ed-sec" data-sec="acc" ${edSecOpen('acc') ? 'open' : ''}><summary><span>Aksesuarlar <span class="faint">(halka, mıknatıs… baskıda düşer)</span></span><small class="ed-sum" id="ed-acc-sum"></small></summary>
+        <div id="ed-acc" class="ed-acc"></div></details>
       <details class="ed-sec" data-sec="notes" ${edSecOpen('notes') ? 'open' : ''}><summary><span>Notlar</span><small class="ed-sum">${esc((ED.notes || '').slice(0, 60))}</small></summary>
-        <textarea class="input" id="f-notes" rows="2" placeholder="Destek ayarı, boya, paketleme notu…" aria-label="Notlar">${esc(ED.notes || '')}</textarea></details>
+        <textarea class="input" id="f-notes" rows="2" placeholder="Destek ayarı, boya, paketleme notu…" aria-label="Notlar">${esc(ED.notes || '')}</textarea>
+        <div class="row ed-shelf"><label class="field" style="max-width:180px"><span>Raf yeri</span><input class="input" id="f-shelf" value="${esc(ED.shelf || '')}" maxlength="20" placeholder="ör. R2-A"></label>
+          ${id ? `<span class="muted" style="align-self:end;margin-bottom:9px">Kod <b class="mono">${prodCode(ED)}</b></span><button type="button" class="btn btn-sm" style="align-self:end;margin-bottom:5px" data-act="shelf-labels" data-id="${id}">${icon('barcode')} Raf etiketi</button>` : ''}</div></details>
       ${id ? `<details class="ed-sec" data-sec="hist" ${edSecOpen('hist') ? 'open' : ''}><summary><span>Stok geçmişi</span></summary><div id="phist" class="muted">Yükleniyor…</div></details>` : ''}
     </div>
     <div class="modal-f">
@@ -1508,6 +1518,7 @@ async function openProductEditor(id) {
   renderParts();
   applyCategoryUI();
   ['#f-price', '#f-extra', '#f-com', '#f-cargo', '#f-grams', '#f-set'].forEach((x) => $(x)?.addEventListener('input', edProfitRender));
+  edAccInit(id);
   loadProfit().then(() => { const c = $('#f-com'), k = $('#f-cargo'); if (c) c.placeholder = defaultCommission(ED.category, ED); if (k) k.placeholder = S.profit.cfg.cargo_over; edProfitRender(); }).catch(() => {});
   $('#f-cat').onclick = (e) => {
     const b = e.target.closest('button'); if (!b) return;
@@ -1853,7 +1864,7 @@ async function saveProduct() {
     ...(ED.group_id ? { variant_label: ($('#f-vlabel')?.value || '').trim() || ED.variant_label } : {}),
     category: ED.category || null, set_size: Math.max(1, parseInt($('#f-set').value) || 1), file_name: $('#f-file').value.trim(),
     stock: parseInt($('#f-stock').value) || 0, min_stock: parseInt($('#f-min').value) || 0,
-    barcodes: $('#f-barcodes').value.trim(), notes: $('#f-notes').value.trim(),
+    barcodes: $('#f-barcodes').value.trim(), notes: $('#f-notes').value.trim(), shelf: $('#f-shelf')?.value.trim() ?? undefined,
     materials: catFlags(ED.category).no_materials ? [] : ED.materials.map((m) => ({ color_hex: m.color_hex, color_name: m.color_name || colorName(m.color_hex), brand: (m.brand || '').trim(), grams: m.grams ?? null })),
     sale_price: $('#f-price').value.trim().replace(',', '.'), extra_cost: $('#f-extra').value.trim().replace(',', '.'),
     commission_pct: $('#f-com').value.trim().replace(',', '.'), cargo_fee: $('#f-cargo').value.trim().replace(',', '.'),
@@ -1866,8 +1877,9 @@ async function saveProduct() {
   if (!body.name) { $('#f-name').focus(); return toast('Ürün adını yazın', { bad: true }); }
   if (ED.hadParts && !ED.partsOn && ED.parts.some((x) => x.stock > 0) && !confirm('Parça listesi kaldırılırsa eldeki basılmış parça sayıları silinir. Devam edilsin mi?')) return;
   try {
-    if (ED.id) await api('PUT', `/api/products/${ED.id}`, body);
-    else await api('POST', '/api/products', body);
+    const saved = ED.id ? await api('PUT', `/api/products/${ED.id}`, body) : await api('POST', '/api/products', body);
+    const pidS = ED.id || saved?.id;
+    if (pidS && (ED.acc?.length || S.pack?.acc?.[pidS]?.length)) { await api('PUT', `/api/products/${pidS}/acc`, { items: ED.acc || [] }).catch(fail); S.pack = null; }
     closeModal(); toast(ED.id ? 'Ürün kaydedildi' : 'Ürün eklendi');
     render();
   } catch (e) { fail(e); }
@@ -1923,6 +1935,7 @@ async function openNewPrint(arg) {
         <div class="seg type" id="np-type">${['SLA', 'FDM'].map((t) => `<button type="button" data-v="${t}" class="${t === 'SLA' ? 'on' : ''}">${t}</button>`).join('')}</div></div>
       <div class="field hidden" id="np-spools-field"><span>Makara <span class="faint">(isteğe bağlı · bitince gramı buradan düşer)</span></span><div id="np-spools"></div></div>
       <div class="np-fail hidden" id="np-fail"></div>
+      <div id="np-acc"></div>
       <div class="ends" id="np-ends">${icon('clock')}<span></span></div>
       </div>
       <div class="np-c np-c3">
@@ -2318,7 +2331,14 @@ function openSpoolPicker(btn, i) {
   setTimeout(() => { document.addEventListener('pointerdown', palOutside); $('#sp-pop-q', pop)?.focus(); }, 0);
 }
 
-function npEnds() { npEnds0(); npFootSum(); }
+const accToast = (r) => { if (r?.acc_used?.length) setTimeout(() => toast(`🔩 Aksesuar düştü: ${r.acc_used.map((x) => `${x.icon} ${x.name} −${pkNum(x.qty)}`).join(' · ')}`), 1600); S.pack = null; };
+function npEnds() { npEnds0(); npFootSum(); npAccWarn(); }
+let npAccT = 0;
+function npAccWarn() {
+  clearTimeout(npAccT); const host = $('#np-acc'); if (!host) return;
+  if (!NP || NP.mode !== 'product' || !NP.pid || !(S.pack?.acc?.[NP.pid]?.length ?? true)) { host.innerHTML = ''; return; }
+  npAccT = setTimeout(() => accWarn(NP.pid, parseInt($('#np-qty')?.value) || 1, host), 250);
+}
 // Alt çubukta kısa özet: ne · kaç · hangi makine · ne zaman biter
 function npFootSum() {
   const el = $('#np-fsum'); if (!el || !NP) return;
@@ -2666,7 +2686,7 @@ async function saveBulk() {
     try {
       const body = { success: v.ok };
       if (v.ok && !j.parts?.length && !j.is_order) body.good_quantity = v.good;
-      const r = await api('POST', `/api/jobs/${id}/complete`, body);
+      const r = await api('POST', `/api/jobs/${id}/complete`, body); accToast(r);
       if (v.ok) { ok++; added += r.good_quantity || 0; } else bad++;
     } catch (e) { errs.push(`${j.product_name}: ${e.message}`); }
   }
@@ -2811,7 +2831,7 @@ async function finishJob(id, success) {
   const job0 = S.jobs.find((x) => x.id === id), stock0 = productById(job0?.product_id)?.stock;
   if (job0) job0._stock0 = stock0;
   try {
-    const r = await api('POST', `/api/jobs/${id}/complete`, { success, good_quantity: isNaN(good) ? undefined : good, parts_good: partsGood.length ? partsGood : undefined, order_good: leafGood.length ? leafGood : undefined, spool_used: spoolUsed.length ? spoolUsed : undefined });
+    const r = await api('POST', `/api/jobs/${id}/complete`, { success, good_quantity: isNaN(good) ? undefined : good, parts_good: partsGood.length ? partsGood : undefined, order_good: leafGood.length ? leafGood : undefined, spool_used: spoolUsed.length ? spoolUsed : undefined }); accToast(r);
     if (success && (r.good_quantity || r.is_order)) await celebrate(r, job0);
     closeModal();
     if (r.is_misc) toast(success && r.good_quantity ? `${r.product_name} ×${r.good_quantity} tamamlandı` : `${r.product_name} başarısız olarak kaydedildi`);
@@ -3060,10 +3080,56 @@ function payBadge(o) {
 const tagColor = (n) => ST_COL[(S.oflow?.flow?.tags || []).find((t) => t.name === n)?.color] || ST_COL.pink;
 const tagChips = (o) => (o.tags || []).map((t) => `<span class="o-tag" style="--c:${tagColor(t)}">${esc(t)}</span>`).join('');
 const lateBadge = (o) => (stLate(o) ? `<span class="st-late" title="Bu aşamanın uyarı süresi ${stOf(o).warn_days} gün">🐢 ${stDays(o)} gündür ${esc(stOf(o).name)}</span>` : '');
+// ---------- Kargo takibi (Geliver) — özel siparişler
+const SHIP_STEPS = [['📦', 'Hazırlandı'], ['🚚', 'Yolda'], ['🛵', 'Dağıtımda'], ['🏠', 'Teslim']];
+function shipChip(o) {
+  if (!o.ship_status) return '';
+  if (o.ship_step < 0) return `<span class="ship-c bad" title="${esc(o.ship_detail || '')}">⚠️ Kargoda sorun</span>`;
+  const [ic, l] = SHIP_STEPS[Math.max(0, Math.min(3, o.ship_step || 0))];
+  return `<span class="ship-c s${o.ship_step || 0}" title="${esc(o.ship_detail || '')}">${ic} ${l}</span>`;
+}
+function shipTrackHTML(o, log = []) {
+  if (!o.ship_status) return '';
+  const st = o.ship_step ?? 0, bad = st < 0;
+  const when = (k) => { const x = log.find((e) => e.step >= k); return x ? fmtWhen(x.at) : ''; };
+  return `<div class="ship-tr${bad ? ' bad' : ''}" style="--p:${bad ? 0 : Math.max(0, st) / 3}">
+    ${SHIP_STEPS.map(([ic, l], k) => `<div class="${!bad && k <= st ? 'done' : ''}${!bad && k === st && st < 3 ? ' cur' : ''}"><i>${!bad && k < st ? '✓' : ic}</i><span>${l}</span><small>${!bad && k <= st ? when(k) : ''}</small></div>`).join('')}</div>
+    <div class="ship-meta">${bad ? '<b class="bad-text">Kargoda sorun:</b> ' : ''}${esc(o.ship_detail || '')}${o.ship_url ? ` · <a href="${esc(o.ship_url)}" target="_blank" rel="noopener">Takip sayfası ↗</a>` : ''}${o.ship_at ? ` <small class="muted">· kontrol ${fmtWhen(o.ship_at)}</small>` : ''}</div>`;
+}
+async function shipFill(o) {
+  const box = $('#o-ship'); if (!box || !o?.ship_status) return;
+  const log = await api('GET', `/api/orders/${o.id}/ship-log`).catch(() => []);
+  if ($('#o-ship')) $('#o-ship').innerHTML = shipTrackHTML(o, log);
+}
+async function shipPick(oid) {
+  let list;
+  try { list = await api('GET', '/api/geliver/shipments'); } catch (e) { return fail(e); }
+  const host = document.createElement('div'); host.className = 'ship-pick-ovl';
+  host.innerHTML = `<div class="ship-pick"><div class="modal-h"><h2>Geliver'den gönderi seç</h2><button class="icon-btn" data-sp-x aria-label="Kapat">${icon('x')}</button></div>
+    <div class="ship-pl">${list.length ? list.map((x, i) => `<button type="button" class="ship-pi" data-i="${i}" style="--i:${Math.min(i, 14)}"><b>${esc(x.name || 'Alıcı')}</b><span class="mono">${esc(x.tracking || x.barcode || '—')}</span><small class="muted">${esc(x.provider)} · ${esc(x.status)}${x.created ? ' · ' + esc(String(x.created).slice(0, 10)) : ''}</small></button>`).join('') : '<p class="muted">Geliver\'de gönderi bulunamadı.</p>'}</div></div>`;
+  document.body.appendChild(host);
+  const close = () => host.remove();
+  host.addEventListener('click', async (e) => {
+    if (e.target === host || e.target.closest('[data-sp-x]')) return close();
+    const b = e.target.closest('.ship-pi'); if (!b) return;
+    const x = list[+b.dataset.i];
+    if ($('#o-ctr')) $('#o-ctr').value = x.tracking || x.barcode || '';
+    if ($('#o-cco') && x.provider) $('#o-cco').value = x.provider;
+    if (oid) { try { await api('POST', `/api/orders/${oid}/ship-link`, { ship: x }); toast('Gönderi bağlandı; durumu birazdan gelir'); api('POST', '/api/geliver/sync').then(async () => { await loadOrders(); const o = S.orders.find((z) => z.id === oid); if (o) shipFill(o); }).catch(() => {}); } catch (err) { fail(err); } }
+    close();
+  });
+}
+function geliverSetHTML() {
+  const on = S.settings?.geliver_set;
+  return `<section class="panel"><div class="panel-h"><h2>Kargo takibi (Geliver)</h2>${on ? '<span class="tag tag-ok">Bağlı</span>' : ''}</div><div class="panel-b" style="display:grid;gap:10px">
+    <p class="muted" style="margin:0">Özel siparişlerde takip numarası girilmiş kargoların durumu 30 dakikada bir Geliver'den okunur; teslim edilince sipariş kendiliğinden "Teslim edildi" aşamasına geçer. API anahtarını Geliver panelinden alıp buraya yapıştır; anahtar bir daha gösterilmez.</p>
+    <div class="row"><label class="field"><span>Geliver API anahtarı ${on ? '<span class="tag tag-ok">kayıtlı</span>' : ''}</span><input class="input" type="password" id="gl-tok" autocomplete="off" placeholder="${on ? 'değiştirmek için yapıştır' : 'API anahtarı'}"></label></div>
+    <div class="bk-btns"><button class="btn btn-primary btn-sm" data-act="gl-save">Kaydet</button>${on ? '<button class="btn btn-sm" data-act="gl-sync">Şimdi kontrol et</button><button class="btn btn-ghost btn-sm" data-act="gl-clear">Anahtarı sil</button>' : ''}</div></div></section>`;
+}
 function delivChip(o) {
   if (!o.delivery_method) return '';
   const t = [DELIV[o.delivery_method], o.cargo_company, o.tracking_no].filter(Boolean).join(' · ');
-  return `<span class="o-deliv" title="${esc(t)}">${o.delivery_method === 'kargo' ? '🚚' : o.delivery_method === 'elden' ? '🤝' : '🛵'} ${esc(t)}</span>`;
+  return `<span class="o-deliv" title="${esc(t)}">${o.delivery_method === 'kargo' ? '🚚' : o.delivery_method === 'elden' ? '🤝' : '🛵'} ${esc(t)}</span>${shipChip(o)}`;
 }
 // akıllı sekmeler: kurala uyan siparişler hangi aşamada olursa olsun
 const CO_SMART = {
@@ -3426,7 +3492,8 @@ function openOrderEditor(id) {
         <div class="field"><span>Etiketler</span><div class="o-tags" id="o-tags"></div></div>
         <div class="field"><span>Teslimat</span><div class="seg o-dm" id="o-dm"><button type="button" data-v="" class="${OE.delivery_method ? '' : 'on'}">—</button>${Object.entries(DELIV).map(([k, l]) => `<button type="button" data-v="${k}" class="${OE.delivery_method === k ? 'on' : ''}">${l}</button>`).join('')}</div>
           <div class="row" id="o-dk" ${OE.delivery_method === 'kargo' ? '' : 'hidden'}><label class="field"><span>Kargo firması</span><input class="input" id="o-cco" list="o-col" value="${esc(o.cargo_company || '')}"><datalist id="o-col">${CARGO_CO.map((c) => `<option value="${c}">`).join('')}</datalist></label>
-            <label class="field"><span>Takip no</span><input class="input" id="o-ctr" value="${esc(o.tracking_no || '')}"></label></div></div>
+            <label class="field"><span>Takip no</span><div style="display:flex;gap:6px"><input class="input" id="o-ctr" value="${esc(o.tracking_no || '')}">${S.settings?.geliver_set ? `<button type="button" class="btn btn-sm" data-act="ship-pick" data-id="${o.id || ''}" title="Geliver'deki son gönderilerden seç">Geliver</button>` : ''}</div></label></div>
+          <div id="o-ship" class="o-ship">${o.ship_status ? shipTrackHTML(o) : ''}</div></div>
         ${orderHistHTML(o)}
       </div>
       <div class="oe-right">
@@ -3464,6 +3531,7 @@ function openOrderEditor(id) {
   $('#o-stage').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; OE.stage = b.dataset.v; $$('#o-stage button').forEach((x) => x.classList.toggle('on', x === b)); };
   $('#o-dm').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; OE.delivery_method = b.dataset.v; $$('#o-dm button').forEach((x) => x.classList.toggle('on', x === b)); $('#o-dk').hidden = OE.delivery_method !== 'kargo'; };
   oeTags();
+  if (id && o.ship_status) shipFill(o);
   if (id) cuNoteInto('.oe-left', `co=${id}`);
   $('#o-printers')?.addEventListener('click', (e) => { const b = e.target.closest('.chip'); if (!b) return; OE.printer = OE.printer === b.dataset.v ? '' : b.dataset.v; $$('#o-printers .chip').forEach((c) => c.classList.toggle('on', c.dataset.v === OE.printer)); });
   ['#o-odate', '#o-due'].forEach((x) => $(x).addEventListener('input', dueHint));
@@ -3881,13 +3949,37 @@ function spoolGauge(sp, pct, st) {
       <g class="g-tip"><circle cx="95" cy="52" r="4.2"/></g></svg>
     ${spoolArt(sp, 'gz')}<b class="g-pct">%${Math.round(p * 100)}</b></div>`;
 }
+// ---------- Filament açılış / kurutma takibi (10A)
+const DRY_DEF = { PLA: 60, PETG: 30, ABS: 45, ASA: 45, TPU: 14, PA: 7, PC: 21, CF: 14 };
+const dryKey = (m) => { m = String(m || ''); if (/^PLA/.test(m)) return 'PLA'; if (/^PA|Nylon/i.test(m)) return 'PA'; if (/CF/.test(m)) return 'CF'; if (/Reçine/.test(m)) return null; return DRY_DEF[m] ? m : m === 'Diğer' ? 'PLA' : 'PLA'; };
+const dryLimit = (m) => { const k = dryKey(m); if (!k) return null; const o = S.settings?.dry_days || {}; return +o[k] || DRY_DEF[k] || 60; };
+const daysSince = (d) => (d ? Math.floor((Date.now() - new Date(d + 'T00:00:00').getTime()) / 864e5) : null);
+function dryInfo(sp) {
+  const lim = dryLimit(sp.material); if (!lim || (sp.remaining || 0) <= 0) return null;
+  const base = sp.dried_at && (!sp.opened_at || sp.dried_at >= sp.opened_at) ? sp.dried_at : sp.opened_at; if (!base) return null;
+  const n = daysSince(base), dried = base === sp.dried_at, left = lim - n;
+  if (left < 0) return { cls: 'b', n, lim, text: `${dried ? 'kurutmadan' : 'açık'} ${n} gün`, tip: `${sp.material}: ${lim} günü geçti, kurutman iyi olur` };
+  if (left <= Math.max(3, lim * 0.2)) return { cls: 'w', n, lim, text: `${left} gün kaldı`, tip: `${dried ? 'kurutulalı' : 'açılalı'} ${n} gün · sınır ${lim} gün` };
+  return { cls: 'o', n, lim, text: dried ? (n ? `${n} gün önce kurutuldu` : 'bugün kurutuldu') : `açık ${n} gün`, tip: `sınır ${lim} gün` };
+}
+const dryBadge = (sp) => { const d = dryInfo(sp); return d ? `<span class="dry-b ${d.cls}" title="${esc(d.tip)}">💧 ${esc(d.text)}</span>` : ''; };
+async function spoolDry(sp, field, msg) {
+  try { await api('PUT', `/api/spools/${sp.id}`, { [field]: field === 'clear' ? null : localToday(), ...(field === 'clear' ? { opened_at: null, dried_at: null } : {}) }); await loadSpools(); toast(msg); render(); } catch (e) { fail(e); }
+}
+function drySetHTML() {
+  const o = S.settings?.dry_days || {};
+  return `<section class="panel"><div class="panel-h"><h2>Filament kurutma</h2></div><div class="panel-b" style="display:grid;gap:10px">
+    <p class="muted" style="margin:0">Makara açıldıktan (ya da kurutulduktan) sonra kaç gün geçince uyarılsın? Makara ilk baskıda kendiliğinden "açıldı" sayılır; Filament sayfasında sağ tık → "Kuruttum" ile sayaç sıfırlanır.</p>
+    <div class="dry-set">${Object.entries(DRY_DEF).map(([k, v]) => `<label class="field"><span>${k === 'PA' ? 'PA / Nylon' : k === 'CF' ? 'CF katkılı' : k}</span><div class="input-group"><input class="input" type="number" min="1" max="365" data-dry="${k}" value="${o[k] || ''}" placeholder="${v}"><span class="suffix">gün</span></div></label>`).join('')}</div>
+    <div><button class="btn btn-sm btn-primary" data-act="dry-save">Kaydet</button></div></div></section>`;
+}
 function spoolCard(sp) {
   const st = spoolState(sp), pct = spoolPct(sp);
   return `<article class="spool-card ${st}" data-act="edit-spool" data-id="${sp.id}" tabindex="0">
     ${spoolGauge(sp, pct, st)}
     <div class="sc-body">
       <div class="sc-top"><b class="sc-id">#${esc(sp.code)}</b>${sp.material ? `<span class="tag tag-mute">${esc(sp.material)}</span>` : ''}
-        ${st === 'empty' ? '<span class="tag tag-bad">Bitti</span>' : st === 'low' ? '<span class="tag tag-warn">Azaldı</span>' : ''}</div>
+        ${st === 'empty' ? '<span class="tag tag-bad">Bitti</span>' : st === 'low' ? '<span class="tag tag-warn">Azaldı</span>' : ''}${dryBadge(sp)}</div>
       <div class="sc-name"><span class="spool${swatchCls(sp.color_hex || '#ccc')}" style="${swatchStyle(sp.color_hex || '#ccc')}"></span>${esc(sp.color_name || colorName(sp.color_hex) || 'Renk yok')}<span class="faint"> · ${esc(sp.brand || 'Marka yok')}</span></div>
       <div class="sc-foot"><span><b>${Math.round(sp.remaining)} g</b> / ${Math.round(sp.net_weight)} g</span>
         ${sp.in_use.length ? `<span class="inprod">${esc(sp.in_use[0].printer || 'baskıda')}</span>` : ''}</div>
@@ -3933,7 +4025,9 @@ async function openSpoolEditor(id) {
       </div>
       ${id ? `<div class="weigh"><span>${icon('scale')} Tartıdaki ağırlık</span><div class="input-group" style="max-width:200px"><input class="input" id="sp-scale" type="number" min="0" placeholder="ör. 640"><span class="suffix">g</span></div>
         <button class="btn btn-sm" data-act="spool-weigh">Kalanı hesapla</button><small class="muted">Kalan = tartı − boş makara</small></div>` : ''}
-      <label class="field"><span>Notlar</span><textarea class="input" id="sp-notes" rows="2" placeholder="Kurutuldu, nozül sıcaklığı, nerede duruyor…">${esc(sp.notes || '')}</textarea></label>
+      <div class="row"><label class="field"><span>Açıldığı gün <small class="muted">ilk baskıda kendiliğinden</small></span><input class="input" type="date" id="sp-open" value="${esc(sp.opened_at || '')}"></label>
+        <label class="field"><span>Son kurutma</span><div style="display:flex;gap:6px"><input class="input" type="date" id="sp-dry" value="${esc(sp.dried_at || '')}"><button type="button" class="btn btn-sm" onclick="document.getElementById('sp-dry').value='${localToday()}'">Bugün</button></div></label></div>
+      <label class="field"><span>Notlar</span><textarea class="input" id="sp-notes" rows="2" placeholder="Nozül sıcaklığı, nerede duruyor…">${esc(sp.notes || '')}</textarea></label>
       ${id ? `<div class="field"><span>Geçmiş</span><div id="sp-log" class="muted">Yükleniyor…</div></div>` : ''}
     </div>
     <div class="modal-f">${id ? `<button class="btn btn-ghost" data-act="spool-archive" data-id="${id}">${icon('trash')} Arşivle</button>` : ''}
@@ -3969,7 +4063,8 @@ async function uploadSpoolImage(f) {
 async function saveSpool() {
   const v = (x) => $(x)?.value.trim();
   const body = { code: v('#sp-code'), brand: v('#sp-brand'), material: SPE.material, color_hex: SPE.color_hex, color_name: SPE.color_name || colorName(SPE.color_hex),
-    net_weight: parseFloat(v('#sp-net')) || 1000, photo: SPE.photo, notes: v('#sp-notes'), tare: v('#sp-tare'), price: (v('#sp-price') || '').replace(',', '.') };
+    net_weight: parseFloat(v('#sp-net')) || 1000, photo: SPE.photo, notes: v('#sp-notes'), tare: v('#sp-tare'), price: (v('#sp-price') || '').replace(',', '.'),
+    opened_at: v('#sp-open') || null, dried_at: v('#sp-dry') || null };
   if (!body.code) return toast('Makara ID girin', { bad: true });
   try {
     if (SPE.id) {
@@ -4047,6 +4142,12 @@ function cargoFor(price, over) {
   for (const t of cfg.cargo_tiers) if (price < t.upto) return t.fee;
   return over ?? cfg.cargo_over;
 }
+// Ürünün 1 adedine düşen elektrik: ölçer prizden ölçülen (varsa), yoksa baskı süresi × ortalama güçten tahmin
+function elecOf(p) {
+  const t = +S.profit?.elec_tariff || 0; if (!t || !p) return { elec: 0, elecKwh: 0 };
+  const k = p.kwh_unit ?? p.kwh_est; if (!k) return { elec: 0, elecKwh: 0 };
+  return { elec: k * t, elecKwh: k, elecSrc: p.kwh_unit != null ? 'ölçüldü' : 'tahmini' };
+}
 // o: { price, material, extra, commission_pct, cargo_fee }
 // Trendyol minimum sipariş adedi: bu fiyattaki üründen müşteri en az kaç adet alır
 function minQtyFor(P) { for (const t of S.profit?.cfg.min_qty || []) if (P < t.upto) return Math.max(1, t.qty | 0); return 1; }
@@ -4061,7 +4162,8 @@ function calcProfit(o) {
   r.cargoTier = cargoTierLabel(T);
   r.fee = cfg.service_fee; r.pack = cfg.packaging;
   r.material = (o.material || 0) * n * (1 + cfg.fire_pct / 100); r.extra = (o.extra || 0) * n;
-  r.costs = r.commission + r.cargo + r.fee + r.pack + r.material + r.extra;
+  r.elec = (o.elec || 0) * n; r.elecKwh = (o.elecKwh || 0) * n; r.elecSrc = o.elecSrc || ''; r.acc = (o.acc || 0) * n;
+  r.costs = r.commission + r.cargo + r.fee + r.pack + r.material + r.extra + r.elec + r.acc;
   r.net = T - r.costs;               // elde kalan (KDV dahil), sipariş başına
   r.orderProfit = r.net / (1 + v);   // KDV mahsup edildikten sonra
   r.vat = r.net - r.orderProfit;
@@ -4081,7 +4183,7 @@ function priceForMargin(o, m) {
     return Math.round(p * 100) / 100;
   }
   const cfg = S.profit.cfg, v = cfg.vat / 100, c = (o.commission_pct ?? cfg.commission) / 100;
-  const fixed = cfg.service_fee + cfg.packaging + (o.material || 0) * (1 + cfg.fire_pct / 100) + (o.extra || 0);
+  const fixed = cfg.service_fee + cfg.packaging + (o.material || 0) * (1 + cfg.fire_pct / 100) + (o.extra || 0) + (o.elec || 0) + (o.acc || 0);
   const denom = 1 - c - m * (1 + v);
   if (denom <= 0) return null;
   let lo = 0;
@@ -4118,6 +4220,7 @@ function productProfit(p, over = {}) {
   if (o.commission_pct == null) { const cc = catCommission(p.category); if (cc != null) { o.commission_pct = cc; o.comSrc = p.category; } }
   if (o.commission_pct == null) delete o.commission_pct;
   if (o.cargo_fee == null) delete o.cargo_fee;
+  Object.assign(o, elecOf(p), { acc: over.acc ?? (p.acc_cost || 0) });
   return { o, mc, r: o.price ? calcProfit(o) : null };
 }
 const catCommission = (name) => { const c = name && (S.categories || []).find((x) => x.name === name); return c && c.commission != null ? c.commission : null; };
@@ -4138,6 +4241,8 @@ function breakdownHTML(r, mc) {
     ${row('Malzeme', mc?.missingGrams ? '<span class="warn-text">gram yok</span>' : mc?.noPrice ? '<span class="warn-text">fiyat yok</span>' : neg(r.material),
       mc && !mc.missingGrams && !mc.noPrice ? `${n > 1 ? `${n} × ` : ''}${fmtGram(mc.grams)} · ${(Math.round(mc.perG * 1000) / 1000).toLocaleString('tr-TR')} ₺/g${fire ? ` · fire %${fire}` : ''}` : '')}
     ${r.extra ? row('Ek maliyet', neg(r.extra)) : ''}
+    ${r.elec ? row('Elektrik', neg(r.elec), `${(Math.round(r.elecKwh * 100) / 100).toLocaleString('tr-TR')} kWh${r.elecSrc ? ' · ' + r.elecSrc : ''}`) : ''}
+    ${r.acc ? row('Aksesuar', neg(r.acc)) : ''}
     </tbody><tbody class="pf-sub">
     ${row('Elde kalan', fmtTL(r.net), 'KDV dahil')}
     ${r.vat >= 0 ? row('Ödenecek net KDV', neg(r.vat), 'satış KDV\'si − giderlerin KDV\'si') : row('Devreden KDV (alacak)', fmtTL(-r.vat), 'giderlerin KDV\'si satışınkinden fazla')}
@@ -4356,18 +4461,77 @@ async function typImportSelected() {
   } catch (e) { fail(e); b.disabled = false; }
 }
 
-// ---------- Ürün düzenleyicide fiyat ve kâr
+// ---------- Ürün düzenleyicide fiyat ve kâr: maliyet çubuğu + hedef kâr kaydırıcısı (22B)
+const PF_SEG = [['commission', 'Komisyon', '#C0392F'], ['cargo', 'Kargo', '#56646E'], ['fee', 'Hizmet', '#8794A0'], ['pack', 'Ambalaj', '#2F6FD6'], ['material', 'Filament', 'var(--pei)'],
+  ['elec', 'Elektrik', 'var(--warn)'], ['acc', 'Aksesuar', 'var(--resin)'], ['extra', 'Ek maliyet', '#A0A7AE'], ['vat', 'KDV', 'var(--line)'], ['orderProfit', 'Kâr', 'var(--ok)']];
 function edProfitRender() {
   const box = $('#pf-box'); if (!box || !S.profit) return;
   const g = (id) => numIn($(id)?.value);
   const cur = { ...ED, grams: g('#f-grams') || 0, category: ED.category, set_size: Math.max(1, parseInt($('#f-set')?.value) || 1) };
-  const { o, mc } = productProfit(cur, { price: g('#f-price') || 0, extra: g('#f-extra') || 0, commission_pct: g('#f-com'), cargo_fee: g('#f-cargo'), grams: cur.grams });
-  if (!o.price) { box.innerHTML = `<p class="muted" style="margin:0">Fiyat yazınca tahmini kâr burada görünür.</p>${pfTargets(o)}`; return; }
-  const r = calcProfit(o), hint = tierHint(o);
+  const { o, mc } = productProfit(cur, { price: g('#f-price') || 0, extra: g('#f-extra') || 0, commission_pct: g('#f-com'), cargo_fee: g('#f-cargo'), grams: cur.grams, acc: ED.acc_cost || 0 });
+  const m = S.pfM ?? 25;
+  const slider = `<div class="pf-sl"><div class="pf-sl-h"><span>Hedef kâr</span><b id="pf-m-v">%${m}</b></div><input type="range" id="pf-m" min="5" max="50" step="1" value="${m}" aria-label="Hedef kâr yüzdesi">
+    <div class="pf-sug" id="pf-sug"></div></div>`;
+  if (!o.price) { box.innerHTML = `<p class="muted" style="margin:0">Fiyat yazınca maliyet dökümü burada görünür.</p>${slider}`; pfSlBind(o); return; }
+  const r = calcProfit(o), hint = tierHint(o), T = r.total || r.price;
+  const seg = PF_SEG.map(([k, l, c]) => [l, Math.max(0, r[k] || 0), c]).filter(([, v]) => v > 0.005);
   box.innerHTML = `<div class="kc-hero sm ${marginCls(r.margin)}"><b>${fmtTL(r.profit)}</b><span>tahmini kâr · ${fmtPct(r.margin)} marj</span></div>
-    <p class="pf-src muted">Kargo ${fmtTL(r.cargo)} (${r.cargoTier}) · komisyon %${String(Math.round(r.commissionPct * 100) / 100).replace('.', ',')}${r.comSrc ? ` (${esc(r.comSrc)})` : ''}</p>
+    <div class="pf-bar${r.orderProfit < 0 ? ' neg' : ''}" title="${fmtTL(T)} satışın dağılımı">${seg.map(([l, v, c], i) => `<span style="flex-grow:${v};background:${c};--i:${i}" title="${l}: ${fmtTL(v)} (%${Math.round(v / T * 100)})"></span>`).join('')}${r.orderProfit < 0 ? `<em>Zarar ${fmtTL(-r.orderProfit)}</em>` : ''}</div>
+    <div class="pf-lg">${seg.map(([l, v, c]) => `<span style="--c:${c}">${l} <b>${fmtTL(v)}</b></span>`).join('')}</div>
     <details class="pf-det"><summary>Hesabın ayrıntısı</summary>${breakdownHTML(r, mc)}</details>
-    ${hint ? `<p class="pf-hint">${icon('alert')} ${hint}</p>` : ''}${mc.missingGrams ? warnsHTML(mc) : mc.noPrice ? warnsHTML(mc) : ''}${pfTargets(o)}`;
+    ${hint ? `<p class="pf-hint">${icon('alert')} ${hint}</p>` : ''}${mc.missingGrams ? warnsHTML(mc) : mc.noPrice ? warnsHTML(mc) : ''}${slider}`;
+  pfSlBind(o);
+}
+function pfSlBind(o) {
+  const sl = $('#pf-m'); if (!sl) return;
+  const upd = () => {
+    const m = +sl.value; S.pfM = m; $('#pf-m-v').textContent = `%${m}`;
+    const p = priceForMargin(o, m / 100), box = $('#pf-sug'); if (!box) return;
+    if (!p) { box.innerHTML = '<small class="muted">Bu marj bu maliyetlerle tutturulamıyor.</small>'; return; }
+    const r = calcProfit({ ...o, price: p }), h = tierHint({ ...o, price: p });
+    box.innerHTML = `<span class="muted">Önerilen fiyat</span><b class="pf-p">${fmtTL(p)}</b><small class="muted">adet başı kâr ${fmtTL(r.profit)}</small>
+      <button type="button" class="btn btn-sm" data-act="pf-target" data-v="${p}">Bu fiyatı kullan</button>${h ? `<p class="pf-hint sm">${icon('alert')} ${h}</p>` : ''}`;
+  };
+  sl.addEventListener('input', upd); upd();
+}
+// ---------- Ürün düzenleyici: aksesuarlar (20A) — baskı sonucu girilince sağlam adet kadar düşer
+const accItems = () => (S.pack?.items || []).filter((x) => x.kind === 'acc');
+function edAccCost() { const it = S.pack?.items || []; ED.acc_cost = (ED.acc || []).reduce((a, r) => a + (+r.qty || 0) * (+(it.find((x) => x.id === r.item_id)?.cost) || 0), 0); }
+function edAccRender() {
+  const box = $('#ed-acc'); if (!box) return;
+  const all = accItems();
+  if (!S.pack) { box.innerHTML = '<p class="muted">Yükleniyor…</p>'; return; }
+  const sum = $('#ed-acc-sum'); if (sum) sum.textContent = (ED.acc || []).length ? `${ED.acc.length} aksesuar` : '';
+  if (!all.length) { box.innerHTML = `<p class="muted" style="margin:0">Henüz aksesuar yok. <a href="#/ambalaj?acc" data-act="close">Malzeme deposu → Aksesuar</a>'dan halka, mıknatıs gibi parçaları ekle; sonra burada ürüne bağla.</p>`; return; }
+  box.innerHTML = `<div class="acc-rows">${(ED.acc || []).map((r, i) => { const x = all.find((y) => y.id === r.item_id);
+      return `<div class="acc-r" style="--i:${i}"><select class="input" data-acc-i="${i}">${all.map((y) => `<option value="${y.id}"${y.id === r.item_id ? ' selected' : ''}>${y.icon} ${esc(y.name)}</option>`).join('')}</select>
+        <div class="input-group acc-q"><span class="suffix" style="border-radius:8px 0 0 8px;border-left:1px solid var(--line);border-right:0">×</span><input class="input" type="number" min="0.1" step="any" data-acc-q="${i}" value="${r.qty}"></div>
+        <small class="muted">${x ? `depoda ${pkNum(x.stock)}${pkU(x.unit)}${x.cost ? ` · ${fmtTL(x.cost * r.qty)}` : ''}` : ''}</small>
+        <button type="button" class="icon-btn" data-acc-rm="${i}" aria-label="Kaldır">${icon('x')}</button></div>`; }).join('')}</div>
+    <button type="button" class="btn btn-sm" id="acc-add">${icon('plus')} Aksesuar ekle</button>
+    <small class="muted acc-hint">1 adet ürün için. Baskı sonucu girilince sağlam çıkan adet kadar depodan düşer${ED.acc_cost ? ` · adet başı ${fmtTL(ED.acc_cost)}` : ''}.</small>`;
+}
+function edAccBind() {
+  const box = $('#ed-acc'); if (!box) return;
+  const ch = () => { edAccCost(); edAccRender(); edProfitRender(); };
+  box.addEventListener('change', (e) => { const t = e.target;
+    if (t.dataset.accI) { ED.acc[+t.dataset.accI].item_id = +t.value; ch(); }
+    if (t.dataset.accQ) { ED.acc[+t.dataset.accQ].qty = Math.max(0.1, parseFloat(t.value) || 1); ch(); } });
+  box.addEventListener('click', (e) => {
+    if (e.target.closest('#acc-add')) { const a = accItems(); if (!a.length) return; (ED.acc ||= []).push({ item_id: a.find((x) => !ED.acc.some((r) => r.item_id === x.id))?.id || a[0].id, qty: 1 }); ch(); }
+    const rm = e.target.closest('[data-acc-rm]'); if (rm) { ED.acc.splice(+rm.dataset.accRm, 1); ch(); } });
+}
+async function edAccInit(id) {
+  if (!S.pack) S.pack = await api('GET', '/api/pack').catch(() => null);
+  ED.acc = id ? (S.pack?.acc?.[id] || []).map((x) => ({ ...x })) : (ED.acc || []);
+  edAccCost(); edAccRender(); edAccBind(); edProfitRender();
+}
+// Baskı başlatırken: aksesuar yetecek mi?
+async function accWarn(pid, n, host) {
+  if (!pid || !host) return;
+  const r = await api('GET', `/api/products/${pid}/acc-need?n=${n}`).catch(() => []);
+  const bad = r.filter((x) => x.after < 0 || (x.min > 0 && x.after < x.min));
+  host.innerHTML = bad.length ? `<div class="acc-warn">${bad.map((x) => `<div><span>${x.icon}</span><span><b>${pkNum(x.need)}${pkU(x.unit)} ${esc(x.name)}</b> lazım, depoda <b class="${x.after < 0 ? 'bad-text' : ''}">${pkNum(x.stock)}</b>${x.after < 0 ? ' — yetmiyor' : ` — sonra ${pkNum(x.after)} kalır (en az ${pkNum(x.min)})`}</span></div>`).join('')}</div>` : '';
 }
 function pfTargets(o) {
   return `<div class="kc-targets" style="margin-top:8px"><small class="muted">Hedef marj:</small>${[0.2, 0.25, 0.3, 0.4].map((m) => { const p = priceForMargin(o, m); return p ? `<button type="button" class="chip" data-act="pf-target" data-v="${p}"><small>%${m * 100}</small> ${fmtTL(p)}</button>` : ''; }).join('')}</div>`;
@@ -4423,7 +4587,7 @@ function orderProfit(pkg) {
   if (!S.profit) return null;
   const cfg = S.profit.cfg, v = 1 + cfg.vat / 100;
   const live = pkg.lines.filter((l) => !TY_CANCEL.has(l.status));
-  let P = 0, com = 0, mat = 0, extra = 0, grams = 0, over = null, comLine = 0; const missing = new Set();
+  let P = 0, com = 0, mat = 0, extra = 0, grams = 0, over = null, comLine = 0, elec = 0, acc = 0; const missing = new Set();
   for (const l of live) {
     if (l.unit_price == null) { missing.add('fiyat bilgisi yok'); continue; }
     const rev = l.unit_price * l.quantity; P += rev;
@@ -4437,6 +4601,7 @@ function orderProfit(pkg) {
     if (mc.missingGrams && !(p.extra_cost > 0)) missing.add('gramı girilmemiş ürün');
     else if (mc.noPrice) missing.add(mc.resin ? 'reçine fiyatı yok' : 'filament fiyatı yok');
     mat += mc.cost * l.quantity; grams += (mc.grams || 0) * l.quantity; extra += (p.extra_cost || 0) * l.quantity;
+    elec += (elecOf(p).elec || 0) * l.quantity; acc += (p.acc_cost || 0) * l.quantity;
     if (p.cargo_fee != null) over = Math.max(over ?? 0, p.cargo_fee);
   }
   if (!P) return null;
@@ -4445,12 +4610,12 @@ function orderProfit(pkg) {
   if (comReal) com = pkg.com_real;
   const r = { price: P, commission: com, commissionPct: Math.round(com / P * 1000) / 10, comSrc: comReal ? 'cari hesaptan' : comLine ? 'siparişteki oran' : '', cargo: realCargo ? pkg.cargo_real : cargoFor(pkg.pkg_total ?? P, over),
     cargoTier: realCargo ? `kargo faturasından${pkg.cargo_desi ? `, ${pkg.cargo_desi} desi` : ''}` : cargoTierLabel(pkg.pkg_total ?? P),
-    fee: cfg.service_fee, pack: cfg.packaging, material: mat * (1 + cfg.fire_pct / 100), extra };
+    fee: cfg.service_fee, pack: cfg.packaging, material: mat * (1 + cfg.fire_pct / 100), extra, elec, acc };
   if (!realCargo) {   // barem altı sipariş son teslimden sonra kargoya verildiyse / verilecekse kargo üst baremden kesilir
     const b = baremInfo(pkg);
     if (b?.lost && b.risk > 0) { r.cargo = Math.max(r.cargo, b.up); r.cargoTier = `barem kaçtı · üst baremden ${fmtTL(b.up)}`; r.baremLost = true; }
   }
-  r.costs = r.commission + r.cargo + r.fee + r.pack + r.material + r.extra;
+  r.costs = r.commission + r.cargo + r.fee + r.pack + r.material + r.extra + (r.elec || 0) + (r.acc || 0);
   r.net = P - r.costs; r.profit = r.net / v; r.vat = r.net - r.profit; r.margin = r.profit / P;
   r.missing = [...missing]; r.grams = grams;
   return r;
@@ -5305,6 +5470,118 @@ function labelFit(doc) {
     }
     let c = 14; while (loc.scrollWidth > loc.clientWidth + 1 && c > 8) { c -= .5; loc.style.fontSize = c + 'pt'; }
   });
+}
+// ---------- Küçük QR kod üreticisi (bayt kipi, hata düzeltme M, sürüm 1–10). Raf etiketi için; dış kütüphane yok.
+const QR = (() => {
+  const ECC = [10, 16, 26, 18, 24, 16, 18, 22, 22, 26], BLK = [1, 1, 1, 2, 2, 4, 4, 4, 5, 5];   // M seviyesi, sürüm 1–10
+  const raw = (v) => { let r = (16 * v + 128) * v + 64; if (v >= 2) { const n = Math.floor(v / 7) + 2; r -= (25 * n - 10) * n - 55; if (v >= 7) r -= 36; } return r; };
+  const dataCap = (v) => Math.floor(raw(v) / 8) - ECC[v - 1] * BLK[v - 1];
+  const mul = (x, y) => { let z = 0; for (let i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11D); z ^= ((y >>> i) & 1) * x; } return z & 255; };
+  const divisor = (d) => { const r = new Array(d).fill(0); r[d - 1] = 1; let root = 1; for (let i = 0; i < d; i++) { for (let j = 0; j < d; j++) { r[j] = mul(r[j], root); if (j + 1 < d) r[j] ^= r[j + 1]; } root = mul(root, 2); } return r; };
+  const rem = (data, dv) => { const r = new Array(dv.length).fill(0); for (const b of data) { const f = b ^ r.shift(); r.push(0); dv.forEach((c, i) => { r[i] ^= mul(c, f); }); } return r; };
+  return function make(text) {
+    const bytes = [...new TextEncoder().encode(text)];
+    let v = 1; while (v <= 10 && 4 + (v < 10 ? 8 : 16) + bytes.length * 8 > dataCap(v) * 8) v++;
+    if (v > 10) throw new Error('QR için metin çok uzun');
+    const bits = []; const put = (val, n) => { for (let i = n - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+    put(4, 4); put(bytes.length, v < 10 ? 8 : 16); bytes.forEach((b) => put(b, 8));
+    const cap = dataCap(v) * 8; put(0, Math.min(4, cap - bits.length)); while (bits.length % 8) bits.push(0);
+    for (let p = 0xEC; bits.length < cap; p ^= 0xEC ^ 0x11) put(p, 8);
+    const data = []; for (let i = 0; i < bits.length; i += 8) data.push(parseInt(bits.slice(i, i + 8).join(''), 2));
+    // bloklara böl, hata düzeltme ekle, karıştır
+    const nb = BLK[v - 1], el = ECC[v - 1], rc = Math.floor(raw(v) / 8), ns = nb - rc % nb, sl = Math.floor(rc / nb), dv = divisor(el), blocks = [];
+    for (let i = 0, k = 0; i < nb; i++) { const dat = data.slice(k, k + sl - el + (i < ns ? 0 : 1)); k += dat.length; const e = rem(dat, dv); if (i < ns) dat.push(0); blocks.push(dat.concat(e)); }
+    const cw = []; for (let i = 0; i < blocks[0].length; i++) blocks.forEach((b, j) => { if (i !== sl - el || j >= ns) cw.push(b[i]); });
+    const n = v * 4 + 17, M = Array.from({ length: n }, () => new Array(n).fill(false)), F = Array.from({ length: n }, () => new Array(n).fill(false));
+    const set = (x, y, d) => { M[y][x] = d; F[y][x] = true; };
+    for (let i = 0; i < n; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+    [[3, 3], [n - 4, 3], [3, n - 4]].forEach(([cx, cy]) => { for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const x = cx + dx, y = cy + dy, d = Math.max(Math.abs(dx), Math.abs(dy)); if (x >= 0 && x < n && y >= 0 && y < n) set(x, y, d !== 2 && d !== 4); } });
+    if (v > 1) { const na = Math.floor(v / 7) + 2, step = Math.ceil((v * 4 + 4) / (na * 2 - 2)) * 2, pos = [6]; for (let p = n - 7; pos.length < na; p -= step) pos.splice(1, 0, p);
+      pos.forEach((a, i) => pos.forEach((b, j) => { if ((i === 0 && j === 0) || (i === 0 && j === na - 1) || (i === na - 1 && j === 0)) return; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) set(a + dx, b + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1); })); }
+    const fmt = (mask) => { const d = (0 << 3) | mask; let r = d; for (let i = 0; i < 10; i++) r = (r << 1) ^ ((r >>> 9) * 0x537); const b = ((d << 10) | r) ^ 0x5412, g = (i) => ((b >>> i) & 1) === 1;
+      for (let i = 0; i <= 5; i++) set(8, i, g(i)); set(8, 7, g(6)); set(8, 8, g(7)); set(7, 8, g(8)); for (let i = 9; i < 15; i++) set(14 - i, 8, g(i));
+      for (let i = 0; i < 8; i++) set(n - 1 - i, 8, g(i)); for (let i = 8; i < 15; i++) set(8, n - 15 + i, g(i)); set(8, n - 8, true); };
+    fmt(0);
+    if (v >= 7) { let r = v; for (let i = 0; i < 12; i++) r = (r << 1) ^ ((r >>> 11) * 0x1F25); const b = (v << 12) | r; for (let i = 0; i < 18; i++) { const d = ((b >>> i) & 1) === 1, a = n - 11 + (i % 3), c = Math.floor(i / 3); set(a, c, d); set(c, a, d); } }
+    let i = 0;
+    for (let right = n - 1; right >= 1; right -= 2) { if (right === 6) right = 5;
+      for (let vert = 0; vert < n; vert++) for (let j = 0; j < 2; j++) { const x = right - j, up = ((right + 1) & 2) === 0, y = up ? n - 1 - vert : vert;
+        if (!F[y][x] && i < cw.length * 8) { M[y][x] = ((cw[i >>> 3] >>> (7 - (i & 7))) & 1) === 1; i++; } } }
+    const MASKS = [(x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, (x) => x % 3 === 0, (x, y) => (x + y) % 3 === 0, (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0,
+      (x, y) => (x * y) % 2 + (x * y) % 3 === 0, (x, y) => ((x * y) % 2 + (x * y) % 3) % 2 === 0, (x, y) => ((x + y) % 2 + (x * y) % 3) % 2 === 0];
+    const apply = (m) => { for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (!F[y][x] && MASKS[m](x, y)) M[y][x] = !M[y][x]; };
+    const score = () => { let s = 0; for (let y = 0; y < n; y++) { let run = 1; for (let x = 1; x < n; x++) { if (M[y][x] === M[y][x - 1]) { run++; if (run === 5) s += 3; else if (run > 5) s++; } else run = 1; } }
+      for (let x = 0; x < n; x++) { let run = 1; for (let y = 1; y < n; y++) { if (M[y][x] === M[y - 1][x]) { run++; if (run === 5) s += 3; else if (run > 5) s++; } else run = 1; } }
+      for (let y = 0; y < n - 1; y++) for (let x = 0; x < n - 1; x++) { const c = M[y][x]; if (c === M[y][x + 1] && c === M[y + 1][x] && c === M[y + 1][x + 1]) s += 3; }
+      let dark = 0; M.forEach((r) => r.forEach((c) => { if (c) dark++; })); return s + Math.floor(Math.abs(dark * 20 - n * n * 10) / (n * n)) * 10; };
+    let best = 0, bs = Infinity;
+    for (let m = 0; m < 8; m++) { apply(m); fmt(m); const s = score(); if (s < bs) { bs = s; best = m; } apply(m); }
+    apply(best); fmt(best);
+    return M;
+  };
+})();
+// SVG olarak (sessiz alan 2 modül)
+function qrSVG(text, cls = '') {
+  let M; try { M = QR(text); } catch { return ''; }
+  const n = M.length, q = 2; let d = '';
+  M.forEach((row, y) => row.forEach((c, x) => { if (c) d += `M${x + q} ${y + q}h1v1h-1z`; }));
+  return `<svg class="${cls}" viewBox="0 0 ${n + q * 2} ${n + q * 2}" shape-rendering="crispEdges" aria-hidden="true"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+// ---------- QR raf etiketi (23B): 100×80 mm etikete yan yana 5 tane 20×80 mm şerit
+const prodCode = (p) => `P-${String(p.id).padStart(4, '0')}`;
+const qrBase = () => { try { return localStorage.getItem('qrBase') || location.origin; } catch { return location.origin; } };
+const qrUrl = (p, base = qrBase()) => `${base.replace(/\/+$/, '')}/m/#urun?id=${p.id}`;
+const SHELF_CSS = `@page{size:100mm 80mm;margin:0}*{box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:"Schibsted Grotesk",Arial,sans-serif;color:#000}
+.sp{width:100mm;height:80mm;display:flex;page-break-after:always;break-after:page;overflow:hidden}.sp:last-child{page-break-after:auto;break-after:auto}
+.sl{width:20mm;height:80mm;display:flex;flex-direction:column;align-items:center;padding:1.6mm 1mm 2mm;border-right:.25mm dashed #888;overflow:hidden}.sl:last-child{border-right:0}
+.sl svg{width:17.5mm;height:17.5mm;flex:none}.sl-t{flex:1;min-height:0;writing-mode:vertical-rl;display:flex;gap:1mm;margin-top:2mm;overflow:hidden}
+.sl-t b{font:800 4.4mm/1.04 "Big Shoulders Display","Arial Narrow",Arial,sans-serif;letter-spacing:.02em;overflow:hidden;max-height:100%}
+.sl-t small{font:600 2.8mm/1.1 ui-monospace,Consolas,monospace;white-space:nowrap}.sl.blank{border-right:.25mm dashed #ccc}`;
+function shelfPagesHTML(list, base) {
+  const pages = []; for (let i = 0; i < list.length; i += 5) pages.push(list.slice(i, i + 5));
+  return pages.map((pg) => `<div class="sp">${pg.map((p) => `<div class="sl">${qrSVG(qrUrl(p, base))}<div class="sl-t"><b>${esc(p.name)}</b><small>${prodCode(p)}${p.shelf ? ' · ' + esc(p.shelf) : ''}</small></div></div>`).join('')}${'<div class="sl blank"></div>'.repeat(5 - pg.length)}</div>`).join('');
+}
+function printShelfBrowser(list, base) {
+  const fr = document.createElement('iframe'); fr.setAttribute('aria-hidden', 'true');
+  fr.style.cssText = 'position:fixed;right:0;bottom:0;width:100mm;height:80mm;border:0;opacity:0;pointer-events:none;';
+  document.body.appendChild(fr);
+  const doc = fr.contentDocument;
+  doc.open(); doc.write(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>Raf etiketi</title><style>${SHELF_CSS}</style></head><body>${shelfPagesHTML(list, base)}</body></html>`); doc.close();
+  setTimeout(() => { fr.contentWindow.addEventListener('afterprint', () => setTimeout(() => fr.remove(), 500), { once: true }); fr.contentWindow.focus(); fr.contentWindow.print(); setTimeout(() => fr.isConnected && fr.remove(), 120000); }, 300);
+}
+async function openShelfLabels(ids = []) {
+  if (!S.labelCfg) S.labelCfg = await api('GET', '/api/label/settings').catch(() => null);
+  const sel = new Set(ids), all = S.products.filter((p) => !p.archived).sort((a, b) => (a.shelf || '~').localeCompare(b.shelf || '~', 'tr') || a.name.localeCompare(b.name, 'tr'));
+  const server = labelServerMode();
+  let dpi = +(localStorage.getItem('shelfDpi') || 203);
+  openModal(`<div class="modal-h"><h2>Raf etiketleri</h2><span class="muted">100×80 mm etikete 5 şerit</span><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+    <div class="modal-b sh-ed">
+      <div class="sh-left"><label class="search">${icon('search')}<input class="input" id="sh-q" placeholder="Ürün ara" autocomplete="off"></label>
+        <div class="sh-tools"><button type="button" class="linkish" id="sh-all">Görünenlerin hepsi</button><button type="button" class="linkish" id="sh-none">Temizle</button></div>
+        <div class="dl-list sh-list" id="sh-list">${all.map((p) => `<label class="dl-it" data-n="${esc(trLow(p.name + ' ' + (p.category || '') + ' ' + (p.shelf || '') + ' ' + prodCode(p)))}"><input type="checkbox" value="${p.id}" ${sel.has(p.id) ? 'checked' : ''}>${miniThumb(p.thumbnail)}<span class="grow">${esc(p.name)}<small class="muted"> ${prodCode(p)}${p.shelf ? ' · ' + esc(p.shelf) : ''}</small></span></label>`).join('')}</div></div>
+      <div class="sh-right"><div class="sh-prev" id="sh-prev"></div>
+        <label class="field"><span>QR'ın açacağı adres</span><input class="input" id="sh-base" value="${esc(qrBase())}"><small class="muted">Telefon bu adrese ulaşabilmeli (ev ağı). Dışarıdan da açılsın istersen uzaktan erişim adresini yaz.</small></label>
+        ${server ? `<div class="field"><span>Yazıcı çözünürlüğü</span><div class="seg" id="sh-dpi">${[203, 300].map((d) => `<button type="button" data-v="${d}" class="${dpi === d ? 'on' : ''}">${d} dpi</button>`).join('')}</div></div>` : ''}</div>
+    </div>
+    <div class="modal-f"><span class="muted" id="sh-n"></span><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" id="sh-go">${icon('print')} Yazdır</button></div></div>`, 'wide sh-modal');
+  const picked = () => $$('#sh-list input:checked').map((x) => productById(+x.value)).filter(Boolean);
+  const prev = () => { const L = picked(); $('#sh-n').textContent = L.length ? `${L.length} ürün · ${Math.ceil(L.length / 5)} etiket` : 'Ürün seçin';
+    $('#sh-prev').innerHTML = L.length ? `<div class="sh-sheet">${shelfPagesHTML(L.slice(0, 10), $('#sh-base').value || qrBase())}</div>${L.length > 10 ? `<small class="muted">İlk 2 etiket gösteriliyor</small>` : ''}` : '<p class="muted">Soldan ürün seçin; etiket burada görünür.</p>';
+    $('#sh-go').disabled = !L.length; };
+  prev();
+  $('#sh-list').addEventListener('change', prev);
+  $('#sh-base').addEventListener('input', () => { clearTimeout(prev.t); prev.t = setTimeout(prev, 300); });
+  $('#sh-q').addEventListener('input', (e) => { const q = trLow(e.target.value); $$('#sh-list .dl-it').forEach((x) => { x.hidden = q && !x.dataset.n.includes(q); }); });
+  $('#sh-all').onclick = () => { $$('#sh-list .dl-it:not([hidden]) input').forEach((x) => { x.checked = true; }); prev(); };
+  $('#sh-none').onclick = () => { $$('#sh-list input').forEach((x) => { x.checked = false; }); prev(); };
+  $('#sh-dpi')?.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; dpi = +b.dataset.v; $$('#sh-dpi button').forEach((x) => x.classList.toggle('on', x === b)); });
+  $('#sh-go').onclick = async () => {
+    const L = picked(), base = ($('#sh-base').value || location.origin).trim();
+    try { localStorage.setItem('qrBase', base); localStorage.setItem('shelfDpi', dpi); } catch { /* */ }
+    if (server) {
+      try { const r = await api('POST', '/api/label/shelf', { dpi, items: L.map((p) => ({ name: p.name, code: prodCode(p), shelf: p.shelf || '', url: qrUrl(p, base) })) }); toast(`${r.labels} etiket yazıcıya gönderildi`); closeModal(); } catch (e) { fail(e); }
+    } else { printShelfBrowser(L, base); closeModal(); }
+  };
 }
 function printLabelPages(list) {
   return new Promise((resolve) => {
@@ -6283,11 +6560,21 @@ PAGES.makineler = {
             ${pct != null ? `<div class="mk-prog"><i style="width:${Math.max(3, pct * 100)}%"></i></div><small class="muted">sınır: ${[ih ? `${fmtH(ih)} saat` : '', id ? `${id} gün` : ''].filter(Boolean).join(' ya da ')}</small>` : '<small class="muted">Bakım aralığı ayarlanmamış</small>'}</div>
           <div class="mk-last">${L ? `<span class="mk-kic">${kd[1]}</span><span><b>${esc(L.part || kd[0])}</b><small>${mkDay(L.date)}${L.cost ? ` · ${fmtTL(L.cost)}` : ''}</small></span>` : '<span class="muted">Henüz bakım kaydı yok</span>'}</div>
           <div class="mk-cost"><span>Bakım masrafı</span><b>${fmtTL(m.cost_total)}</b>${m.cost_per_hour ? `<small>saat başı ${fmtTL(m.cost_per_hour)}</small>` : ''}</div>
+          ${m.elec_on ? `<div class="mk-elec"><span class="mk-bolt">⚡</span><span>Bu ay</span><b>${fmtKwh(m.kwh_month)}</b>${m.tariff ? `<b class="mk-tl">${fmtTL(m.kwh_month * m.tariff)}</b>` : ''}${m.watt ? `<small>≈ ${Math.round(m.watt)} W</small>` : ''}</div>` : ''}
           <div class="mk-acts"><button type="button" class="btn btn-sm btn-primary" data-act="mk-add" data-name="${esc(m.name)}">${icon('wrench')} Bakım ekle</button><button type="button" class="btn btn-sm" data-act="mk-open" data-name="${esc(m.name)}">Geçmiş${m.log.length ? ` · ${m.log.length}` : ''}</button></div>
         </article>`; }).join('')}</div>`;
   },
   after() { /* sağ tık: ortak dağıtıcıda */ },
 };
+const fmtKwh = (k) => `${(Math.round((k || 0) * 100) / 100).toLocaleString('tr-TR')} kWh`;
+function mkElecBox(m) {
+  const days = []; for (let i = 29; i >= 0; i--) { const d = new Date(Date.now() - i * 864e5); days.push(d.toISOString().slice(0, 10)); }
+  const by = Object.fromEntries((m.kwh_days || []).map((x) => [x.day, x.kwh])), mx = Math.max(0.01, ...days.map((d) => by[d] || 0));
+  const tot = days.reduce((a, d) => a + (by[d] || 0), 0);
+  return `<div class="mk-box"><h5>⚡ Elektrik · son 30 gün</h5><div class="kv"><span>Tüketim</span><b>${fmtKwh(tot)}</b></div>${m.tariff ? `<div class="kv"><span>Tutar</span><b>${fmtTL(tot * m.tariff)}</b></div>` : '<p class="muted mk-hint">Tutar için Ayarlar → Elektrik\'ten tarifeyi gir.</p>'}
+    ${m.watt ? `<div class="kv sub"><span>Baskıdaki ortalama güç</span><b>${Math.round(m.watt)} W</b></div>` : ''}
+    <div class="mk-ed" title="Günlük kWh">${days.map((d, i) => `<span style="--h:${(by[d] || 0) / mx * 100}%;--k:${i}" title="${d}: ${fmtKwh(by[d])}"></span>`).join('')}</div></div>`;
+}
 async function mkDo(method, url, body, msg) {
   try { S.machines = await api(method, url, body); if (msg) toast(msg); if (route() === 'makineler') { $('#view').innerHTML = PAGES.makineler.html(); PAGES.makineler.after(); countUp($('#view')); } return true; } catch (e) { fail(e); return false; }
 }
@@ -6330,6 +6617,7 @@ function openMachine(name) {
       <aside class="mk-side">
         <div class="mk-box"><h5>Masraf</h5><div class="kv"><span>Toplam</span><b>${fmtTL(m.cost_total)}</b></div><div class="kv"><span>Bu yıl</span><b>${fmtTL(m.cost_year)}</b></div>${m.cost_per_hour ? `<div class="kv"><span>Baskı saati başına</span><b>${fmtTL(m.cost_per_hour)}</b></div>` : ''}
           ${Object.entries(byKind).filter(([, v]) => v).map(([kk, v]) => `<div class="kv sub"><span>${MK_KINDS[kk]?.[1] || ''} ${MK_KINDS[kk]?.[0] || kk}</span><b>${fmtTL(v)}</b></div>`).join('')}</div>
+        ${m.elec_on ? mkElecBox(m) : ''}
         <div class="mk-box"><h5>Bakım hatırlatması</h5>
           <label class="field"><span>Her … saat baskıda bir</span><input class="input" type="number" min="0" id="mk-ih" value="${m.interval_hours || ''}" placeholder="ör. 200"></label>
           <label class="field"><span>ya da her … günde bir</span><input class="input" type="number" min="0" id="mk-id" value="${m.interval_days || ''}" placeholder="ör. 90"></label>
@@ -6410,6 +6698,7 @@ function prodCtxItems(p) {
     '-',
     { icon: '🎨', label: 'Renk varyantı ekle', run: () => openVariantDialog(p.id) },
     p.barcode ? { icon: icon('copy'), label: 'Barkodu kopyala', hint: p.barcode, run: () => copyText(p.barcode, 'Barkod') } : null,
+    { icon: icon('barcode'), label: 'Raf etiketi bas', hint: prodCode(p), run: () => openShelfLabels([p.id]) },
     p.thumbnail ? { icon: icon('expand'), label: 'Görseli büyüt', run: () => openLightbox([{ url: p.thumbnail, title: p.name }], 0) } : null,
     { icon: icon('chart'), label: 'Satış istatistikleri', run: () => { S.statQ = p.name; location.hash = '#/istatistik'; } },
     { icon: icon('note'), label: 'Yapılacak ekle', run: () => openTodoEdit(null, { link_kind: 'p', link_id: String(p.id), link_label: p.name, cat: 'dukkan' }) },
@@ -6508,6 +6797,8 @@ function spoolCtxItems(sp) {
     { input: true, icon: '⚖️', label: 'Kalan', placeholder: 'g', btn: 'Kaydet', run: (v) => put({ remaining: Math.max(0, v), ref: 'sağ tık' }, `#${sp.code}: kalan ${Math.round(v)} g`) },
     (sp.remaining || 0) > 0 ? { icon: '⭕', label: 'Bitti (0 g)', run: () => put({ remaining: 0, ref: 'bitti' }, `#${sp.code} bitti olarak işaretlendi`) } : null,
     '-',
+    dryLimit(sp.material) ? { icon: '♨️', label: 'Kuruttum (bugün)', hint: dryInfo(sp)?.text || '', run: () => spoolDry(sp, 'dried_at', `#${sp.code} kurutuldu, sayaç sıfırlandı`) } : null,
+    dryLimit(sp.material) && !sp.opened_at ? { icon: '📦', label: 'Bugün açtım', run: () => spoolDry(sp, 'opened_at', `#${sp.code} açıldı olarak işaretlendi`) } : null,
     { icon: '🛒', label: 'Satın alınacaklara ekle', run: () => openTodoEdit(null, { cat: 'alis', text: `${[sp.brand, sp.material, sp.color_name || colorName(sp.color_hex)].filter(Boolean).join(' ')} filament al` }) },
     { icon: icon('copy'), label: 'Makara ID kopyala', hint: '#' + sp.code, run: () => copyText(String(sp.code), 'Makara ID') },
     '-',
@@ -6660,7 +6951,7 @@ function bindCtx(root, sel, fn) {
 function packBarItems() {
   const it = S.pack?.items || [];
   const pinned = it.filter((x) => x.pin);
-  return pinned.length ? pinned : it.slice(0, 6);
+  return pinned.length ? pinned : it.filter((x) => (x.kind || 'pack') === 'pack').slice(0, 6);
 }
 function packBarHTML() {
   if (!S.pack) return '<div class="apb-sec" id="apb-sec"></div>';
@@ -6689,20 +6980,21 @@ function packBarPick(btn) {
 }
 
 // ---------- Ambalaj stoğu (sunucuda paket.py)
-const PK_ICONS = ['📦', '🛍️', '🫧', '💌', '✉️', '🏷️', '🎀', '📜', '🧻', '🧴', '🗃️', '🔖'];
+const PK_ICONS = ['📦', '🛍️', '🫧', '💌', '✉️', '🏷️', '🎀', '📜', '🧻', '🧴', '🗃️', '🔖', '⭕', '🧲', '🔩', '⛓️', '💡', '🔋', '🔑', '🪝'];
 const PK_UNITS = [['adet', 'adet'], ['m', 'metre'], ['paket', 'paket'], ['kg', 'kg']];
 const PK_STARTER = [['Kargo poşeti', '🛍️', 'adet', 50], ['Kutu · küçük', '📦', 'adet', 20], ['Kutu · orta', '📦', 'adet', 20], ['Balonlu naylon', '🫧', 'm', 10], ['Teşekkür kartı', '💌', 'adet', 50], ['Koli bandı', '🧻', 'adet', 2]];
 const pkNum = (v) => String(Math.round((v || 0) * 100) / 100).replace('.', ',');
 const pkU = (u) => (u === 'adet' ? '' : ` ${u}`);
 PAGES.ambalaj = {
-  async load() { await Promise.all([(async () => { S.pack = await api('GET', '/api/pack'); })(), S.products.length ? null : loadProducts()]); },
+  async load() { if (location.hash.includes('?acc')) S.pkKind = 'acc'; await Promise.all([(async () => { S.pack = await api('GET', '/api/pack'); })(), S.products.length ? null : loadProducts()]); },
   html() {
-    const P = S.pack || { items: [], rules: [], log: [] }, it = P.items;
+    const P = S.pack || { items: [], rules: [], log: [] }, K = S.pkKind || 'pack', allIt = P.items, it = allIt.filter((x) => (x.kind || 'pack') === K);
+    if (K === 'acc') return pkAccHTML(P, it);
     const low = it.filter((x) => x.min > 0 && x.stock <= x.min).length;
     const cats = [...new Set(S.products.filter((p) => !p.archived).map((p) => (p.category || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'tr'));
     const iname = (id) => { const x = it.find((y) => y.id === id); return x ? `${x.icon} ${esc(x.name)}` : '?'; };
     const tname = (r) => (r.scope === 'order' ? '<b>Her siparişe</b>' : r.scope === 'category' ? `Kategori: <b>${esc(r.target)}</b>` : `Ürün: <b>${esc(productById(+r.target)?.name || '#' + r.target)}</b>`);
-    return `<div class="toolbar"><span class="muted pk-sum"><b>${it.length}</b> malzeme${low ? ` · <span class="bad-text"><b>${low}</b> tanesi azaldı</span>` : ''}</span><span class="spacer"></span>
+    return `<div class="toolbar">${pkTabs()}<span class="muted pk-sum"><b>${it.length}</b> malzeme${low ? ` · <span class="bad-text"><b>${low}</b> tanesi azaldı</span>` : ''}</span><span class="spacer"></span>
         ${it.length ? `<button class="btn" data-act="pk-count">${icon('check')} Sayım yap</button>` : ''}<button class="btn btn-primary" data-act="pk-item">${icon('plus')} Malzeme ekle</button></div>
       ${it.length ? `<div class="pk-grid">${it.map((x, i) => { const r = x.min > 0 ? x.stock / (x.min * 3) : 1, cls = x.stock <= 0 ? 'out' : x.min > 0 && x.stock <= x.min ? 'low' : r < .6 ? 'mid' : '';
         return `<article class="pk-card ${cls}" style="--i:${i}" data-act="pk-item" data-id="${x.id}">
@@ -6729,11 +7021,35 @@ PAGES.ambalaj = {
         <section class="panel"><div class="panel-h"><h2>Son hareketler</h2></div><div class="panel-b"><ul class="pk-log">${P.log.map((l) => `<li><span>${l.icon || '📦'}</span><span class="pk-ln"><b>${esc(l.name)}</b><small>${{ order: 'Sipariş', count: 'Sayım', buy: 'Satın alma', manual: 'Elle' }[l.reason] || l.reason}${l.ref ? ' · ' + esc(l.ref) : ''} · ${fmtWhen(l.created_at)}</small></span><b class="${l.delta < 0 ? 'bad-text' : 'ok-text'}">${l.delta > 0 ? '+' : ''}${pkNum(l.delta)}${pkU(l.unit)}</b></li>`).join('') || '<li class="muted">Hareket yok.</li>'}</ul></div></section></div>` : ''}`;
   },
   after() {
+    $('#pk-tabs')?.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; S.pkKind = b.dataset.v; history.replaceState(null, '', '#/ambalaj' + (S.pkKind === 'acc' ? '?acc' : '')); $('#view').innerHTML = PAGES.ambalaj.html(); PAGES.ambalaj.after(); });
     const sc = $('#pkr-scope'); if (!sc) return;
     const upd = () => { $('#pkr-cat').hidden = sc.value !== 'category'; $('#pkr-prod').hidden = sc.value !== 'product'; $('#pkr-per').hidden = sc.value === 'order'; };
     sc.onchange = upd; upd();
   },
 };
+const pkTabs = () => `<div class="seg pk-tabs" id="pk-tabs">${[['pack', '📦 Ambalaj'], ['acc', '🔩 Aksesuar']].map(([k, l]) => `<button type="button" data-v="${k}" class="${(S.pkKind || 'pack') === k ? 'on' : ''}">${l}<small>${(S.pack?.items || []).filter((x) => (x.kind || 'pack') === k).length}</small></button>`).join('')}</div>`;
+function pkCardHTML(x, i) {
+  const r = x.min > 0 ? x.stock / (x.min * 3) : 1, cls = x.stock <= 0 ? 'out' : x.min > 0 && x.stock <= x.min ? 'low' : r < .6 ? 'mid' : '';
+  const n = S.pack?.acc_use?.[x.id] || 0;
+  return `<article class="pk-card ${cls}" style="--i:${i}" data-act="pk-item" data-id="${x.id}">
+    <button type="button" class="pk-del" data-act="pk-del" data-id="${x.id}" aria-label="${esc(x.name)} sil" title="Sil">${icon('trash')}</button>
+    <span class="pk-ic">${x.icon || '🔩'}</span>
+    <div class="pk-nm"><b title="${esc(x.name)}">${esc(x.name)}</b><small>${n ? `${n} üründe` : 'hiçbir ürüne bağlı değil'}${x.cost ? ` · ${fmtTL(x.cost)}/${x.unit}` : ''}${x.days_left != null ? ` · <b class="${x.days_left < 7 ? 'bad-text' : ''}">~${Math.floor(x.days_left)} gün</b>` : ''}</small></div>
+    <div class="pk-st"><b data-count>${pkNum(x.stock)}</b><small>${x.unit}</small></div>
+    <div class="pk-bar"><i style="width:${Math.max(3, Math.min(100, r * 100))}%"></i></div>
+    <div class="pk-q"><button type="button" class="btn btn-sm" data-act="pk-adj" data-id="${x.id}" data-d="-1" aria-label="Bir azalt">−</button><button type="button" class="btn btn-sm" data-act="pk-adj" data-id="${x.id}" data-d="1" aria-label="Bir artır">+</button><button type="button" class="btn btn-sm" data-act="pk-buy" data-id="${x.id}">Satın aldım</button></div>
+  </article>`;
+}
+function pkAccHTML(P, it) {
+  const low = it.filter((x) => x.min > 0 && x.stock <= x.min).length;
+  const byItem = {}; Object.entries(P.acc || {}).forEach(([pid, l]) => l.forEach((r) => { (byItem[r.item_id] ||= []).push({ p: productById(+pid), q: r.qty }); }));
+  return `<div class="toolbar">${pkTabs()}<span class="muted pk-sum"><b>${it.length}</b> aksesuar${low ? ` · <span class="bad-text"><b>${low}</b> tanesi azaldı</span>` : ''}</span><span class="spacer"></span>
+      ${it.length ? `<button class="btn" data-act="pk-count">${icon('check')} Sayım yap</button>` : ''}<button class="btn btn-primary" data-act="pk-item">${icon('plus')} Aksesuar ekle</button></div>
+    ${it.length ? `<div class="pk-grid">${it.map(pkCardHTML).join('')}</div>
+      <section class="panel"><div class="panel-h"><h2>Hangi ürünlerde</h2><span class="muted">ürünü açıp "Aksesuarlar" bölümünden bağla</span></div><div class="panel-b"><div class="pk-use">${it.map((x) => `<div class="pk-ur"><span>${x.icon}</span><b>${esc(x.name)}</b><span class="pk-up">${(byItem[x.id] || []).filter((y) => y.p).map((y) => `<button type="button" class="chip" data-act="edit-product" data-id="${y.p.id}">${esc(y.p.name)} ×${pkNum(y.q)}</button>`).join('') || '<small class="muted">henüz yok</small>'}</span></div>`).join('')}</div></div></section>`
+      : `<div class="empty panel pk-empty"><span class="pk-big">🔩</span><h3>Aksesuar yok</h3><p class="muted">Anahtarlık halkası, mıknatıs, vida, LED gibi ürüne takılan parçaları ekle. Ürüne bağlayınca baskı sonucu girildiğinde sağlam adet kadar kendiliğinden düşer; baskı başlatırken yetmeyecekse uyarır.</p>
+        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn btn-primary" data-act="pk-acc-starter">Hazır listeyle başla</button><button class="btn" data-act="pk-item">Tek tek ekle</button></div></div>`}`;
+}
 async function pkDo(method, url, body, msg) {
   try { S.pack = await api(method, url, body); if (msg) toast(msg); if (route() === '') fillPackBar(); if (route() === 'ambalaj') { $('#view').innerHTML = PAGES.ambalaj.html(); PAGES.ambalaj.after(); countUp($('#view')); } renderNav(); return true; } catch (e) { fail(e); return false; }
 }
@@ -6745,22 +7061,24 @@ async function pkDelete(id) {
   if (await pkDo('DELETE', `/api/pack/items/${id}`)) toast(`“${x.name}” silindi`, { action: 'Geri al', onAction: () => pkDo('POST', `/api/pack/items/${id}/restore`, {}, 'Geri getirildi') });
 }
 function openPackItem(id) {
-  const x = id ? S.pack.items.find((y) => y.id === id) : { name: '', icon: '📦', unit: 'adet', min: 0, stock: 0 };
+  const acc = id ? S.pack.items.find((y) => y.id === id)?.kind === 'acc' : S.pkKind === 'acc';
+  const x = id ? S.pack.items.find((y) => y.id === id) : { name: '', icon: acc ? '🔩' : '📦', unit: 'adet', min: 0, stock: 0 };
   let ic = x.icon || '📦';
-  openModal(`<div class="modal-h"><h2>${id ? 'Malzeme' : 'Yeni malzeme'}</h2><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+  openModal(`<div class="modal-h"><h2>${id ? (acc ? 'Aksesuar' : 'Malzeme') : acc ? 'Yeni aksesuar' : 'Yeni malzeme'}</h2><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
     <div class="modal-b pk-ed">
       <div class="field"><span>Simge</span><div class="fe-ics" id="pki-ic">${PK_ICONS.map((i) => `<button type="button" data-v="${i}" class="${ic === i ? 'on' : ''}">${i}</button>`).join('')}</div></div>
       <label class="field"><span>Ad</span><input class="input" id="pki-n" value="${esc(x.name)}" placeholder="Ör. Kutu · orta (15×15×10)"></label>
       <div class="row"><label class="field"><span>Birim</span><select class="input" id="pki-u">${PK_UNITS.map(([k, l]) => `<option value="${k}"${x.unit === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
         <label class="field"><span>Uyarı sınırı</span><input class="input" id="pki-min" type="number" min="0" step="1" value="${x.min || ''}" placeholder="0 = uyarma"></label>
         ${id ? '' : '<label class="field"><span>Şu an elde</span><input class="input" id="pki-s" type="number" min="0" step="1" placeholder="0"></label>'}</div>
+      <label class="field" style="max-width:200px"><span>Birim fiyat <small class="muted">maliyet kartında kullanılır</small></span><div class="input-group"><input class="input" id="pki-c" inputmode="decimal" value="${x.cost != null ? String(x.cost).replace('.', ',') : ''}" placeholder="isteğe bağlı"><span class="suffix">₺</span></div></label>
       ${id ? `<label class="switch"><input type="checkbox" id="pki-pin" ${x.pin ? 'checked' : ''}> Panodaki ambalaj şeridinde göster</label>` : ''}
     </div>
     <div class="modal-f">${id ? `<button class="btn btn-ghost" id="pki-del">${icon('trash')} Sil</button>` : ''}<div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" id="pki-ok">${id ? 'Kaydet' : 'Ekle'}</button></div></div>`, 'pk-modal');
   $('#pki-ic').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; ic = b.dataset.v; $$('#pki-ic button').forEach((y) => y.classList.toggle('on', y === b)); };
   $('#pki-n').focus();
   $('#pki-pin')?.addEventListener('change', (e) => packPin(id, e.target.checked));
-  $('#pki-ok').onclick = async () => { const body = { name: $('#pki-n').value, icon: ic, unit: $('#pki-u').value, min: $('#pki-min').value, stock: $('#pki-s')?.value }; if (await pkDo(id ? 'PUT' : 'POST', id ? `/api/pack/items/${id}` : '/api/pack/items', body, id ? 'Kaydedildi' : 'Malzeme eklendi')) closeModal(); };
+  $('#pki-ok').onclick = async () => { const body = { name: $('#pki-n').value, icon: ic, unit: $('#pki-u').value, min: $('#pki-min').value, stock: $('#pki-s')?.value, cost: ($('#pki-c').value || '').replace(',', '.'), kind: acc ? 'acc' : 'pack' }; if (await pkDo(id ? 'PUT' : 'POST', id ? `/api/pack/items/${id}` : '/api/pack/items', body, id ? 'Kaydedildi' : 'Malzeme eklendi')) closeModal(); };
   $('#pki-del')?.addEventListener('click', () => { closeModal(); pkDelete(id); });
 }
 function openPackCount() {
@@ -7466,6 +7784,61 @@ function weeklySetHTML() {
     ${w?.text ? `<div class="wk-prev"><b>${esc(w.title)}</b><span>${esc(w.text)}</span></div>` : ''}
   </div></section>`;
 }
+// ---------- Ayarlar → Home Assistant (olaylar, sensörler, elektrik)
+const HA_YAML = (ev) => `alias: Astera · ${ev}\ntriggers:\n  - trigger: event\n    event_type: astera_${ev}\nactions:\n  - action: notify.notify\n    data:\n      title: "{{ trigger.event.data.title }}"\n      message: "{{ trigger.event.data.body }}"`;
+function haSetHTML() {
+  const h = S.ha; if (!h) return '';
+  const st = h.status || {};
+  const ok = st.ok === true, bad = st.ok === false;
+  const ents = S.haEnts || [];
+  const opt = (kind, cur) => {
+    const list = ents.filter((x) => x.kind === kind);
+    if (!list.length) return `<option value="${esc(cur)}">${cur ? esc(cur) : '— seçilmedi —'}</option>`;
+    return `<option value="">— seçilmedi —</option>${list.map((x) => `<option value="${esc(x.id)}"${x.id === cur ? ' selected' : ''}>${esc(x.name)} · ${esc(x.state ?? '')} ${esc(x.unit)}</option>`).join('')}`;
+  };
+  const lw = Object.entries(h.learned || {});
+  return `<section class="panel ha-set"><div class="panel-h"><h2>Home Assistant</h2>${ok ? '<span class="tag tag-ok">Bağlı</span>' : bad ? '<span class="tag tag-bad">Bağlantı hatası</span>' : h.enabled ? '<span class="tag">Denenmedi</span>' : '<span class="tag">Kapalı</span>'}</div>
+    <div class="panel-b" style="display:grid;gap:14px">
+      <div class="ha-conn ${ok ? 'ok' : bad ? 'bad' : ''}"><span class="ha-dot"></span><div class="grow"><b>${h.supervised ? 'Eklenti içinden bağlı' : h.enabled ? 'Adres ve jetonla bağlanıyor' : 'Bağlantı ayarlı değil'}</b>
+        <small class="muted">${bad ? esc(st.error) : h.supervised ? 'Home Assistant eklentisi olarak çalıştığı için şifre gerekmez.' : 'HA → Profil → Güvenlik → Uzun ömürlü erişim jetonu oluştur, buraya yapıştır.'}</small></div>
+        <button class="btn btn-sm" data-act="ha-test" ${h.enabled ? '' : 'disabled'}>${icon('bolt')} Test olayı gönder</button></div>
+      ${h.supervised ? '' : `<div class="row"><label class="field"><span>Home Assistant adresi</span><input class="input" id="ha-url" value="${esc(h.url)}" placeholder="http://192.168.1.10:8123"></label>
+        <label class="field"><span>Erişim jetonu ${h.has_token ? '<span class="tag tag-ok">kayıtlı</span>' : ''}</span><input class="input" id="ha-tok" type="password" autocomplete="off" placeholder="${h.has_token ? 'değiştirmek için yapıştır' : 'eyJhbGciOi…'}"></label></div>
+        <div><button class="btn btn-primary btn-sm" data-act="ha-conn-save">Bağlantıyı kaydet</button></div>`}
+      <div class="field"><span>Gönderilecek olaylar <small class="muted">· HA'da "astera_…" olayı olarak gelir</small></span>
+        <div class="ha-ev">${h.event_list.map((e) => `<label class="switch sm"><input type="checkbox" data-ha-ev="${e.key}" ${h.events[e.key] ? 'checked' : ''}> ${esc(e.label)} <code>astera_${e.key}</code></label>`).join('')}</div></div>
+      <div class="row ha-row"><label class="switch"><input type="checkbox" id="ha-sens" ${h.sensors ? 'checked' : ''}> <span>Sensörleri yayınla <small class="muted">(bekleyen sipariş, bugün çıkacak, yazıcı kalan süresi, azalan stok, bugünkü ciro)</small></span></label>
+        <label class="field" style="max-width:150px"><span>Sabah özeti saati</span><input class="input" id="ha-morn" type="time" value="${esc(h.morning)}"></label></div>
+      <details class="ha-yaml"><summary>Örnek otomasyon</summary><p class="muted" style="margin:6px 0">HA → Ayarlar → Otomasyonlar → YAML olarak düzenle. Olayın içinde <code>title</code>, <code>body</code> gelir; LED, hoparlör ya da telefon için "actions" kısmını değiştir.</p>
+        <div class="seg ha-yseg">${h.event_list.slice(0, 4).map((e, i) => `<button type="button" data-ha-y="${e.key}" class="${i ? '' : 'on'}">${esc(e.label.split(' /')[0])}</button>`).join('')}</div>
+        <pre class="ha-code" id="ha-code">${esc(HA_YAML(h.event_list[0].key))}</pre><button class="btn btn-sm" data-act="ha-copy">${icon('copy')} Kopyala</button></details>
+    </div></section>
+    <section class="panel ha-set"><div class="panel-h"><h2>Elektrik</h2>${h.energy_entity ? '<span class="tag tag-ok">Ölçülüyor</span>' : ''}</div>
+    <div class="panel-b" style="display:grid;gap:12px">
+      <p class="muted" style="margin:0">Yazıcıların takılı olduğu ölçer prizin <b>toplam enerji (kWh)</b> sensörünü seç. Her dakika okunur; artış o an basan yazıcılara bölünür, hiçbiri basmıyorsa "bekleme" olarak yazılır. Hangi yazıcının ne çektiği, tek başına bastığı dakikalardan kendiliğinden öğrenilir.</p>
+      <div class="row"><label class="field"><span>Enerji sensörü (kWh)</span><select class="input" id="ha-en" ${h.enabled ? '' : 'disabled'}>${opt('energy', h.energy_entity)}</select></label>
+        <label class="field"><span>Güç sensörü (W) <small class="muted">isteğe bağlı, canlı gösterim</small></span><select class="input" id="ha-pw" ${h.enabled ? '' : 'disabled'}>${opt('power', h.power_entity)}</select></label></div>
+      <div><button class="btn btn-sm btn-ghost" data-act="ha-ents" ${h.enabled ? '' : 'disabled'}>${icon('refresh')} Sensörleri HA'dan getir</button></div>
+      <div class="row"><label class="field" style="max-width:190px"><span>Tarife</span><div class="input-group"><input class="input" id="ha-tar" inputmode="decimal" value="${h.tariff ? String(h.tariff).replace('.', ',') : ''}" placeholder="örn. 3,10"><span class="suffix">₺/kWh</span></div></label>
+        <div class="field"><span>Bekleme tüketimi (kimse basmazken)</span><div class="seg" id="ha-sb">${[['separate', 'Ayrı gider'], ['spread', 'Ürünlere yay']].map(([k, l]) => `<button type="button" data-v="${k}" class="${h.standby === k ? 'on' : ''}">${l}</button>`).join('')}</div></div></div>
+      ${lw.length ? `<div class="ha-lw">${lw.map(([n, x]) => `<span><b>${n ? esc(n) : 'Bekleme'}</b> ≈ ${Math.round(x.watt)} W <small class="muted">${x.n} ölçüm</small></span>`).join('')}</div>` : '<small class="muted">Öğrenilen güç değerleri birkaç baskıdan sonra burada görünür.</small>'}
+      <div><button class="btn btn-primary btn-sm" data-act="ha-en-save">Kaydet</button></div>
+    </div></section>`;
+}
+async function haSave(body, msg) {
+  try { S.ha = await api('PUT', '/api/ha', body); if (msg) toast(msg); return true; } catch (e) { fail(e); return false; }
+}
+function haBind() {
+  const root = $('.settings-grid'); if (!root || !S.ha) return;
+  root.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.dataset.haEv) haSave({ events: { [t.dataset.haEv]: t.checked } }, t.checked ? 'Olay açıldı' : 'Olay kapatıldı');
+    else if (t.id === 'ha-sens') haSave({ sensors: t.checked }, t.checked ? 'Sensörler yayınlanacak' : 'Sensörler kapatıldı');
+    else if (t.id === 'ha-morn' && t.value) haSave({ morning: t.value }, 'Sabah özeti saati kaydedildi');
+  });
+  $('#ha-sb')?.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; $$('#ha-sb button').forEach((x) => x.classList.toggle('on', x === b)); });
+  $('.ha-yseg')?.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; $$('.ha-yseg button').forEach((x) => x.classList.toggle('on', x === b)); $('#ha-code').textContent = HA_YAML(b.dataset.haY); });
+}
 // ---------- Ayarlar → Etiket yazıcısı (Trendyol ortak etiketi, ZPL)
 const TR_CITIES = 'Adana Adıyaman Afyonkarahisar Ağrı Aksaray Amasya Ankara Antalya Ardahan Artvin Aydın Balıkesir Bartın Batman Bayburt Bilecik Bingöl Bitlis Bolu Burdur Bursa Çanakkale Çankırı Çorum Denizli Diyarbakır Düzce Edirne Elazığ Erzincan Erzurum Eskişehir Gaziantep Giresun Gümüşhane Hakkari Hatay Iğdır Isparta İstanbul İzmir Kahramanmaraş Karabük Karaman Kars Kastamonu Kayseri Kilis Kırıkkale Kırklareli Kırşehir Kocaeli Konya Kütahya Malatya Manisa Mardin Mersin Muğla Muş Nevşehir Niğde Ordu Osmaniye Rize Sakarya Samsun Şanlıurfa Siirt Sinop Şırnak Sivas Tekirdağ Tokat Trabzon Tunceli Uşak Van Yalova Yozgat Zonguldak'.split(' ');
 const APK_URL = 'https://github.com/PhenixNoir/astera-ha/releases/latest';
@@ -7533,9 +7906,9 @@ function labelSetHTML() {
 }
 // Ayarlar grupları: her panel başlığına göre bir gruba düşer
 const SET_GROUPS = [['genel', 'Genel', 'gear'], ['magaza', 'Mağaza ve Kargo', 'pack'], ['trendyol', 'Trendyol', 'cart'], ['uretim', 'Üretim', 'layers'],
-  ['bildirim', 'Bildirimler', 'bell'], ['uzak', 'Uzaktan erişim', 'lock'], ['veri', 'Veri ve Yedek', 'download']];
-const SET_MAP = [[/^Uygulama|^Tema|^Görünüm/, 'genel'], [/^Kargo|^Stok ne zaman|^Sipariş notları|^Düşük kâr/, 'magaza'], [/^Trendyol/, 'trendyol'], [/^Kategoriler|^Makineler/, 'uretim'],
-  [/^Bildirimler|^Haftalık/, 'bildirim'], [/^Telefon|^Uzak/, 'uzak'], [/^Yedek|^Arşiv|^Hata raporu/, 'veri']];
+  ['bildirim', 'Bildirimler', 'bell'], ['ha', 'Home Assistant', 'home'], ['uzak', 'Uzaktan erişim', 'lock'], ['veri', 'Veri ve Yedek', 'download']];
+const SET_MAP = [[/^Uygulama|^Tema|^Görünüm/, 'genel'], [/^Kargo|^Stok ne zaman|^Sipariş notları|^Düşük kâr/, 'magaza'], [/^Trendyol/, 'trendyol'], [/^Kategoriler|^Makineler|^Filament kurutma|^Özel günler/, 'uretim'],
+  [/^Bildirimler|^Haftalık/, 'bildirim'], [/^Home Assistant|^Elektrik/, 'ha'], [/^Telefon|^Uzak/, 'uzak'], [/^Yedek|^Arşiv|^Hata raporu/, 'veri']];
 const setGroup = () => { try { const g = localStorage.getItem('setGrp'); return SET_GROUPS.some((x) => x[0] === g) ? g : 'genel'; } catch { return 'genel'; } };
 function setGroupsBind() {
   const grid = $('.settings-grid'); if (!grid) return;
@@ -7557,7 +7930,7 @@ function setGroupsBind() {
   }));
 }
 PAGES.ayarlar = {
-  async load() { await loadCategories(); await loadSettings(); if ((S.settings.printers || []).some(hasLink)) await loadBambu(); S.archived = (await api('GET', '/api/products?archived=1')).filter((p) => p.archived); S.backups = await api('GET', '/api/backups').catch(() => null); S.gd = await api('GET', '/api/gdrive').catch(() => null); S.weekly = await api('GET', '/api/weekly').catch(() => null); S.labelCfg = await api('GET', '/api/label/settings').catch(() => null); S.version = await api('GET', '/api/version').catch(() => null); S.authCfg = await api('GET', '/api/auth/settings').catch(() => null); S.upd = await api('GET', '/api/update').catch(() => null); S.ruleDraft = null; },
+  async load() { await loadCategories(); await loadSettings(); if ((S.settings.printers || []).some(hasLink)) await loadBambu(); S.archived = (await api('GET', '/api/products?archived=1')).filter((p) => p.archived); S.backups = await api('GET', '/api/backups').catch(() => null); S.gd = await api('GET', '/api/gdrive').catch(() => null); S.weekly = await api('GET', '/api/weekly').catch(() => null); S.labelCfg = await api('GET', '/api/label/settings').catch(() => null); S.version = await api('GET', '/api/version').catch(() => null); S.authCfg = await api('GET', '/api/auth/settings').catch(() => null); S.upd = await api('GET', '/api/update').catch(() => null); S.ha = await api('GET', '/api/ha').catch(() => null); await loadDays(true); S.ruleDraft = null; },
   html() {
     const theme = localStorage.getItem('theme') || 'auto';
     const nsup = 'Notification' in window, secure = window.isSecureContext;
@@ -7649,6 +8022,10 @@ PAGES.ayarlar = {
       </div></section>
 
       ${remoteSetHTML()}
+      ${haSetHTML()}
+      ${drySetHTML()}
+      ${geliverSetHTML()}
+      ${daysSetHTML()}
 
       <section class="panel"><div class="panel-h"><h2>Tema ve görünüm</h2><span class="muted" style="font-size:13px">bu cihaza kaydedilir</span></div><div class="panel-b theme-box">
         <div class="field"><span>Tema</span><div class="skin-pick" id="skin-pick">${THEME_SKINS.map(([v, l, d]) => `<button type="button" data-v="${v}" class="${uiOpt('skin', 'classic') === v ? 'on' : ''}" aria-pressed="${uiOpt('skin', 'classic') === v}"><span class="skin-prev ${v}"><b>Pano</b></span><b>${l}</b><small>${d}</small></button>`).join('')}</div></div>
@@ -7680,7 +8057,7 @@ PAGES.ayarlar = {
     </div></div></div>`;
   },
   after() {
-    setGroupsBind(); rulesBind();
+    setGroupsBind(); rulesBind(); haBind();
     api('GET', '/api/push/key').then((r) => { const el = $('#push-n'); if (el) el.textContent = r.subscribers; }).catch(() => {});
     advBind();
     const lpPath = () => { const el = $('#lp-path'); if (el) el.textContent = `\\\\${$('#lp-host').value.trim().replace(/^[\\/]+|[\\/]+$/g, '') || 'localhost'}\\${$('#lp-share').value.trim() || '…'}`; };
@@ -8533,6 +8910,7 @@ PAGES.plan = {
         <span class="muted">Öncelik: Trendyol'da eksik → özel sipariş → en az stok altı → satış hızına göre yakında bitecek. Stok hedefi:</span>
         <div class="seg" id="plan-days">${[7, 14, 30].map((v) => `<button data-v="${v}" class="${days === v ? 'on' : ''}">${v} gün</button>`).join('')}</div>
         <span class="spacer"></span><button class="btn" data-act="plan-refresh">${icon('refresh')} Yenile</button></div>
+      ${planTimelineHTML(d)}
       ${d.items.length ? '' : `<div class="empty panel"><h3>Basılması gereken bir şey yok</h3><p>Siparişler karşılanıyor ve stoklar ${days} günlük satışa yetiyor.</p></div>`}
       ${(() => { const others = d.printers.filter((p) => !(byP[p.name] || []).length); return others.length && U('sec.plan.others') ? `<div class="plan-others"><span class="muted">Önerilecek işi olmayan makineler:</span>${others.map((p) => `<span class="plan-chip${p.idle ? ' ok' : ''}">${printerThumb(p.name, 'xs')}${esc(p.name)} <small>${p.idle ? 'boşta' : `${fmtClock(p.free_at)}'de boşalır`}</small></span>`).join('')}</div>` : ''; })()}
       <div class="plan-grid">${d.printers.filter((p) => (byP[p.name] || []).length).map(pcard).join('')}</div>
@@ -8549,9 +8927,116 @@ PAGES.plan = {
       </div>`;
   },
   after() {
+    planSleepBind();
     $('#plan-days')?.addEventListener('click', async (e) => { const b = e.target.closest('button'); if (!b) return; try { S.settings = await api('PUT', '/api/settings', { plan_days: +b.dataset.v }); await loadPlan(); render(); } catch (err) { fail(err); } });
   },
 };
+// ---------- Özel günler (21A): panoda geri sayım şeridi
+function daysHTML() {
+  const D = (S.days || []).filter((d) => !d.hidden); if (!D.length) return S.days ? '' : '<section class="panel dz-sec"><div class="panel-b muted">Özel günler yükleniyor…</div></section>';
+  const show = D.slice(0, 8), open = show.find((d) => d.id === S.dayOpen) || show.find((d) => d.prep) || null;
+  const det = open ? (() => {
+    const L = open.products;
+    return `<div class="dz-det" style="view-transition-name:dz-det"><div class="dz-dh"><b>${open.icon} ${esc(open.name)}</b><span class="muted">${new Date(open.date + 'T12:00').toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' })}</span>
+        ${open.last_year ? `<span class="tag">geçen yıl bu dönemde ${open.last_year} satış</span>` : ''}<span class="spacer"></span><button class="btn btn-sm" data-act="day-link" data-id="${esc(open.id)}">${icon('edit')} Ürünleri bağla</button></div>
+      ${L.length ? `<div class="dz-prods">${L.map((p, i) => `<div class="dz-p" style="--i:${i}">${miniThumb(p.thumbnail)}<span class="grow"><b>${esc(p.name)}</b><small class="muted">stok ${p.stock}${p.last_year ? ` · geçen yıl ${p.last_year}` : ''}</small></span>
+          ${p.suggest ? `<span class="tag tag-warn">+${p.suggest} öneri</span>` : '<span class="tag tag-ok">yeter</span>'}<button class="btn btn-sm" data-act="day-print" data-id="${p.id}" data-q="${p.suggest || 1}">${icon('print')} Bas</button></div>`).join('')}</div>`
+        : open.suggested?.length ? `<p class="muted dz-sg">Bu güne uyabilecek ürünler: ${open.suggested.slice(0, 6).map((p) => `<b>${esc(p.name)}</b>`).join(', ')}${open.suggested.length > 6 ? '…' : ''} <button class="btn btn-sm btn-primary" data-act="day-link-sug" data-id="${esc(open.id)}">Bunları bağla</button></p>`
+        : '<p class="muted dz-sg">Bu güne henüz ürün bağlanmadı. Bağlayınca stok durumu ve basılacak adet önerisi burada çıkar.</p>'}</div>`; })() : '';
+  return `<section class="panel dz-sec"><div class="panel-h"><h2>Özel günler</h2><button type="button" class="linkish muted" data-act="day-settings" style="font-size:13px">Günleri düzenle</button></div><div class="panel-b">
+    <div class="dz">${show.map((d, i) => `<button type="button" class="dc ${d.days_left < 7 ? 'hot' : d.prep ? 'prep' : ''}${open?.id === d.id ? ' on' : ''}" data-act="day-open" data-id="${esc(d.id)}" style="--i:${i}">
+      <span class="dc-e">${d.icon}</span><b>${esc(d.name)}</b><span class="dc-cd"><span data-count>${d.days_left}</span><small>gün</small></span>
+      <small class="muted">${new Date(d.date + 'T12:00').toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}${d.days_left < 7 ? ' · son hafta' : d.prep ? ' · hazırlık' : ''}${d.products.length ? ` · ${d.products.length} ürün` : ''}</small></button>`).join('')}</div>
+    ${det}</div></section>`;
+}
+function fillDays() { const el = $('[data-sec="days"]'); if (el && route() === '') { el.innerHTML = daysHTML(); countUp(el); } }
+async function loadDays(force) { if (!S.days || force || Date.now() - (S.daysAt || 0) > 300000) { S.days = await api('GET', '/api/days').catch(() => S.days || []); S.daysAt = Date.now(); } return S.days; }
+function openDayLink(id) {
+  const d = (S.days || []).find((x) => x.id === id); if (!d) return;
+  const sel = new Set(d.products.map((p) => p.id)), sug = new Set((d.suggested || []).map((p) => p.id));
+  const list = S.products.filter((p) => !p.archived).sort((a, b) => (sug.has(b.id) - sug.has(a.id)) || a.name.localeCompare(b.name, 'tr'));
+  openModal(`<div class="modal-h"><h2>${d.icon} ${esc(d.name)} · ürünler</h2><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+    <div class="modal-b"><label class="search">${icon('search')}<input class="input" id="dl-q" placeholder="Ürün ara" autocomplete="off"></label>
+      <div class="dl-list" id="dl-list">${list.map((p) => `<label class="dl-it" data-n="${esc(trLow(p.name + ' ' + (p.category || '')))}"><input type="checkbox" value="${p.id}" ${sel.has(p.id) ? 'checked' : ''}>${miniThumb(p.thumbnail)}<span class="grow">${esc(p.name)}${sug.has(p.id) ? ' <span class="tag tag-ok">öneri</span>' : ''}</span><small class="muted">stok ${p.stock}</small></label>`).join('')}</div></div>
+    <div class="modal-f"><span class="muted" id="dl-n"></span><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" id="dl-ok">Kaydet</button></div></div>`, 'dl-modal');
+  const cnt = () => { $('#dl-n').textContent = `${$$('#dl-list input:checked').length} ürün seçili`; }; cnt();
+  $('#dl-list').addEventListener('change', cnt);
+  $('#dl-q').addEventListener('input', (e) => { const q = trLow(e.target.value); $$('#dl-list .dl-it').forEach((x) => { x.hidden = q && !x.dataset.n.includes(q); }); });
+  $('#dl-ok').onclick = async () => { try { S.days = await api('PUT', `/api/days/${encodeURIComponent(id)}/products`, { ids: $$('#dl-list input:checked').map((x) => +x.value) }); S.dayOpen = id; closeModal(); toast('Ürünler bağlandı'); fillDays(); } catch (e) { fail(e); } };
+}
+function daysSetHTML() {
+  const D = S.days || [], lead = S.settings?.days_lead || 21;
+  return `<section class="panel"><div class="panel-h"><h2>Özel günler</h2></div><div class="panel-b" style="display:grid;gap:10px">
+    <p class="muted" style="margin:0">Panoda geri sayımı görünecek günler. Hazırlık penceresi açılınca bildirim gelir ve bağlı ürünler için basılacak adet önerilir.</p>
+    <div class="ds-list">${D.map((d) => `<label class="switch sm"><input type="checkbox" data-day-on="${esc(d.id)}" ${d.hidden ? '' : 'checked'}> ${d.icon} ${esc(d.name)} <small class="muted">${new Date(d.date + 'T12:00').toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}</small>${d.custom ? ` <button type="button" class="linkish" data-act="day-rm" data-id="${esc(d.id)}">sil</button>` : ''}</label>`).join('')}</div>
+    <div class="row ds-add"><label class="field"><span>Yeni gün</span><input class="input" id="ds-n" placeholder="Ör. Mezuniyet" maxlength="40"></label>
+      <label class="field" style="max-width:150px"><span>Tarih</span><input class="input" id="ds-d" type="date"></label>
+      <label class="switch sm" style="align-self:end;margin-bottom:8px"><input type="checkbox" id="ds-y" checked> her yıl</label>
+      <button class="btn btn-sm" data-act="day-add" style="align-self:end;margin-bottom:4px">${icon('plus')} Ekle</button></div>
+    <label class="field" style="max-width:220px"><span>Hazırlık penceresi</span><div class="input-group"><input class="input" id="ds-lead" type="number" min="3" max="90" value="${lead}"><span class="suffix">gün önce</span></div></label>
+    <div><button class="btn btn-primary btn-sm" data-act="day-save">Kaydet</button></div></div></section>`;
+}
+// ---------- Gece / gündüz planı: 24 saatlik şerit (8A) ve panoda "Bu geceki iş" (8C)
+const hm2s = (s) => { const [h, m] = String(s || '00:00').split(':').map(Number); return (h || 0) * 3600 + (m || 0) * 60; };
+function dayAt(base, hm) { const d = new Date(base * 1000); d.setHours(0, 0, 0, 0); return Math.floor(d.getTime() / 1000) + hm2s(hm); }
+// bu akşam yatma (uyku başlangıcından 1 saat önce) ve sabah kalkış
+function sleepWin(t = nowS()) {
+  const sf = S.settings?.sleep_from || '00:30', st = S.settings?.sleep_to || '08:30';
+  for (const k of [-1, 0, 1]) {   // şu anki ya da sıradaki gece: bitişi henüz gelmemiş ilk gece
+    const from = dayAt(t + k * 86400, sf); let to = dayAt(from, st); if (to <= from) to += 86400;
+    if (to > t) return { bed: from - 3600, from, to };
+  }
+  const from = dayAt(t + 86400, sf); return { bed: from - 3600, from, to: from + 8 * 3600 };
+}
+function nightPick(d, p, w = sleepWin()) {
+  if ((p.free_at || 0) > w.bed + 1800) return null;
+  const span = w.to - w.bed;
+  const c = d.items.filter((it) => it.printer === p.name && it.minutes >= 180 && it.minutes * 60 <= span + 3 * 3600);
+  if (!c.length) return null;
+  const it = c.reduce((a, b) => (Math.abs(b.minutes * 60 - span) < Math.abs(a.minutes * 60 - span) ? b : a));
+  const start = Math.max(nowS(), w.bed);
+  return { it, start, end: start + it.minutes * 60 };
+}
+function planTimelineHTML(d) {
+  if (!d?.printers?.length || !U('sec.plan.timeline')) return '';
+  const t = nowS(), t0 = Math.floor(t / 3600) * 3600, T = 24 * 3600, w = sleepWin(t);
+  const X = (x) => Math.max(0, Math.min(100, (x - t0) / T * 100));
+  const nights = [-1, 0, 1].map((k) => { const f = dayAt(t0 + k * 86400, S.settings?.sleep_from || '00:30'); let e = dayAt(f, S.settings?.sleep_to || '08:30'); if (e <= f) e += 86400; return [f, e]; })
+    .filter(([f, e]) => e > t0 && f < t0 + T);
+  const ticks = []; for (let k = 0; k <= 24; k += 4) ticks.push(t0 + k * 3600);
+  const blk = (a, b, cls, label, attrs = '', i = 0) => { const L = X(a), R = X(b); if (R - L <= 0.2) return ''; return `<span class="pt-b ${cls}" style="left:${L}%;width:${R - L}%;--i:${i}" ${attrs} title="${esc(label)} · ${fmtClock(a)} → ${fmtClock(b)}">${esc(label)}</span>`; };
+  const rows = d.printers.map((p, pi) => {
+    const busy = p.busy.filter((j) => !j.due).map((j, i) => blk(t, j.ends_at, 'live', `${j.name} ×${j.quantity}`, '', i)).join('');
+    const its = d.items.filter((it) => it.printer === p.name && it.start).slice(0, 8).map((it, i) => blk(it.start, it.end, `k-${it.kind}`, `${it.name} ×${it.qty}`, `data-act="plan-start" data-key="${esc(it.key)}"`, i + 1)).join('');
+    const g = nightPick(d, p, w);
+    const ghost = g ? blk(g.start, g.end, 'ghost', `🌙 ${g.it.name} ×${g.it.qty}`, `data-act="plan-start" data-key="${esc(g.it.key)}"`, 9) : '';
+    return `<div class="pt-row" style="--r:${pi}"><span class="pt-n">${printerThumb(p.name, 'xs')}<b>${esc(p.name)}</b></span><div class="pt-tr">${nights.map(([f, e]) => `<i class="pt-night" style="left:${X(f)}%;width:${X(e) - X(f)}%"></i>`).join('')}${busy}${its}${ghost}<i class="pt-now" style="left:${X(t)}%"></i></div></div>`;
+  }).join('');
+  const pick = d.printers.map((p) => ({ p, g: nightPick(d, p, w) })).filter((x) => x.g);
+  return `<section class="panel plan-tl"><div class="panel-h"><h2>Gece / gündüz</h2>
+      <span class="pt-sleep">Uyku <input class="input" type="time" id="pt-sf" value="${esc(S.settings?.sleep_from || '00:30')}" aria-label="Uyku başlangıcı"> – <input class="input" type="time" id="pt-st" value="${esc(S.settings?.sleep_to || '08:30')}" aria-label="Kalkış"></span></div>
+    <div class="panel-b"><div class="pt-ax"><span></span><div>${ticks.map((x) => `<small style="left:${X(x)}%">${fmtClock(x)}</small>`).join('')}</div></div>${rows}
+      <p class="pt-help muted">${pick.length ? `🌙 Kesikli: yatmadan önce (${fmtClock(w.bed)}) başlatılırsa sabaha biten iş. Tıklayınca baskı penceresi açılır.` : 'Bu gece için uzun bir iş önerisi yok (3 saatten uzun iş ya da boş makine yok).'} Taralı alan uyku saatleri; kırmızı çizgi şu an.</p></div></section>`;
+}
+function tonightHTML() {
+  const d = S.plan; if (!d?.items?.length) return '';
+  const t = nowS(), w = sleepWin(t), h = new Date().getHours();
+  if (!(t >= w.bed - 4 * 3600 && t < w.from + 1800) && !(h >= 20)) return '';
+  const pick = d.printers.map((p) => ({ p, g: nightPick(d, p, w) })).filter((x) => x.g);
+  if (!pick.length) return '';
+  const [a, ...rest] = pick;
+  const fil = (it) => (it.colors || []).map((c) => `${fmtGram(c.grams)} ${esc(c.name || colorName(c.hex) || '')}`).join(' · ');
+  return `<section class="tonight"><span class="tn-moon" aria-hidden="true">🌙</span>${'<i class="tn-st"></i>'.repeat(14)}
+    <span class="tn-k">Bu geceki iş</span>
+    <div class="tn-main"><b>${esc(a.p.name)} → ${esc(a.g.it.name)} ×${a.g.it.qty}</b><span>${fmtClock(a.g.start)}'de başlat, ${fmtClock(a.g.end)}'de hazır · ${fmtDur(a.g.it.minutes)}${fil(a.g.it) ? ' · ' + fil(a.g.it) : ''}</span></div>
+    ${rest.map((x) => `<div class="tn-more">${esc(x.p.name)} için: <b>${esc(x.g.it.name)} ×${x.g.it.qty}</b> · ${fmtDur(x.g.it.minutes)} <button type="button" class="linkish" data-act="plan-start" data-key="${esc(x.g.it.key)}">başlat</button></div>`).join('')}
+    <button type="button" class="btn tn-go" data-act="plan-start" data-key="${esc(a.g.it.key)}">${icon('layers')} Bu gece başlat</button></section>`;
+}
+function planSleepBind() {
+  ['#pt-sf', '#pt-st'].forEach((q) => $(q)?.addEventListener('change', async (e) => {
+    try { S.settings = await api('PUT', '/api/settings', { [q === '#pt-sf' ? 'sleep_from' : 'sleep_to']: e.target.value }); const y = scrollY; await render(); scrollTo(0, y); toast('Uyku saatleri kaydedildi'); } catch (err) { fail(err); }
+  }));
+}
 function planItem(it, primary) {
   const [kl, kc] = PLAN_KIND[it.kind];
   const sub = [it.reason, it.minutes ? fmtDur(it.minutes) : 'süre girilmemiş', it.grams ? fmtGram(it.grams) : ''].filter(Boolean).join(' · ');
@@ -8578,6 +9063,42 @@ function planDashHTML() {
     ${next.length ? `<div class="plan-next">${next.map(({ p, it }) => `<div class="pn">${printerThumb(p.name, 'sm')}<div class="grow"><small class="ok-text">${esc(p.name)} boşta</small><div class="t">${esc(it.name)} <span class="muted">×${it.qty}</span></div><div class="s">${esc(it.reason)}${it.minutes ? ' · ' + fmtDur(it.minutes) : ''}</div></div><button class="btn btn-sm btn-primary" data-act="plan-start" data-key="${esc(it.key)}">Bas</button></div>`).join('')}</div>` : ''}
     ${rest.length ? `<ol class="plan-q">${rest.map((it) => planItem(it, false)).join('')}</ol>` : ''}</div></section>`;
 }
+
+// ================================================================== YORUMLAR (Trendyol ürün yorumları)
+const starsHTML = (n) => `<span class="rv-st" aria-label="${n} yıldız">${'★'.repeat(n || 0)}<s>${'★'.repeat(5 - (n || 0))}</s></span>`;
+PAGES.yorumlar = {
+  async load() { S.rev = await api('GET', '/api/reviews'); },
+  html() {
+    const d = S.rev || { items: [] }, f = S.revF || 'all';
+    const pass = (r) => f === 'all' || (f === 'low' && r.rate <= 3) || (f === 'photo' && r.media > 0) || (f === 'new' && !r.seen);
+    const ours = d.items.filter((r) => r.ours && pass(r)), others = d.items.filter((r) => !r.ours && pass(r));
+    const mx = Math.max(1, ...Object.values(d.dist || {}));
+    const card = (r, i) => { const p = r.product_id ? productById(r.product_id) : null;
+      return `<article class="rv${r.rate <= 3 ? ' low' : ''}${r.seen ? '' : ' fresh'}" style="--i:${Math.min(i, 16)}">${p ? miniThumb(p.thumbnail) : miniThumb('')}
+        <div class="rv-b"><div class="rv-h">${starsHTML(r.rate)}<b>${esc(p?.name || r.product_title || 'Ürün')}</b>${r.seen ? '' : '<span class="tag tag-ok">yeni</span>'}${r.media ? `<span class="tag">📷 ${r.media}</span>` : ''}</div>
+          <p>${esc(r.comment || '(yorum yazılmamış, yalnız puan)')}</p>
+          <small class="muted">${esc(r.user || 'Müşteri')} · ${r.created ? fmtWhen(r.created) : ''}${!r.ours && r.seller ? ` · <b>${esc(r.seller)}</b>` : ''}</small></div></article>`; };
+    if (!d.items.length) return `<div class="empty panel"><h3>Henüz yorum yok</h3><p>${d.error ? `Yorumlar okunamadı: <b>${esc(d.error)}</b>. Trendyol bu servisi değiştirmiş olabilir.` : 'Trendyol\'daki ürünlerinin yorumları 3 saatte bir okunur.'}</p>
+      <button class="btn btn-primary" data-act="rev-fetch">${icon('refresh')} Şimdi oku</button></div>`;
+    return `<div class="rv-top">
+        <section class="panel rv-sum"><div class="rv-avg"><b data-count>${d.avg != null ? String(d.avg).replace('.', ',') : '–'}</b>${starsHTML(Math.round(d.avg || 0))}<small class="muted">${d.count} yorum · bizim mağaza</small></div>
+          <div class="rv-dist">${[5, 4, 3, 2, 1].map((k, i) => `<div><span>${k}★</span><i style="--w:${(d.dist?.[k] || 0) / mx * 100}%;--k:${i}"></i><b>${d.dist?.[k] || 0}</b></div>`).join('')}</div></section>
+        ${d.products?.length ? `<section class="panel rv-prods"><div class="panel-h"><h2>Ürün ürün</h2><small class="muted">puanı düşük olan üstte</small></div><div class="panel-b">${d.products.slice(0, 6).map((x) => { const p = x.product_id ? productById(x.product_id) : null;
+            return `<div class="rv-pr">${miniThumb(p?.thumbnail || '')}<span class="grow">${esc(p?.name || x.title || 'Ürün')}</span><b class="${x.avg < 4 ? 'bad-text' : 'ok-text'}">${String(x.avg).replace('.', ',')}★</b><small class="muted">${x.n}</small></div>`; }).join('')}</div></section>` : ''}
+      </div>
+      <div class="toolbar"><div class="seg" id="rv-f">${[['all', 'Tümü'], ['new', `Yeni${d.unseen ? ` (${d.unseen})` : ''}`], ['low', '1–3 yıldız'], ['photo', 'Fotoğraflı']].map(([k, l]) => `<button data-v="${k}" class="${f === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+        <span class="spacer"></span><small class="muted">${d.error ? `<span class="bad-text">Son okuma başarısız: ${esc(d.error)}</span> · ` : ''}${d.last ? `son okuma ${fmtWhen(d.last)}` : ''}</small>
+        <button class="btn" data-act="rev-fetch">${icon('refresh')} Şimdi oku</button></div>
+      <section class="rv-list">${ours.length ? ours.map(card).join('') : '<p class="muted">Bu filtrede bizim mağazaya yorum yok.</p>'}</section>
+      ${others.length ? `<details class="rv-others" ${S.revOth ? 'open' : ''}><summary><span class="rv-oth-t">🤡 Gerizekalı satıcıların yorumu</span><small class="muted">aynı ürünü satan başka mağazalara yazılanlar · ${others.length}</small></summary>
+        <section class="rv-list">${others.map(card).join('')}</section></details>` : ''}`;
+  },
+  after() {
+    $('#rv-f')?.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; S.revF = b.dataset.v; render(); });
+    $('.rv-others')?.addEventListener('toggle', (e) => { S.revOth = e.target.open; });
+    if (S.rev?.unseen) setTimeout(() => api('POST', '/api/reviews/seen').then(() => loadNotifs?.()).catch(() => {}), 2500);
+  },
+};
 
 // ================================================================== ÜRÜN SAYFASI
 const hashQ = () => new URLSearchParams(location.hash.split('?')[1] || '');
@@ -9542,6 +10063,45 @@ function wzBind(el) {
   });
 }
 
+// ---------- Günaydın kartı (28A): günün ilk açılışında bir kez
+async function morningCard() {
+  const today = localToday();
+  try { if (localStorage.getItem('gmOff') === '1' || localStorage.getItem('gmDay') === today) return false; } catch { return false; }
+  if (new Date().getHours() < 5 || $('#wiz')) return false;
+  let d; try { d = await api('GET', '/api/morning'); } catch { return false; }
+  try { localStorage.setItem('gmDay', today); } catch { /* */ }
+  const rows = [];
+  if (d.orders_today) rows.push(['bad', d.orders_today, `sipariş bugün çıkacak${d.orders_urgent ? ` <span class="tag tag-bad">${d.orders_urgent === d.orders_today ? 'hepsi acil' : `${d.orders_urgent} acil`}</span>` : ''}`, '#/siparisler?src=ty']);
+  if (d.jobs_done?.length) rows.push(['ok', d.jobs_done.length, `baskı bitti, sonucunu gir <small class="muted">${d.jobs_done.slice(0, 3).map((j) => esc(j.name)).join(', ')}</small>`, 'jobs']);
+  if (d.low?.length) rows.push(['warn', d.low.length, `şey azaldı <small class="muted">${d.low.slice(0, 3).map((x) => esc(String(x.title).split(/[·:]/).pop().trim())).join(', ')}</small>`, 'notif']);
+  if (d.unpaid?.n) rows.push(['info', d.unpaid.n, `ödeme bekliyor · ${fmtTL(d.unpaid.sum)}`, '#/siparisler?src=custom']);
+  if (d.todos?.length) rows.push(['', d.todos.length, `yapılacak bugün <small class="muted">${d.todos.slice(0, 2).map((t) => esc(t.text)).join(', ')}</small>`, '#/']);
+  if (d.reviews?.length) { const low = d.reviews.filter((r) => r.rate <= 3).length; rows.push([low ? 'bad' : 'ok', d.reviews.length, `yeni yorum${low ? ` <span class="tag tag-bad">${low} tanesi düşük puan</span>` : ''}`, '#/yorumlar']); }
+  if (d.day) rows.push(['warn', d.day.days_left, `gün kaldı · ${d.day.icon} ${esc(d.day.name)}`, '#/']);
+  const h = new Date().getHours();
+  const el = document.createElement('div'); el.className = 'gm-ovl'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Günaydın');
+  el.innerHTML = `<div class="gm-card"><span class="gm-sun" aria-hidden="true"></span>
+    <div class="gm-h"><small>${new Date().toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' })}</small><h2>${h < 12 ? 'Günaydın' : h < 18 ? 'İyi günler' : 'İyi akşamlar'} 👋</h2></div>
+    ${rows.length ? `<div class="gm-list">${rows.map(([c, n, t, go], i) => `<button type="button" class="gm-it" data-go="${esc(go)}" style="--i:${i}"><b class="gm-n ${c}" data-to="${n}">0</b><span>${t}</span><i>›</i></button>`).join('')}</div>`
+      : '<p class="gm-calm">☕ Bugün acil bir şey yok. Keyifli çalışmalar!</p>'}
+    <div class="gm-f"><button type="button" class="linkish muted" data-gm-off>Bir daha gösterme</button><button type="button" class="btn btn-primary" data-gm-x>Başlayalım</button></div></div>`;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('in'));
+  // sayılar sırayla sayarak gelir
+  $$('.gm-n', el).forEach((b, i) => { const to = +b.dataset.to; if (REDUCED()) { b.textContent = to; return; } setTimeout(() => { let k = 0; const st = Math.max(1, Math.ceil(to / 14)); const t = setInterval(() => { k = Math.min(to, k + st); b.textContent = k; if (k >= to) clearInterval(t); }, 40); }, 300 + i * 110); });
+  return new Promise((res) => {
+    const close = (after) => { el.classList.remove('in'); el.classList.add('out'); setTimeout(() => { el.remove(); after?.(); res(true); }, REDUCED() ? 0 : 260); };
+    el.addEventListener('click', (e) => {
+      if (e.target === el || e.target.closest('[data-gm-x]')) return close(() => checkDue());
+      if (e.target.closest('[data-gm-off]')) { try { localStorage.setItem('gmOff', '1'); } catch { /* */ } toast('Günaydın kartı kapatıldı'); return close(() => checkDue()); }
+      const it = e.target.closest('.gm-it'); if (!it) return;
+      const go = it.dataset.go;
+      close(() => { if (go === 'jobs') { checkDue(); location.hash = '#/baskilar'; } else if (go === 'notif') notifOpen(true); else location.hash = go; });
+    });
+    document.addEventListener('keydown', function esc1(e) { if (e.key === 'Escape' && el.isConnected) { document.removeEventListener('keydown', esc1); close(() => checkDue()); } });
+  });
+}
+
 (async function boot() {
   applyTheme(); applyUI();
   await syncTime();
@@ -9556,6 +10116,58 @@ function wzBind(el) {
   // ilk açılış: hiç ürün ve Trendyol bağlantısı yoksa kurulum sihirbazı
   if (S.settings && !S.settings.setup_done && !(S.products || []).length && !S.settings.ty_seller_id) openWizard();
   S.lastJobsSig = S.jobs.map((j) => j.id + ':' + j.ends_at).join(',');
-  checkDue();
+  const gm = await morningCard().catch(() => false);
+  if (!gm) checkDue();
   if (!$('#wiz')) setTimeout(() => checkLowMargin(), 1200);
 })();
+
+// Home Assistant ayar eylemleri (ACTIONS tanımlandıktan sonra)
+Object.assign(ACTIONS, {
+  'ha-test': async (el) => { el.disabled = true; el.classList.add('busy');
+    try { S.ha.status = await api('POST', '/api/ha/test'); toast('Test olayı gönderildi: astera_test'); } catch (e) { fail(e); S.ha = await api('GET', '/api/ha').catch(() => S.ha); }
+    finally { el.disabled = false; el.classList.remove('busy'); } const y = scrollY; render().then?.(() => scrollTo(0, y)); },
+  'ha-conn-save': async () => { if (await haSave({ url: $('#ha-url').value, token: $('#ha-tok').value || null }, 'Home Assistant bağlantısı kaydedildi')) { const y = scrollY; await render(); scrollTo(0, y); } },
+  'ha-ents': async (el) => { el.disabled = true; try { S.haEnts = await api('GET', '/api/ha/entities'); toast(`${S.haEnts.length} enerji / güç sensörü bulundu`); const y = scrollY; await render(); scrollTo(0, y); } catch (e) { fail(e); el.disabled = false; } },
+  'ha-en-save': async () => { const sb = $('#ha-sb .on')?.dataset.v;
+    if (await haSave({ energy_entity: $('#ha-en').value, power_entity: $('#ha-pw').value, tariff: $('#ha-tar').value || 0, standby: sb }, 'Elektrik ayarları kaydedildi')) { S.profit = null; const y = scrollY; await render(); scrollTo(0, y); } },
+  'ha-copy': () => copyText($('#ha-code').textContent, 'Otomasyon'),
+});
+Object.assign(ACTIONS, {
+  'dry-save': async () => { const o = {}; $$('[data-dry]').forEach((x) => { if (x.value) o[x.dataset.dry] = +x.value; });
+    try { S.settings = await api('PUT', '/api/settings', { dry_days: o }); toast('Kurutma süreleri kaydedildi'); } catch (e) { fail(e); } },
+});
+Object.assign(ACTIONS, {
+  'rev-fetch': async (el) => { el.disabled = true; el.classList.add('busy');
+    try { S.rev = await api('POST', '/api/reviews/fetch'); const r = S.rev.run || {}; toast(r.error ? `Okunamadı: ${r.error}` : r.busy ? 'Okuma zaten sürüyor' : `${r.ok || 0} ürün okundu · ${r.new || 0} yeni yorum`, { bad: !!r.error }); render(); }
+    catch (e) { fail(e); el.disabled = false; el.classList.remove('busy'); } },
+});
+Object.assign(ACTIONS, {
+  'ship-pick': (el) => shipPick(+el.dataset.id || null),
+  'gl-save': async () => { const v = $('#gl-tok').value.trim(); if (!v) return toast('API anahtarını yapıştır', { bad: true });
+    try { S.settings = await api('PUT', '/api/settings', { geliver_token: v }); toast('Geliver anahtarı kaydedildi');
+      const r = await api('POST', '/api/geliver/sync').catch((e) => { fail(e); return null; }); if (r) toast(`${r.checked} kargo kontrol edildi · ${r.matched} eşleşti`); const y = scrollY; await render(); scrollTo(0, y); } catch (e) { fail(e); } },
+  'gl-sync': async (el) => { el.disabled = true; try { const r = await api('POST', '/api/geliver/sync'); toast(`${r.checked} kargo kontrol edildi · ${r.matched} eşleşti${r.delivered?.length ? ` · ${r.delivered.length} teslim edildi` : ''}`); S.orders = null; } catch (e) { fail(e); } el.disabled = false; },
+  'gl-clear': async () => { try { S.settings = await api('PUT', '/api/settings', { geliver_token: '' }); toast('Geliver anahtarı silindi'); const y = scrollY; await render(); scrollTo(0, y); } catch (e) { fail(e); } },
+});
+Object.assign(ACTIONS, {
+  'pk-acc-starter': async () => { for (const [n, i] of [['Anahtarlık halkası 25 mm', '⭕'], ['Mıknatıs 6×2 mm', '🧲'], ['Vida M3', '🔩'], ['Zincir', '⛓️'], ['LED modül', '💡'], ['Püskül', '🎀']]) {
+      try { S.pack = await api('POST', '/api/pack/items', { name: n, icon: i, unit: 'adet', kind: 'acc' }); } catch (e) { return fail(e); } }
+    toast('6 aksesuar eklendi; sayılarını gir'); $('#view').innerHTML = PAGES.ambalaj.html(); PAGES.ambalaj.after(); },
+});
+Object.assign(ACTIONS, {
+  'day-open': (el) => { S.dayOpen = S.dayOpen === el.dataset.id ? '' : el.dataset.id; fillDays(); },
+  'day-link': (el) => openDayLink(el.dataset.id),
+  'day-settings': () => { try { localStorage.setItem('setGrp', 'uretim'); } catch { /* */ } location.hash = '#/ayarlar'; },
+  'day-link-sug': async (el) => { const d = S.days.find((x) => x.id === el.dataset.id); if (!d) return;
+    try { S.days = await api('PUT', `/api/days/${encodeURIComponent(d.id)}/products`, { ids: d.suggested.map((p) => p.id) }); S.dayOpen = d.id; toast(`${d.suggested.length} ürün bağlandı`); fillDays(); } catch (e) { fail(e); } },
+  'day-print': (el) => openNewPrint({ pid: +el.dataset.id }),
+  'day-add': async () => { const n = $('#ds-n').value.trim(), d = $('#ds-d').value; if (!n || !d) return toast('Ad ve tarih girin', { bad: true });
+    const cur = S.settings?.days_custom || [];
+    try { S.settings = await api('PUT', '/api/settings', { days_custom: [...cur, { name: n, date: $('#ds-y').checked ? d.slice(5) : d, icon: '📅' }] }); await loadDays(true); toast('Özel gün eklendi'); const y = scrollY; await render(); scrollTo(0, y); } catch (e) { fail(e); } },
+  'day-rm': async (el) => { try { S.settings = await api('PUT', '/api/settings', { days_custom: (S.settings?.days_custom || []).filter((x) => x.id !== el.dataset.id) }); await loadDays(true); const y = scrollY; await render(); scrollTo(0, y); } catch (e) { fail(e); } },
+  'day-save': async () => { const off = $$('[data-day-on]').filter((x) => !x.checked).map((x) => x.dataset.dayOn);
+    try { S.settings = await api('PUT', '/api/settings', { days_off: off, days_lead: +$('#ds-lead').value || 21 }); await loadDays(true); toast('Özel günler kaydedildi'); } catch (e) { fail(e); } },
+});
+Object.assign(ACTIONS, {
+  'shelf-labels': (el) => { if (el.dataset.id) closeModal(); openShelfLabels(el.dataset.id ? [+el.dataset.id] : [...(S.psel || [])].map(Number)); },
+});
