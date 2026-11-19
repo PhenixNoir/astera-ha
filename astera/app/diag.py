@@ -22,7 +22,7 @@ _lock = threading.Lock()
 STARTED = int(time.time())
 
 SECRET_KEY = re.compile(r"(secret|passw|_pass$|^pass$|token|cookie|session|sifre|şifre|vapid|private|api_key|access_code|"
-                        r"^key$|^code$|^pin$|bambu_code|mr_key|smb_pass|auth_hash|_salt$|^salt$|password)", re.I)
+                        r"^key$|^hb_key$|^code$|^pin$|bambu_code|mr_key|smb_pass|auth_hash|_salt$|^salt$|password)", re.I)
 SAFE_KEYS = set()
 PII_KEY = re.compile(r"^(customer|first_name|last_name|phone|address|email|user_name|full_name|receiver)$", re.I)
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")

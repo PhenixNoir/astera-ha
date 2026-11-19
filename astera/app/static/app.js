@@ -193,6 +193,7 @@ const NAV_GROUPS = [
   { k: 'para', label: 'Para', icon: 'coin', tabs: ['kar', 'finans', 'istatistik'] },
 ];
 const NAV_SRC = { ty: ['Trendyol', 'cart', 'ty'], custom: ['Özel siparişler', 'clip', 'custom'] };
+const navSrcLabel = (k) => (k === 'ty' && S.settings?.hb_enabled ? 'Pazaryeri' : NAV_SRC[k][0]);
 // Telefonda alt menüde sığanlar; diğerleri "Daha" altında
 const TAB_MAIN_DEFAULT = ['', 'urunler', 'baskilar', 'hazirla'];
 // ------------------------------------------------------------------ görünüm tercihleri (Ayarlar → Görünüm ve düzen; cihaz başına)
@@ -335,7 +336,7 @@ function renderNav() {
     if (show) {
       const fresh = S.navG !== cur.k; S.navG = cur.k;
       sub.innerHTML = grp.tabs.map((t, i) => { const p = NAV.find((n) => n.r === t.r) || { label: 'Pano', icon: 'home' }, sl = t.src ? NAV_SRC[t.src] : null;
-        return `<a class="${navTabOn(t, r) ? 'active' : ''}" href="${navTabHref(t)}" style="--i:${i}">${icon(sl ? sl[1] : p.icon)}<span>${sl ? sl[0] : p.label}</span>${navCount(navBadge(t.r, t.src))}</a>`; }).join('');
+        return `<a class="${navTabOn(t, r) ? 'active' : ''}" href="${navTabHref(t)}" style="--i:${i}">${icon(sl ? sl[1] : p.icon)}<span>${sl ? navSrcLabel(t.src) : p.label}</span>${navCount(navBadge(t.r, t.src))}</a>`; }).join('');
       if (fresh && !REDUCED()) { sub.classList.remove('in'); void sub.offsetWidth; sub.classList.add('in'); }
     } else S.navG = cur?.k || null;
   }
@@ -1937,6 +1938,7 @@ async function openNewPrint(arg) {
       <div class="np-fail hidden" id="np-fail"></div>
       <div id="np-acc"></div>
       <div class="ends" id="np-ends">${icon('clock')}<span></span></div>
+      <div id="np-info"></div>
       </div>
       <div class="np-c np-c3">
       ${printers.length ? `<div class="field"><span>Makine</span><div class="chips np-pcs" id="np-printers">${npPrinterCards()}</div></div>`
@@ -2011,7 +2013,7 @@ function npRememberUI() {
 function npSetModeLabel() { const l = $('#np-qty-label'); if (l) l.textContent = 'Kaç adet?'; }
 function npSetMode(mode, initial) {
   npSetModeLabel();
-  NP.mode = mode; NP.pid = null; NP.oid = null; NP.cid = null; NP.q = ''; NP.parts = null; NP.slots = [];
+  NP.mode = mode; NP.pid = null; NP.oid = null; NP.cid = null; NP.q = ''; NP.parts = null; NP.slots = []; setTimeout(npInfo);
   $('#np-parts-field').classList.add('hidden'); $('#np-qty-field').classList.remove('hidden');
   if (!initial) $('#np-q').value = '';
   $$('#np-mode button').forEach((b) => b.classList.toggle('on', b.dataset.v === mode));
@@ -2331,8 +2333,39 @@ function openSpoolPicker(btn, i) {
   setTimeout(() => { document.addEventListener('pointerdown', palOutside); $('#sp-pop-q', pop)?.focus(); }, 0);
 }
 
+// ---------- Yeni baskı: seçili ürünün bilgi kartı (stok akışı + son baskılar)
+const NPH = {};
+function npInfo() {
+  const host = $('#np-info'); if (!host) return;
+  const p = NP?.mode === 'product' && NP.pid ? productById(NP.pid) : null;
+  if (!p) { host.innerHTML = ''; host.dataset.pid = ''; return; }
+  const qty = Math.max(1, parseInt($('#np-qty')?.value) || 1), multi = p.parts?.length > 0;
+  const pi = (S.pick?.items || []).find((i) => i.product_id === p.id);
+  const demand = pi ? (pi.orders || []).reduce((a, o) => a + (o.quantity || 0), 0) : 0;
+  const now = p.stock ?? 0, after = now + qty, left = after - demand;
+  const g = (p.materials || []).reduce((a, m) => a + (+m.grams || 0), 0);
+  const bits = [p.category, p.print_type, p.set_size > 1 ? `${p.set_size}'lü set` : '', g ? fmtGram(g) : '', p.print_minutes ? fmtDur(p.print_minutes) : ''].filter(Boolean).map(esc).join(' · ');
+  const proj = multi ? `<div class="npi-proj parts"><div><b>${p.parts_ready ?? 0}/${p.parts_total ?? p.parts.length}</b><small>parça hazır</small></div><span class="npi-ar">→</span><div><b>${now}</b><small>rafta set</small></div>${demand ? `<span class="npi-ar">→</span><div><b class="${now - demand < 0 ? 'bad' : 'ok'}">${demand}</b><small>siparişte isteniyor</small></div>` : ''}</div>`
+    : `<div class="npi-proj"><div><b class="${now <= 0 ? 'bad' : ''}" data-v="now">${now}</b><small>şimdi rafta</small></div><span class="npi-ar">→</span>
+      <div><b data-v="after">${after}</b><small>baskıdan sonra</small></div>${demand ? `<span class="npi-ar">→</span><div><b class="${left < 0 ? 'bad' : 'ok'}" data-v="left">${left}</b><small>${left < 0 ? `${-left} eksik kalır` : 'sipariş çıkınca'}</small></div>` : ''}</div>`;
+  const same = host.dataset.pid === String(p.id);
+  host.innerHTML = `<div class="npi${same ? '' : ' fresh'}">
+    <div class="npi-top"><span class="npi-img${p.thumbnail ? '' : ' none'}" style="${thumbStyle(p.thumbnail)}" data-zoom="${esc(p.thumbnail || '')}" data-title="${esc(p.name)}"></span>
+      <div class="npi-tx"><b>${esc(p.name)}</b><small>${bits}</small>${p.materials?.length ? `<span class="npi-sw">${spools(p.materials, 6)}</span>` : ''}</div></div>
+    ${proj}
+    <div class="npi-hist" id="npi-hist">${npHistHTML(p.id)}</div></div>`;
+  host.dataset.pid = p.id;
+  if (!NPH[p.id]) api('GET', `/api/jobs/history?pid=${p.id}&limit=3`).then((r) => { NPH[p.id] = r.items || []; if ($('#np-info')?.dataset.pid === String(p.id)) $('#npi-hist').innerHTML = npHistHTML(p.id); }).catch(() => { NPH[p.id] = []; });
+}
+function npHistHTML(pid) {
+  const h = NPH[pid]; if (!h) return '<small class="muted">Son baskılar yükleniyor…</small>';
+  if (!h.length) return '<small class="muted">Bu ürün daha önce basılmamış.</small>';
+  return `<small class="npi-k">Son baskılar</small>${h.map((j, i) => { const ok = j.status === 'success', part = j.status === 'partial', bad = j.status === 'failed' || j.status === 'cancelled';
+    const res = ok ? `${j.good_quantity ?? j.quantity} sağlam` : part ? `${j.good_quantity} sağlam, ${(j.quantity || 0) - (j.good_quantity || 0)} bozuk` : bad ? (j.status === 'cancelled' ? 'iptal' : 'başarısız') : '';
+    return `<div class="npi-h" style="--i:${i}"><span class="muted">${j.finished_at ? new Date(j.finished_at * 1000).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) : ''}</span><span>${esc(j.printer || '—')} · ${res}</span><span class="${ok ? 'ok-text' : part ? 'warn-text' : 'bad-text'}">${ok ? '✓' : part ? '◐' : '✕'}</span></div>`; }).join('')}`;
+}
 const accToast = (r) => { if (r?.acc_used?.length) setTimeout(() => toast(`🔩 Aksesuar düştü: ${r.acc_used.map((x) => `${x.icon} ${x.name} −${pkNum(x.qty)}`).join(' · ')}`), 1600); S.pack = null; };
-function npEnds() { npEnds0(); npFootSum(); npAccWarn(); }
+function npEnds() { npEnds0(); npFootSum(); npAccWarn(); npInfo(); }
 let npAccT = 0;
 function npAccWarn() {
   clearTimeout(npAccT); const host = $('#np-acc'); if (!host) return;
@@ -4576,6 +4609,7 @@ function tyoBase(p) {
     if (f.cat === '__none' ? !ls.some((l) => !l.product_id) : !ls.some((l) => productById(l.product_id)?.category === f.cat)) return false;
   }
   if (f.pid && !ls.some((l) => l.product_id === f.pid)) return false;
+  if (f.ch && f.ch !== 'all' && (p.channel || 'ty') !== f.ch) return false;
   if (q && ![p.order_number, p.customer, p.city, ...p.lines.flatMap((l) => [l.name, l.ty_name, l.barcode])].some((x) => (x || '').toLocaleLowerCase('tr').includes(q))) return false;
   if (TYO_ACTIVE.has(p.tab)) { const r = rangeOf(f.rA, f.from, f.to); if (r && !(p.order_date >= r[0] && p.order_date < r[1])) return false; }
   return true;
@@ -4759,6 +4793,7 @@ function tyoPage(src = '') {
   const cats = catNames();
   // Sıkı düzen: 1. satır kaynak + sekmeler + yenile, 2. satır arama + filtreler (etiketler yalnız ekran okuyucuya)
   return `<div class="tyo-stick"><div class="toolbar tyo-tools">${src}<div class="seg tyo-tabs stc" role="tablist">${TYO_TABS.map(([k, l]) => `<button class="stc-${k}${t === k ? ' on' : ''}${counts[k] ? '' : ' zero'}" data-act="tyo-tab" data-v="${k}" role="tab">${l} <span class="faint">${counts[k]}</span></button>`).join('')}</div>
+      ${d.packages.some((p) => p.channel === 'hb') || hbOn() ? `<div class="seg tyo-ch" role="group" aria-label="Pazaryeri">${[['all', 'Hepsi', ''], ['ty', 'Trendyol', TY_LOGO], ['hb', 'Hepsiburada', HB_LOGO]].map(([k, l, ic]) => `<button type="button" data-act="tyo-ch" data-v="${k}" class="${(f.ch || 'all') === k ? 'on' : ''}">${ic}<span>${l}</span><small>${d.packages.filter((p) => p.tab === t && (k === 'all' || (p.channel || 'ty') === k)).length}</small></button>`).join('')}</div>` : ''}
       <span class="spacer"></span>
       <button type="button" class="tyo-fold${tyoCompact() ? ' closed' : ''}" data-act="tyo-fold" aria-expanded="${!tyoCompact()}" title="${tyoCompact() ? 'Arama ve filtreleri göster' : 'Arama ve filtreleri gizle'}">${icon('chevron-down')}<span>Filtreler</span>${tyoCompact() && tyoFilterCount() ? `<b>${tyoFilterCount()}</b>` : ''}</button>
       ${active ? `<button type="button" class="brm-btn${baremOn() ? ' on' : ''}" data-act="tyo-barem" aria-pressed="${baremOn()}" title="Sepeti kargo bareminin altında kalan siparişleri öne al">${icon('bolt')} Barem<span class="brm-long"> önceliği</span></button>` : ''}
@@ -4794,7 +4829,7 @@ function tyoResults() {
       ${t === 'cancelled' ? '' : `<div><b>${fmtTL(rev)}</b><span>ciro (satıcıya kalan)</span></div>
       <div class="${pr < 0 ? 'neg' : ''}"><b>${fmtTL(pr)}</b><span>tahmini kâr${rev ? ` · ${fmtPct(pr / rev)}` : ''}</span></div>`}
       ${pickable.length ? `<div class="tyo-bulk"><label class="switch"><input type="checkbox" id="tyo-all" ${nsel && nsel === pickable.length ? 'checked' : ''}> Tümünü seç</label>
-        <button class="btn btn-primary btn-sm" data-act="tyo-pick-sel" ${nsel ? '' : 'disabled'}>${icon('pack')} Hazırlanıyor'a çek${nsel ? ` (${nsel})` : ''}</button></div>` : ''}
+        <button class="btn btn-primary btn-sm" data-act="tyo-pick-sel" ${nsel ? '' : 'disabled'}>${icon('pack')} ${[...S.tyo.sel].length && [...S.tyo.sel].every((x) => String(x).startsWith('hb-')) ? 'Paketle' : chMixed() ? 'Hazırla / paketle' : "Hazırlanıyor'a çek"}${nsel ? ` (${nsel})` : ''}</button></div>` : ''}
       ${unlabeled.length ? `<div class="tyo-bulk"><button class="btn btn-primary btn-sm" data-act="ty-label-all">${icon('print')} Basılmamış ${unlabeled.length} barkodu bas</button></div>` : ''}
     </div>
     ${baremOn() && active ? baremBanner(list) : ''}
@@ -4990,11 +5025,11 @@ function tyoRow(p, r) {
   // termin ısısı: kenar çizgisi son teslime 48 saatten çok varken yeşil, yaklaştıkça sarı → turuncu → kırmızı; son 2 saatte nabız atar
   const hl = dl && TYO_ACTIVE.has(p.tab) && p.tab !== 'shipped' ? (dl - nowS()) / 3600 : null;
   const heat = hl == null ? '' : ` heat${hl < 2 ? ' heat-hot' : ''}" style="--heat:hsl(${Math.round(Math.sqrt(clamp((hl - 1) / 47, 0, 1)) * 130)} 75% 46%)`;
-  return `<div class="tyo-row${S.tyo.sel.has(p.package_id) ? ' sel' : ''}${cbCol ? '' : ' nocb'}${sh.state !== 'none' ? ` short-${sh.state}` : ''}${today ? ' due-today' : ''}${heat}" data-pkg="${esc(p.package_id)}">
+  return `<div class="tyo-row${p.channel === 'hb' ? ' ch-hb' : ' ch-ty'}${S.tyo.sel.has(p.package_id) ? ' sel' : ''}${cbCol ? '' : ' nocb'}${sh.state !== 'none' ? ` short-${sh.state}` : ''}${today ? ' due-today' : ''}${heat}" data-pkg="${esc(p.package_id)}">
     ${sel ? `<input type="checkbox" class="tyo-cb" data-tyo-sel="${esc(p.package_id)}" ${S.tyo.sel.has(p.package_id) ? 'checked' : ''} aria-label="Siparişi seç">` : cbCol ? '<span class="tyo-cb-sp"></span>' : ''}
     <details class="tyo" ${S.tyo.open.has(p.package_id) ? 'open' : ''} data-tyo-open="${esc(p.package_id)}">
       <summary>
-        <span class="tyo-no"><b>${esc(p.order_number)}</b><small class="faint">${date}</small></span>
+        <span class="tyo-no"><b>${chBadge(p)}${esc(p.order_number)}</b><small class="faint">${date}</small></span>
         <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l, ti) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" style="${floatVars(p.package_id + ':' + ti)}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? qtyBadge(l.quantity, 'tt-qb') : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
         <span class="tyo-who"><b>${esc(p.customer || '—')}</b>${p.note ? `<span class="tn-pin" title="${esc(p.note)}">📝 ${esc(p.note)}</span>` : ''}<small class="muted">${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''}${plusTags(p)}${orderRuleHits(p).map((h) => ` <span class="rule-tag t-${h.tone}" title="${esc(h.text)}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? ` <span class="near-tag" title="Mağazayla aynı yer: pakete not eklemeyi unutmayın">${icon('pin')} Yakın · not ekle</span>` : ''}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
         <span class="tyo-amt">${r ? fmtTL(r.price) : p.pkg_total != null ? fmtTL(p.pkg_total) : '–'}</span>
@@ -5013,8 +5048,8 @@ function tyNoteHTML(p) {
     <div class="tn-tx"><b>${esc(p.note).replace(/\n/g, '<br>')}</b><small>${p.note_at ? `${fmtWhen(p.note_at)} eklendi` : ''}</small></div>
     <span class="tn-acts"><button type="button" class="linkish" data-act="tn-edit" data-no="${no}">Düzenle</button><button type="button" class="linkish" data-act="tn-del" data-no="${no}">Sil</button></span></div>`;
   return `<div class="tn-add${edit ? ' edit' : ''}">
-    <div class="tn-quick">${TN_QUICK.map(([l, v]) => `<button type="button" class="chip-btn" data-act="tn-q" data-v="${esc(v)}">${l}</button>`).join('')}</div>
-    <div class="tn-in"><textarea class="input" rows="1" maxlength="500" id="tn-ta" data-no="${no}" placeholder="Not yazın: hediye paketi, farklı renk…">${edit ? esc(p.note || '') : ''}</textarea>
+    <div class="tn-quick">${TN_QUICK.map(([l, v]) => `<button type="button" class="tn-e" data-act="tn-q" data-v="${esc(v)}" title="${esc(l.replace(/^\S+\s/, ''))}" aria-label="${esc(l.replace(/^\S+\s/, ''))}">${l.split(' ')[0]}</button>`).join('')}</div>
+    <div class="tn-in"><textarea class="input" rows="1" maxlength="500" id="tn-ta" data-no="${no}" placeholder="Not ekle… (Enter ile kaydet)">${edit ? esc(p.note || '') : ''}</textarea>
       <button type="button" class="btn btn-sm btn-primary" data-act="tn-save" data-no="${no}">${edit ? 'Kaydet' : 'Not ekle'}</button>${edit ? '<button type="button" class="btn btn-sm btn-ghost" data-act="tn-cancel">Vazgeç</button>' : ''}</div></div>`;
 }
 async function tyNoteSave(no, note) {
@@ -5126,10 +5161,12 @@ function tyoBody(p) {
   const dl = effDeadline(p.deadline);
   const tex = isTEX(p.cargo_provider);
   const pfOpen = (() => { try { return localStorage.getItem('tyoPf') === '1'; } catch { return false; } })();
-  const acts = `${p.tab === 'new' ? (p.can_pick ? `<button class="oc-btn pri" data-act="tyo-pick" data-id="${esc(p.package_id)}">${icon('pack')} Hazırlanıyor'a çek</button>` : '<span class="muted" style="font-size:13px">Bu sipariş buradan çekilemiyor; bir kez Yenile\'ye basın.</span>') : ''}
-    ${p.can_label ? `<button class="oc-btn${p.tab !== 'new' && !p.label_at ? ' pri' : ''}" data-act="ty-label" data-id="${esc(p.package_id)}">${icon(p.label_at ? 'check' : 'print')} ${p.label_at ? 'Barkodu tekrar bas' : 'Barkodu bas'}</button>${p.label_at ? `<small class="faint oc-lbl">${fmtWhen(p.label_at)} basıldı</small>` : ''}` : ''}`;
+  const hb = p.channel === 'hb';
+  const acts = hb && !p.can_pick && !p.can_label && !p.can_unpack ? `<span class="hb-note">${HB_LOGO}<span>${p.tab === 'new' && !S.tyOrders?.hb_write ? 'Paketlemek için: Ayarlar → Hepsiburada → “Paketlemeyi Hepsiburada\'ya gönder”. Kapalıyken paketleme Hepsiburada panelinden; paketlenince stok burada kendiliğinden düşer.' : 'Hepsiburada siparişi: paketlenince stok burada kendiliğinden düşer.'}</span></span>` : `${p.tab === 'new' ? (p.can_pick ? `<button class="oc-btn pri" data-act="tyo-pick" data-id="${esc(p.package_id)}">${icon('pack')} ${hb ? 'Hepsiburada\'da paketle' : 'Hazırlanıyor\'a çek'}</button>` : '<span class="muted" style="font-size:13px">Bu sipariş buradan çekilemiyor; bir kez Yenile\'ye basın.</span>') : ''}
+    ${p.can_label ? `<button class="oc-btn${p.tab !== 'new' && !p.label_at ? ' pri' : ''}" data-act="ty-label" data-id="${esc(p.package_id)}">${icon(p.label_at ? 'check' : 'print')} ${hb ? (p.label_at ? 'Etiketi tekrar bas' : 'HepsiJet etiketini bas') : p.label_at ? 'Barkodu tekrar bas' : 'Barkodu bas'}</button>${p.label_at ? `<small class="faint oc-lbl">${fmtWhen(p.label_at)} basıldı</small>` : ''}` : ''}
+    ${p.can_unpack ? `<button type="button" class="hb-unp" data-act="hb-unpack" data-id="${esc(p.package_id)}">Yanlış mı paketlendi? <u>Paketi boz</u></button>` : ''}`;
   const hits = orderRuleHits(p);
-  return `<div class="oc">
+  return `<div class="oc${hb ? ' oc-hb' : ''}">
     ${tyNoteHTML(p)}
     ${p.repeat?.prev?.length ? `<div class="rep-list">${icon('refresh')}<span>Diğer siparişleri:</span>${p.repeat.prev.slice().reverse().map((o) => `<button type="button" class="po-link" data-act="po-open" data-no="${esc(o.no)}">${esc(o.no)}<small>${o.date ? new Date(o.date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: new Date(o.date).getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined }) : ''}</small></button>`).join('')}</div>` : ''}
     ${hits.length ? `<div class="oc-rules">${hits.map((h) => `<span class="oc-rule t-${h.tone}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}</div>` : ''}
@@ -5141,7 +5178,7 @@ function tyoBody(p) {
       ${p.cargo_provider || p.cargo_no ? `<div class="oc-cargo${tex ? '' : ' other'}">${icon('pack')}<div><b>${esc((p.cargo_provider || 'Kargo').replace(/ Marketplace$/i, ''))}</b>${p.cargo_no ? `<span class="mono">${esc(p.cargo_no)}</span>` : ''}
         ${p.cargo_real != null ? `<small>kargo faturası ${fmtTL(p.cargo_real)}${p.cargo_desi ? ` · ${p.cargo_desi} desi` : ''}</small>` : ''}</div>
         ${p.cargo_link && /^https?:\/\//.test(p.cargo_link) ? `<a class="oc-trk" href="${esc(p.cargo_link)}" target="_blank" rel="noopener" title="Kargo takibi">↗</a>` : ''}</div>` : ''}
-      ${['new', 'picking'].includes(p.tab) ? `<button type="button" class="linkish oc-chg" data-act="ty-cargo" data-id="${esc(p.package_id)}" data-cur="${esc(p.cargo_provider || '')}" data-no="${esc(p.order_number)}">Kargo firmasını değiştir</button>` : ''}
+      ${['new', 'picking'].includes(p.tab) && p.channel !== 'hb' ? `<button type="button" class="linkish oc-chg" data-act="ty-cargo" data-id="${esc(p.package_id)}" data-cur="${esc(p.cargo_provider || '')}" data-no="${esc(p.order_number)}">Kargo firmasını değiştir</button>` : ''}
       ${acts.trim() ? `<div class="oc-acts">${acts}</div>` : ''}
     </aside>
     ${r ? `<details class="oc-pf"${pfOpen ? ' open' : ''}><summary><span class="oc-pill ${marginCls(r.margin)}">${r.profit >= 0 ? '+' : ''}${fmtTL(r.profit)} <small>${fmtPct(r.margin)}</small></span><span>Kâr ayrıntısı</span>${r.missing.length ? '<span class="warn-text" style="font-size:12.5px">eksik bilgi var</span>' : ''}</summary>
@@ -5160,8 +5197,9 @@ const DRAWER_KINDS = {
     head(p) {
       const dl = effDeadline(p.deadline), act = TYO_ACTIVE.has(p.tab) && p.tab !== 'shipped', today = act && dueToday(dl);
       const date = new Date(p.order_date).toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-      return `<div class="drw-t"><span class="drw-no">${esc(p.order_number)}</span>${act && dl ? `${today ? '<span class="tag tag-warn">Bugün verilmeli</span>' : ''}${dlChip(dl)}` : ''}</div>
-        <div class="drw-who"><b>${p.customer ? `<button type="button" class="cu-name-btn" data-act="cust-open" data-key="" data-ty="${esc(p.order_number)}" title="Müşteri kartını aç">${esc(p.customer)}</button>` : '—'}</b><small>${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''} · ${date}</small>
+      const late = act && dl && dl < nowS(), tone = !act || !dl ? '' : late ? 'late' : today ? 'today' : 'ok';
+      return `<div class="drw-t" data-tone="${tone}" data-ch="${p.channel === 'hb' ? 'hb' : 'ty'}">${p.channel === 'hb' ? chBadge(p, true) : ''}<span class="drw-no">${esc(p.order_number)}</span>${act && dl ? (today && !late ? `<span class="drw-due"><b>Bugün</b>${dlChip(dl)}</span>` : dlChip(dl)) : ''}</div>
+        <div class="drw-who">${p.customer ? `<button type="button" class="cu-name-btn" data-act="cust-open" data-key="" data-ty="${esc(p.order_number)}" title="Müşteri kartını aç">${esc(p.customer)} <span aria-hidden="true">›</span></button>` : '<b>—</b>'}<small>${esc(p.district ? `${p.district}, ` : '')}${esc(p.city || '')} · ${date}</small>
           <span class="drw-tags">${plusTags(p, true)}${orderRuleHits(p).map((h) => `<span class="rule-tag t-${h.tone}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? `<span class="near-tag">${icon('pin')} Yakın · not ekle</span>` : ''}</span></div>`;
     },
     body: (p) => tyoBody(p),
@@ -5619,8 +5657,38 @@ function texWarn(list) {
     soundClaim();
   });
 }
+// Hepsiburada etiketi: Hepsiburada'nın verdiği görüntü yazdır penceresiyle basılır
+function printImagePages(urls) {
+  return new Promise((resolve) => {
+    const fr = document.createElement('iframe');
+    fr.setAttribute('aria-hidden', 'true');
+    fr.style.cssText = 'position:fixed;right:0;bottom:0;width:100mm;height:100mm;border:0;opacity:0;pointer-events:none;';
+    document.body.appendChild(fr);
+    const doc = fr.contentDocument;
+    doc.open(); doc.write(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>HepsiJet etiketi</title><style>@page{margin:0}html,body{margin:0}.pg{page-break-after:always;break-after:page;height:100vh;display:flex;align-items:center;justify-content:center}.pg:last-child{page-break-after:auto;break-after:auto}img{max-width:100%;max-height:100vh;object-fit:contain}</style></head><body>${urls.map((u) => `<div class="pg"><img src="${u}" alt=""></div>`).join('')}</body></html>`); doc.close();
+    const imgs = [...doc.images].map((im) => im.complete ? null : new Promise((r) => { im.onload = im.onerror = r; }));
+    Promise.all(imgs).then(() => {
+      const done = () => { setTimeout(() => fr.remove(), 500); resolve(); };
+      fr.contentWindow.addEventListener('afterprint', done, { once: true });
+      fr.contentWindow.focus(); fr.contentWindow.print();
+      setTimeout(() => { if (fr.isConnected) done(); }, 120000);
+    });
+  });
+}
+async function hbBrowserLabels(ids) {
+  const r = await api('POST', '/api/hb/label-img', { package_ids: ids });
+  if (r.errors.length) toast(`${r.errors.length} Hepsiburada etiketi alınamadı: ${r.errors.slice(0, 2).map((e) => e.error).join('; ')}`, { bad: true });
+  const urls = r.labels.flatMap((l) => l.images.filter((u) => u.startsWith('data:image/')));
+  if (urls.length) {
+    await printImagePages(urls);
+    api('POST', '/api/trendyol/label-mark', { package_ids: r.labels.map((x) => x.package_id) }).catch(() => {});
+  }
+  return r;
+}
 async function browserLabels(ids) {
   if (!S.labelCfg) S.labelCfg = await api('GET', '/api/label/settings').catch(() => null);
+  const hbIds = ids.filter((x) => String(x).startsWith('hb-'));
+  if (hbIds.length) { await hbBrowserLabels(hbIds); ids = ids.filter((x) => !String(x).startsWith('hb-')); if (!ids.length) return { labels: [], errors: [] }; }
   const r = await api('POST', '/api/trendyol/label-data', { package_ids: ids, mark: false });
   if (r.errors.length) toast(`${r.errors.length} etiket hazırlanamadı: ${r.errors.slice(0, 2).map((e) => `${e.order_number || ''} ${e.error}`.trim()).join('; ')}`, { bad: true });
   if (r.labels.length && await texWarn(r.labels)) {
@@ -5725,12 +5793,14 @@ async function tyoPick(ids) {
   pk.forEach((p) => p.lines.forEach((l) => { if (l.product_id && !TY_CANCEL.has(l.status) && l.state !== 'deducted') needBy[l.product_id] = (needBy[l.product_id] || 0) + l.quantity; }));
   const short = Object.entries(needBy).map(([pid, n]) => ({ p: productById(+pid), n })).filter((x) => x.p && x.n > x.p.stock);
   const warn = short.length ? `\n\nDİKKAT: Şu ürünler sistemde paketlenecek adetten az görünüyor:\n${short.map((x) => `• ${x.p.name}: sistemde ${x.p.stock}, paketlenecek ${x.n}`).join('\n')}\nRafta gerçekten varsa bir baskı kaydı eksik olabilir. Devam ederseniz stok 0'da durur ve fark panoda "Kontrol edilecekler"e düşer.` : '';
-  if (!asked && !confirm(`${pk.length} sipariş Trendyol'da Hazırlanıyor durumuna çekilecek ve ürünler stoktan düşülecek.${unm ? `\n${unm} siparişte eşleşmeyen ürün var; onların stoğu düşülemez.` : ''}${warn}\n\nBu işlem Trendyol'da geri alınamaz. Devam edilsin mi?`)) return;
+  const nHB = pk.filter((p) => p.channel === 'hb').length, nTY = pk.length - nHB;
+  const what = [nTY ? `${nTY} sipariş Trendyol'da Hazırlanıyor durumuna çekilecek` : '', nHB ? `${nHB} sipariş Hepsiburada'da paketlenecek` : ''].filter(Boolean).join(', ');
+  if (!asked && !confirm(`${what} ve ürünler stoktan düşülecek.${unm ? `\n${unm} siparişte eşleşmeyen ürün var; onların stoğu düşülemez.` : ''}${warn}\n\n${nTY ? "Trendyol'da bu işlem geri alınamaz." : ''}${nHB ? `${nTY ? ' ' : ''}Hepsiburada paketi gerekirse "Paketi boz" ile geri alınır.` : ''} Devam edilsin mi?`)) return;
   try {
     if (!S.labelCfg) S.labelCfg = await api('GET', '/api/label/settings').catch(() => null);
     const r = await api('POST', '/api/trendyol/picking', { package_ids: ids });
     ids.forEach((i) => S.tyo.sel.delete(i));
-    if (r.done.length) island('ok', `<b>${r.done.length > 1 ? `${r.done.length} sipariş çıkarıldı` : 'Sipariş çıkarıldı'}</b> · Hazırlanıyor'a çekildi${r.deducted ? ` · ${r.deducted} adet stoktan düştü` : ''}`, { ms: 1800 });
+    if (r.done.length) island('ok', `<b>${r.done.length > 1 ? `${r.done.length} sipariş çıkarıldı` : 'Sipariş çıkarıldı'}</b> · ${r.hb_done?.length === r.done.length ? "Hepsiburada'da paketlendi" : r.hb_done?.length ? `Hazırlanıyor'a çekildi, ${r.hb_done.length} tanesi Hepsiburada'da paketlendi` : "Hazırlanıyor'a çekildi"}${r.deducted ? ` · ${r.deducted} adet stoktan düştü` : ''}`, { ms: 1800 });
     if (r.errors.length) toast(`${r.errors.length} sipariş çekilemedi: ${r.errors.slice(0, 3).map((e) => `${e.order_number || e.package_id} (${e.error})`).join('; ')}`, { bad: true });
     if (r.labels) labelToast(r.labels);
     else if (r.done.length && S.labelCfg?.auto && !labelServerMode()) await browserLabels(r.done).catch(fail);
@@ -6542,7 +6612,9 @@ PAGES.makineler = {
   async load() { S.machines = await api('GET', '/api/machines'); },
   html() {
     const M = S.machines || [];
-    if (!M.length) return `<div class="empty panel"><p class="muted">Henüz makine yok. Ayarlar → Yazıcılar'dan makinelerinizi ekleyin; baskılar kaydedildikçe saatler burada toplanır.</p></div>`;
+    const edOpen = S.mkEditOpen ?? (location.hash.includes('?edit') || !M.length);
+    const editor = `<details class="panel mk-editor" id="mk-editor" ${edOpen ? 'open' : ''}><summary><span class="mk-ed-t">${icon('edit')} Makineleri düzenle</span><small class="muted">ekle, tür, fotoğraf, yazıcı bağlantısı</small><span class="mk-ed-chev">${icon('chevron-down')}</span></summary>${machinesSetHTML()}</details>`;
+    if (!M.length) return `<div class="empty panel"><p class="muted">Henüz makine yok. Aşağıdan makinelerinizi ekleyin; baskılar kaydedildikçe saatler burada toplanır.</p></div>${editor}`;
     const tot = M.reduce((a, m) => a + m.total_hours, 0), t30 = M.reduce((a, m) => a + m.last30, 0), yc = M.reduce((a, m) => a + m.cost_year, 0), due = M.filter((m) => m.due.length).length;
     return `<div class="toolbar mk-top"><div class="mk-kpi"><span><small>Toplam baskı</small><b>${fmtH(tot)} sa</b></span><span><small>Son 30 gün</small><b>${fmtH(t30)} sa</b></span><span><small>Bu yıl bakım masrafı</small><b>${fmtTL(yc)}</b></span>${due ? `<span class="bad"><small>Bakım zamanı</small><b>${due} makine</b></span>` : ''}</div>
         <span class="spacer"></span><button class="btn btn-primary" data-act="mk-add">${icon('wrench')} Bakım ekle</button></div>
@@ -6553,7 +6625,8 @@ PAGES.makineler = {
         return `<article class="mk-card${m.due.length ? ' due' : ''}" data-act="mk-open" data-name="${esc(m.name)}" style="--i:${i}">
           <div class="mk-h">${printerThumb(m.name)}<div class="mk-n"><b>${esc(m.name)}</b><small>${m.printing ? '<span class="mk-live">● baskıda</span> · ' : ''}${m.jobs} baskı${m.fails ? ` · ${m.fails} başarısız` : ''}</small></div>
             ${m.due.length ? '<span class="mk-due">🔔 Bakım zamanı</span>' : ''}</div>
-          <div class="mk-hours"><b data-count>${fmtH(m.total_hours)}</b><span>saat toplam baskı</span></div>
+          <div class="mk-hours"><b data-count>${fmtH(m.total_hours)}</b><span>saat toplam baskı</span><button type="button" class="mk-hed" data-act="mk-hours" data-name="${esc(m.name)}" title="Makinenin ekranındaki güncel saati gir">${icon('edit')}</button></div>
+          ${m.stats?.top?.length ? `<div class="mk-top1" title="Bu makinede en çok basılan">🏆 <b>${esc(m.stats.top[0].name)}</b><small>${m.stats.top[0].jobs} baskı · ${m.stats.top[0].units} adet</small>${m.stats.ok_pct != null ? `<span class="mk-ok ${m.stats.ok_pct >= 90 ? 'g' : m.stats.ok_pct >= 75 ? 'w' : 'b'}">%${m.stats.ok_pct} başarılı</span>` : ''}</div>` : ''}
           <div class="mk-bars" title="Son 6 ay, aylık baskı saati">${m.months.map((x, k) => `<span style="--h:${x.h / mx * 100}%;--k:${k}" title="${x.m}: ${fmtH(x.h)} sa"><i></i><small>${['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'][+x.m.slice(5) - 1]}</small></span>`).join('')}</div>
           <div class="mk-row"><span>Son 30 gün</span><b>${fmtH(m.last30)} sa <small class="muted">· %${Math.round(m.util30 * 100)} doluluk</small></b></div>
           <div class="mk-since${m.due.length ? ' hot' : ''}"><div class="mk-row"><span>Son bakımdan beri</span><b>${fmtH(m.since_hours)} sa${m.since_days != null ? ` · ${m.since_days} gün` : ''}</b></div>
@@ -6562,10 +6635,38 @@ PAGES.makineler = {
           <div class="mk-cost"><span>Bakım masrafı</span><b>${fmtTL(m.cost_total)}</b>${m.cost_per_hour ? `<small>saat başı ${fmtTL(m.cost_per_hour)}</small>` : ''}</div>
           ${m.elec_on ? `<div class="mk-elec"><span class="mk-bolt">⚡</span><span>Bu ay</span><b>${fmtKwh(m.kwh_month)}</b>${m.tariff ? `<b class="mk-tl">${fmtTL(m.kwh_month * m.tariff)}</b>` : ''}${m.watt ? `<small>≈ ${Math.round(m.watt)} W</small>` : ''}</div>` : ''}
           <div class="mk-acts"><button type="button" class="btn btn-sm btn-primary" data-act="mk-add" data-name="${esc(m.name)}">${icon('wrench')} Bakım ekle</button><button type="button" class="btn btn-sm" data-act="mk-open" data-name="${esc(m.name)}">Geçmiş${m.log.length ? ` · ${m.log.length}` : ''}</button></div>
-        </article>`; }).join('')}</div>`;
+        </article>`; }).join('')}</div>${editor}`;
   },
-  after() { /* sağ tık: ortak dağıtıcıda */ },
+  after() {   // sağ tık: ortak dağıtıcıda
+    machinesSetBind();
+    $('#mk-editor')?.addEventListener('toggle', (e) => { S.mkEditOpen = e.target.open; });
+    if (location.hash.includes('?edit')) setTimeout(() => $('#mk-editor')?.scrollIntoView({ behavior: REDUCED() ? 'auto' : 'smooth', block: 'start' }), 250);
+  },
 };
+function mkStatsBox(m) {
+  const st = m.stats; if (!st?.done) return '';
+  const mx = Math.max(1, ...st.top.map((x) => x.jobs));
+  const ic = { product: '📦', comp: '🧩', order: '📝', misc: '🔧' };
+  return `<div class="mk-box mk-stats"><h5>🏆 En çok basılanlar</h5>
+    <ol class="mk-tops">${st.top.map((x, i) => `<li style="--w:${x.jobs / mx * 100}%;--i:${i}"><span class="mk-tn">${ic[x.kind] || ''} ${esc(x.name)}</span><b>${x.jobs}</b><small>${x.units} adet · ${fmtH(x.hours)} sa${x.fails ? ` · ${x.fails} başarısız` : ''}</small></li>`).join('')}</ol>
+    <div class="kv"><span>Biten baskı</span><b>${st.done}</b></div>
+    ${st.ok_pct != null ? `<div class="kv"><span>Başarı</span><b>%${st.ok_pct}${st.partial ? ` <small class="muted">(${st.partial} kısmi)</small>` : ''}</b></div>` : ''}
+    <div class="kv"><span>Toplam sağlam adet</span><b>${st.units}</b></div>
+    ${st.avg_h != null ? `<div class="kv"><span>Ortalama baskı</span><b>${fmtH(st.avg_h)} sa</b></div>` : ''}
+    ${st.longest ? `<div class="kv"><span>En uzun baskı</span><b>${fmtH(st.longest.h)} sa <small class="muted">${esc(st.longest.name)}</small></b></div>` : ''}
+    ${st.first_at ? `<div class="kv sub"><span>İlk kayıt</span><b>${new Date(st.first_at * 1000).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' })}</b></div>` : ''}</div>`;
+}
+function openMkHours(name) {
+  const m = (S.machines || []).find((x) => x.name === name); if (!m) return;
+  openModal(`<div class="modal-h"><h2>${esc(m.name)} · güncel saat</h2><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+    <div class="modal-b" style="display:grid;gap:10px"><p class="muted" style="margin:0">Makinenin kendi ekranında yazan toplam baskı saatini gir (Bambu: Ayarlar → Cihaz → Baskı süresi). Uygulamanın saydığıyla arasındaki fark "uygulamadan önceki saat" olarak eklenir.</p>
+      <label class="field"><span>Toplam baskı saati</span><div class="input-group"><input class="input" id="mkh-v" type="number" min="0" step="0.1" value="${m.total_hours}"><span class="suffix">saat</span></div></label>
+      <small class="muted">Uygulamanın baskı kayıtlarından saydığı: <b>${fmtH(m.tracked_hours ?? m.total_hours)} sa</b></small></div>
+    <div class="modal-f"><span></span><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" id="mkh-ok">Kaydet</button></div></div>`, 'sm');
+  setTimeout(() => $('#mkh-v')?.select(), 60);
+  const go = async () => { if (await mkDo('PUT', `/api/machines/cfg/${encodeURIComponent(m.name)}`, { current_hours: $('#mkh-v').value }, `${m.name}: ${fmtH(+$('#mkh-v').value || 0)} saat`)) closeModal(); };
+  $('#mkh-ok').onclick = go; $('#mkh-v').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+}
 const fmtKwh = (k) => `${(Math.round((k || 0) * 100) / 100).toLocaleString('tr-TR')} kWh`;
 function mkElecBox(m) {
   const days = []; for (let i = 29; i >= 0; i--) { const d = new Date(Date.now() - i * 864e5); days.push(d.toISOString().slice(0, 10)); }
@@ -6617,15 +6718,16 @@ function openMachine(name) {
       <aside class="mk-side">
         <div class="mk-box"><h5>Masraf</h5><div class="kv"><span>Toplam</span><b>${fmtTL(m.cost_total)}</b></div><div class="kv"><span>Bu yıl</span><b>${fmtTL(m.cost_year)}</b></div>${m.cost_per_hour ? `<div class="kv"><span>Baskı saati başına</span><b>${fmtTL(m.cost_per_hour)}</b></div>` : ''}
           ${Object.entries(byKind).filter(([, v]) => v).map(([kk, v]) => `<div class="kv sub"><span>${MK_KINDS[kk]?.[1] || ''} ${MK_KINDS[kk]?.[0] || kk}</span><b>${fmtTL(v)}</b></div>`).join('')}</div>
+        ${mkStatsBox(m)}
         ${m.elec_on ? mkElecBox(m) : ''}
         <div class="mk-box"><h5>Bakım hatırlatması</h5>
           <label class="field"><span>Her … saat baskıda bir</span><input class="input" type="number" min="0" id="mk-ih" value="${m.interval_hours || ''}" placeholder="ör. 200"></label>
           <label class="field"><span>ya da her … günde bir</span><input class="input" type="number" min="0" id="mk-id" value="${m.interval_days || ''}" placeholder="ör. 90"></label>
-          <label class="field"><span>Uygulamadan önceki baskı saati</span><input class="input" type="number" min="0" id="mk-off" value="${m.hours_offset || ''}" placeholder="0"></label>
+          <label class="field"><span>Makinenin ekranındaki güncel toplam saat</span><input class="input" type="number" min="0" step="0.1" id="mk-cur" value="" placeholder="${fmtH(m.total_hours)}"><small class="muted">Boş bırakırsan değişmez. Uygulamanın saydığı: ${fmtH(m.tracked_hours ?? m.total_hours)} sa${m.hours_offset ? ` + öncesi ${fmtH(m.hours_offset)} sa` : ''}</small></label>
           <button class="btn btn-sm" id="mk-cfg">Kaydet</button><p class="muted mk-hint">Sınır dolunca kart kırmızıya döner ve bildirim gelir. Bakım kaydı girince sayaç sıfırlanır.</p></div>
       </aside>
     </div>`, 'wide mk-modal-w', () => { S.mkOpen = null; });
-  $('#mk-cfg').onclick = async () => { if (await mkDo('PUT', `/api/machines/cfg/${encodeURIComponent(m.name)}`, { interval_hours: $('#mk-ih').value, interval_days: $('#mk-id').value, hours_offset: $('#mk-off').value }, 'Kaydedildi')) openMachine(m.name); };
+  $('#mk-cfg').onclick = async () => { if (await mkDo('PUT', `/api/machines/cfg/${encodeURIComponent(m.name)}`, { interval_hours: $('#mk-ih').value, interval_days: $('#mk-id').value, ...($('#mk-cur').value ? { current_hours: $('#mk-cur').value } : {}) }, 'Kaydedildi')) openMachine(m.name); };
   bindCtx($('.mk-log'), '.mk-li', (el, x, y) => { const mid = +el.dataset.mid; ctxMenu(x, y, [{ icon: '✏️', label: 'Düzenle', run: () => openMaint(mid) }, { icon: '🗑', label: 'Sil', danger: true, run: async () => { const e = m.log.find((z) => z.id === mid); if (await mkDo('DELETE', `/api/machines/maint/${mid}`)) { openMachine(m.name); toast('Silindi', { action: 'Geri al', onAction: async () => { await mkDo('POST', '/api/machines/maint', { printer: e.printer, date: e.date, kind: e.kind, part: e.part, note: e.note, cost: e.cost }); openMachine(m.name); } }); } } }]); });
 }
 
@@ -6647,7 +6749,7 @@ function tyCtxItems(p) {
   const no = String(p.order_number);
   return { title: `<b>${esc(no)}</b> · ${esc(p.customer || '')}`, items: [
     { icon: icon('expand'), label: 'Ayrıntıyı aç', run: () => drawerOpen('ty', String(p.package_id)) },
-    p.tab === 'new' ? { icon: icon('pack'), label: "Hazırlanıyor'a çek", off: !p.can_pick, run: () => tyoPick([p.package_id]) } : null,
+    p.tab === 'new' ? { icon: icon('pack'), label: p.channel === 'hb' ? "Hepsiburada'da paketle" : "Hazırlanıyor'a çek", off: !p.can_pick, run: () => tyoPick([p.package_id]) } : null,
     p.can_label ? { icon: icon('print'), label: p.label_at ? 'Barkodu tekrar bas' : 'Barkodu bas', run: () => tyLabel([p.package_id]) } : null,
     '-',
     { icon: icon('copy'), label: 'Sipariş no kopyala', hint: no, run: () => copyText(no, 'Sipariş no') },
@@ -7195,6 +7297,7 @@ async function cuNoteInto(target, q) {
   try {
     const r = await api('GET', `/api/customers/find?${q}`), el = typeof target === 'string' ? $(target) : target; if (!el || !el.isConnected || !r?.key) return;
     el.querySelector('.cu-inote')?.remove();
+    if (!r.note && !(r.tags || []).length && el.closest('.drw')) return;   // çekmecede: müşteri kartı isme tıklayınca açılır
     const d = document.createElement('div'); d.className = 'cu-inote' + (r.note ? '' : ' plain');
     d.innerHTML = `${r.note ? `<span>📝 <b>Müşteri notu:</b> ${esc(r.note)}</span>` : ''}${(r.tags || []).map((t) => `<span class="cu-tg on" style="--h:${cuHue(t)}">${esc(t)}</span>`).join('')}<button type="button" class="cu-ilink" data-act="cust-open" data-key="${esc(r.key)}">${icon('user')} Müşteri kartı</button>`;
     el.prepend(d);
@@ -7784,6 +7887,41 @@ function weeklySetHTML() {
     ${w?.text ? `<div class="wk-prev"><b>${esc(w.title)}</b><span>${esc(w.text)}</span></div>` : ''}
   </div></section>`;
 }
+// ---------- Hepsiburada: ayarlar ve kanal rozeti
+const HB_LOGO = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#FF6000"/><path d="M7 6.5v11M7 12h5.5M12.5 6.5v11" stroke="#fff" stroke-width="2.4" stroke-linecap="round" fill="none"/><circle cx="17.5" cy="15.5" r="2.2" fill="#fff"/></svg>';
+const TY_LOGO = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#F27A1A"/><path d="M6.5 7.5h11M12 7.5v10" stroke="#fff" stroke-width="2.4" stroke-linecap="round" fill="none"/></svg>';
+// satırda kısa etiket (TY / HB; yalnız Hepsiburada açıkken ya da listede HB siparişi varken), çekmecede logolu uzun hali
+const chMixed = () => hbOn() || (S.tyOrders?.packages || []).some((x) => x.channel === 'hb');
+const chBadge = (p, long) => (long ? (p.channel === 'hb' ? `<span class="ch-b hb" title="Hepsiburada siparişi">${HB_LOGO}Hepsiburada</span>` : `<span class="ch-b ty" title="Trendyol siparişi">${TY_LOGO}Trendyol</span>`)
+  : p.channel === 'hb' ? '<span class="ch-p hb" title="Hepsiburada siparişi">HB</span>' : chMixed() ? '<span class="ch-p ty" title="Trendyol siparişi">TY</span>' : '');
+const hbOn = () => !!S.settings?.hb_enabled;
+function hbSetHTML() {
+  const h = S.hb; if (!h) return '';
+  const r = h.last_result || {};
+  return `<section class="panel hb-set"><div class="panel-h"><h2>Hepsiburada</h2>${h.enabled ? '<span class="tag tag-ok">Takip açık</span>' : h.key_set ? '<span class="tag">Takip kapalı</span>' : ''}</div>
+    <div class="panel-b" style="display:grid;gap:12px">
+      <div class="hb-hero"><span class="hb-lg">${HB_LOGO}</span><p class="muted" style="margin:0">Hepsiburada siparişleri Trendyol'la <b>aynı listede</b> görünür, stoktan aynı kurala göre düşer, iptalde geri eklenir. Ürünler barkod, satıcı stok kodu (merchantSku) ya da Hepsiburada SKU'su ile eşleşir; eşleşmeyen satırda ürünü bir kez seçmen yeter, kod ürüne kaydedilir. “Paketlemeyi gönder” açıksa siparişi buradan paketler, HepsiJet etiketini Hepsiburada'dan alıp basarsın. Stok ve fiyat hiçbir zaman gönderilmez.</p></div>
+      <div class="row hb-f">
+        <label class="field"><span>Mağaza ID (Merchant ID)</span><input class="input mono" id="hb-mid" value="${esc(h.merchant_id)}" placeholder="6fc6d90d-ee1d-4372-…" autocomplete="off"></label>
+        <label class="field"><span>Servis anahtarı ${h.key_set ? '<span class="tag tag-ok">kayıtlı</span>' : ''}</span><input class="input" id="hb-key" type="password" autocomplete="off" placeholder="${h.key_set ? 'değiştirmek için yapıştır' : 'Hepsiburada\'nın verdiği anahtar'}"></label>
+        <label class="field"><span>Entegratör kullanıcı adı <small class="muted">User-Agent</small></span><input class="input" id="hb-user" value="${esc(h.user)}" placeholder="Hepsiburada'nın verdiği kullanıcı adı" autocomplete="off"></label>
+      </div>
+      <div class="row hb-f2">
+        <label class="field" style="max-width:190px"><span>Varsayılan komisyon <small class="muted">kâr hesabı için</small></span><div class="input-group"><input class="input" id="hb-com" inputmode="decimal" value="${h.commission_pct ?? ''}" placeholder="ör. 18"><span class="suffix">%</span></div></label>
+        <label class="field" style="max-width:170px"><span>Kontrol sıklığı</span><div class="input-group"><input class="input" id="hb-iv" type="number" min="2" max="60" value="${h.interval_min}"><span class="suffix">dk</span></div></label>
+        <label class="switch" style="align-self:end;margin-bottom:8px"><input type="checkbox" id="hb-stage" ${h.stage ? 'checked' : ''}> Test ortamı (SIT)</label>
+      </div>
+      <div class="hb-w${h.write ? ' on' : ''}"><label class="switch"><input type="checkbox" id="hb-write" ${h.write ? 'checked' : ''}> <b>Paketlemeyi Hepsiburada'ya gönder</b></label>
+        <small class="muted">Açıkken HB siparişinde “Hepsiburada'da paketle” ve “Etiket bas” çıkar; yanlış paketlenirse “Paketi boz” ile geri alınır. Kapalıyken uygulama Hepsiburada'ya hiçbir şey yazmaz.</small>
+        <label class="field" style="max-width:150px"><span>Paket desisi</span><div class="input-group"><input class="input" id="hb-deci" inputmode="decimal" value="${h.deci ?? 1}"><span class="suffix">desi</span></div></label></div>
+      <div class="bk-btns"><button class="btn btn-primary btn-sm" data-act="hb-save">Kaydet</button><button class="btn btn-sm" data-act="hb-test" ${h.key_set ? '' : 'disabled'}>Bağlantıyı dene</button>
+        ${h.key_set ? `<button class="btn btn-sm ${h.enabled ? '' : 'btn-primary'}" data-act="hb-enable" data-v="${h.enabled ? 0 : 1}">${h.enabled ? 'Takibi durdur' : 'Takibi başlat'}</button>` : ''}
+        ${h.enabled ? '<button class="btn btn-sm" data-act="hb-sync">Şimdi eşitle</button>' : ''}</div>
+      ${h.last_error ? `<div class="notice bad">${icon('alert')}<div><b>Son eşitleme başarısız:</b> ${esc(h.last_error)}</div></div>` : h.last_sync ? `<small class="muted">Son eşitleme ${fmtWhen(h.last_sync)}${r.orders != null ? ` · ${r.orders} sipariş · ${r.deducted || 0} adet stoktan düştü${r.unmatched ? ` · <b class="warn-text">${r.unmatched} eşleşmeyen satır</b>` : ''}` : ''}</small>` : ''}
+      ${h.enabled && h.since ? `<small class="muted">Takip başlangıcı ${new Date(h.since).toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}: bundan önce paketlenmiş siparişler stoktan düşmez (rafta sayılı değiller).</small>` : ''}
+      ${S.hbTest ? `<details class="el-test" open><summary>Bağlantı denemesi</summary><pre>${esc(JSON.stringify(S.hbTest, null, 2))}</pre><small class="muted">Alan adları listesidir; değer içermez. Bir şey yanlış görünürse bunu bana gönderebilirsin.</small></details>` : ''}
+    </div></section>`;
+}
 // ---------- Ayarlar → Home Assistant (olaylar, sensörler, elektrik)
 const HA_YAML = (ev) => `alias: Astera · ${ev}\ntriggers:\n  - trigger: event\n    event_type: astera_${ev}\nactions:\n  - action: notify.notify\n    data:\n      title: "{{ trigger.event.data.title }}"\n      message: "{{ trigger.event.data.body }}"`;
 function haSetHTML() {
@@ -7906,9 +8044,9 @@ function labelSetHTML() {
 }
 // Ayarlar grupları: her panel başlığına göre bir gruba düşer
 const SET_GROUPS = [['genel', 'Genel', 'gear'], ['magaza', 'Mağaza ve Kargo', 'pack'], ['trendyol', 'Trendyol', 'cart'], ['uretim', 'Üretim', 'layers'],
-  ['bildirim', 'Bildirimler', 'bell'], ['ha', 'Home Assistant', 'home'], ['uzak', 'Uzaktan erişim', 'lock'], ['veri', 'Veri ve Yedek', 'download']];
+  ['bildirim', 'Bildirimler', 'bell'], ['hb', 'Hepsiburada', 'cart'], ['ha', 'Home Assistant', 'home'], ['uzak', 'Uzaktan erişim', 'lock'], ['veri', 'Veri ve Yedek', 'download']];
 const SET_MAP = [[/^Uygulama|^Tema|^Görünüm/, 'genel'], [/^Kargo|^Stok ne zaman|^Sipariş notları|^Düşük kâr/, 'magaza'], [/^Trendyol/, 'trendyol'], [/^Kategoriler|^Makineler|^Filament kurutma|^Özel günler/, 'uretim'],
-  [/^Bildirimler|^Haftalık/, 'bildirim'], [/^Home Assistant|^Elektrik/, 'ha'], [/^Telefon|^Uzak/, 'uzak'], [/^Yedek|^Arşiv|^Hata raporu/, 'veri']];
+  [/^Bildirimler|^Haftalık/, 'bildirim'], [/^Home Assistant|^Elektrik/, 'ha'], [/^Hepsiburada/, 'hb'], [/^Telefon|^Uzak/, 'uzak'], [/^Yedek|^Arşiv|^Hata raporu/, 'veri']];
 const setGroup = () => { try { const g = localStorage.getItem('setGrp'); return SET_GROUPS.some((x) => x[0] === g) ? g : 'genel'; } catch { return 'genel'; } };
 function setGroupsBind() {
   const grid = $('.settings-grid'); if (!grid) return;
@@ -7930,7 +8068,7 @@ function setGroupsBind() {
   }));
 }
 PAGES.ayarlar = {
-  async load() { await loadCategories(); await loadSettings(); if ((S.settings.printers || []).some(hasLink)) await loadBambu(); S.archived = (await api('GET', '/api/products?archived=1')).filter((p) => p.archived); S.backups = await api('GET', '/api/backups').catch(() => null); S.gd = await api('GET', '/api/gdrive').catch(() => null); S.weekly = await api('GET', '/api/weekly').catch(() => null); S.labelCfg = await api('GET', '/api/label/settings').catch(() => null); S.version = await api('GET', '/api/version').catch(() => null); S.authCfg = await api('GET', '/api/auth/settings').catch(() => null); S.upd = await api('GET', '/api/update').catch(() => null); S.ha = await api('GET', '/api/ha').catch(() => null); await loadDays(true); S.ruleDraft = null; },
+  async load() { await loadCategories(); await loadSettings(); if ((S.settings.printers || []).some(hasLink)) await loadBambu(); S.archived = (await api('GET', '/api/products?archived=1')).filter((p) => p.archived); S.backups = await api('GET', '/api/backups').catch(() => null); S.gd = await api('GET', '/api/gdrive').catch(() => null); S.weekly = await api('GET', '/api/weekly').catch(() => null); S.labelCfg = await api('GET', '/api/label/settings').catch(() => null); S.version = await api('GET', '/api/version').catch(() => null); S.authCfg = await api('GET', '/api/auth/settings').catch(() => null); S.upd = await api('GET', '/api/update').catch(() => null); S.ha = await api('GET', '/api/ha').catch(() => null); S.hb = await api('GET', '/api/hb').catch(() => null); await loadDays(true); S.ruleDraft = null; },
   html() {
     const theme = localStorage.getItem('theme') || 'auto';
     const nsup = 'Notification' in window, secure = window.isSecureContext;
@@ -8007,21 +8145,10 @@ PAGES.ayarlar = {
           <small class="muted" id="lm-ex">${lmExample(lowMarginPct() || 10)}</small></div>
       </div></section>
 
-      <section class="panel"><div class="panel-h"><h2>Makineler</h2></div><div class="panel-b" style="display:grid;gap:14px">
-        <p class="muted" style="margin:0">Baskı başlatırken makineyi tek dokunuşla seçersiniz; aktif baskılarda makinenin görseli görünür. Fotoğraf yüklemezseniz türüne göre bir ikon kullanılır.</p>
-        <div class="machines">${(S.settings.printers || []).map((p, i) => `<div class="machine">
-            <button class="machine-img" data-act="printer-photo" data-i="${i}" aria-label="${esc(p.name)} fotoğrafını değiştir">${printerThumb(p.name, 'lg')}<span class="machine-edit">${icon('upload')}</span></button>
-            <div class="machine-info"><b>${esc(p.name)}</b>
-              <select class="input" data-printer-kind="${i}" style="height:34px;font-size:13.5px">${Object.entries(PRINTER_KINDS).map(([k, l]) => `<option value="${k}"${p.kind === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
-              ${p.image ? `<button class="btn btn-ghost btn-sm" data-act="printer-photo-rm" data-i="${i}" style="justify-self:start;padding:0 6px">Fotoğrafı kaldır</button>` : ''}</div>
-            <button class="icon-btn" data-act="rm-printer" data-i="${i}" aria-label="Kaldır">${icon('trash')}</button>
-            ${bambuBlock(p, i)}
-          </div>`).join('') || '<span class="faint">Henüz makine yok.</span>'}</div>
-        <input type="file" id="printer-photo-in" accept="image/*" hidden>
-        <div class="input-group" style="max-width:460px"><input class="input" id="new-printer" placeholder="Örn. Bambu P1S, Saturn 4 Ultra"><button class="btn" data-act="add-printer" style="border-radius:0 8px 8px 0;border-left:0">Ekle</button></div>
-      </div></section>
+      <section class="panel"><div class="panel-h"><h2>Makineler</h2></div><div class="panel-b"><p class="muted" style="margin:0 0 10px">Makine ekleme, tür, fotoğraf ve yazıcı bağlantısı artık <b>Üretim → Makineler</b> sayfasında; saatler ve bakım kaydıyla bir arada.</p><a class="btn btn-sm" href="#/makineler?edit">${icon('wrench')} Makinelere git</a></div></section>
 
       ${remoteSetHTML()}
+      ${hbSetHTML()}
       ${haSetHTML()}
       ${drySetHTML()}
       ${geliverSetHTML()}
@@ -8084,26 +8211,14 @@ PAGES.ayarlar = {
       themeSwitch(e, () => { applyTheme(); render(); }); toast(`Renk paleti: ${l}`);
     };
     $('#theme-seg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('theme', b.dataset.v); themeSwitch(e, applyTheme); $$('#theme-seg button').forEach((x) => x.classList.toggle('on', x === b)); };
-    $$('[data-conn-type]').forEach((sel) => sel.addEventListener('change', () => { (S.connEdit ||= {})[+sel.dataset.connType] = sel.value; render(); }));
     $('#tone-pick').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('tone', b.dataset.v); themeSwitch(e, applyTheme); $$('#tone-pick button').forEach((x) => x.classList.toggle('on', x === b)); if (!document.documentElement.dataset.theme && !matchMedia('(prefers-color-scheme: dark)').matches) toast('Ton koyu modda görünür'); };
     $('#density-seg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('density', b.dataset.v); applyTheme(); $$('#density-seg button').forEach((x) => x.classList.toggle('on', x === b)); };
     $('#uisize-seg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('uisize', b.dataset.v); applyTheme(); $$('#uisize-seg button').forEach((x) => x.classList.toggle('on', x === b)); };
     $('#accent-pick').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; localStorage.setItem('accent', b.dataset.v); themeSwitch(e, applyTheme); $$('#accent-pick button').forEach((x) => x.classList.toggle('on', x === b)); };
-    $('#new-printer').addEventListener('keydown', (e) => { if (e.key === 'Enter') ACTIONS['add-printer'](); });
     $('#logo-in').onchange = (e) => e.target.files[0] && uploadLogo(e.target.files[0]);
     const saveCut = async (v) => { try { S.settings = await api('PUT', '/api/settings', { ship_cutoff: v }); toast(v ? `Kargo çıkış saati ${v}` : "Trendyol'un saati kullanılacak"); } catch (e) { fail(e); } };
     $('#ship-cutoff').addEventListener('change', (e) => e.target.value && saveCut(e.target.value));
     $('#ship-raw').addEventListener('change', (e) => { $('#ship-cutoff').disabled = e.target.checked; if (e.target.checked) saveCut(''); else { $('#ship-cutoff').value = $('#ship-cutoff').value || '17:00'; saveCut($('#ship-cutoff').value); } });
-    $$('[data-printer-kind]').forEach((sel) => sel.addEventListener('change', () => {
-      const list = structuredClone(S.settings.printers); list[+sel.dataset.printerKind].kind = sel.value; savePrinters(list);
-    }));
-    $('#printer-photo-in').onchange = async (e) => {
-      const f = e.target.files[0]; const i = +e.target.dataset.i; if (!f) return;
-      try {
-        const r = await api('POST', '/api/upload-image', { data: await resizeImage(f, 360) });
-        const list = structuredClone(S.settings.printers); list[i].image = r.url; savePrinters(list);
-      } catch (err) { fail(err); }
-    };
   },
 };
 // ---------- Ayarlar → Görünüm ve düzen (gelişmiş): neyin nerede görüneceği; cihaz başına
@@ -8281,6 +8396,35 @@ function bambuBlock(p, i) {
     ${note ? `<p class="side-note" style="margin:6px 0 0">${note}</p>` : ''}
     ${S.elTest?.[i] ? `<details class="el-test" open><summary>Test sonucu</summary><pre>${esc(JSON.stringify(S.elTest[i], null, 2))}</pre><button class="btn btn-sm btn-ghost" data-act="el-copy" data-i="${i}">Kopyala</button></details>` : ''}
   </details>`;
+}
+function machinesSetHTML() {
+  return `<div class="mk-edit-b">
+        <p class="muted" style="margin:0">Baskı başlatırken makineyi tek dokunuşla seçersiniz; aktif baskılarda makinenin görseli görünür. Fotoğraf yüklemezseniz türüne göre bir ikon kullanılır.</p>
+        <div class="machines">${(S.settings.printers || []).map((p, i) => `<div class="machine">
+            <button class="machine-img" data-act="printer-photo" data-i="${i}" aria-label="${esc(p.name)} fotoğrafını değiştir">${printerThumb(p.name, 'lg')}<span class="machine-edit">${icon('upload')}</span></button>
+            <div class="machine-info"><b>${esc(p.name)}</b>
+              <select class="input" data-printer-kind="${i}" style="height:34px;font-size:13.5px">${Object.entries(PRINTER_KINDS).map(([k, l]) => `<option value="${k}"${p.kind === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
+              ${p.image ? `<button class="btn btn-ghost btn-sm" data-act="printer-photo-rm" data-i="${i}" style="justify-self:start;padding:0 6px">Fotoğrafı kaldır</button>` : ''}</div>
+            <button class="icon-btn" data-act="rm-printer" data-i="${i}" aria-label="Kaldır">${icon('trash')}</button>
+            ${bambuBlock(p, i)}
+          </div>`).join('') || '<span class="faint">Henüz makine yok.</span>'}</div>
+        <input type="file" id="printer-photo-in" accept="image/*" hidden>
+        <div class="input-group" style="max-width:460px"><input class="input" id="new-printer" placeholder="Örn. Bambu P1S, Saturn 4 Ultra"><button class="btn" data-act="add-printer" style="border-radius:0 8px 8px 0;border-left:0">Ekle</button></div>
+</div>`;
+}
+function machinesSetBind() {
+  $$('[data-conn-type]').forEach((sel) => sel.addEventListener('change', () => { (S.connEdit ||= {})[+sel.dataset.connType] = sel.value; render(); }));
+  $('#new-printer')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') ACTIONS['add-printer'](); });
+    $$('[data-printer-kind]').forEach((sel) => sel.addEventListener('change', () => {
+      const list = structuredClone(S.settings.printers); list[+sel.dataset.printerKind].kind = sel.value; savePrinters(list);
+    }));
+    if ($('#printer-photo-in')) $('#printer-photo-in').onchange = async (e) => {
+      const f = e.target.files[0]; const i = +e.target.dataset.i; if (!f) return;
+      try {
+        const r = await api('POST', '/api/upload-image', { data: await resizeImage(f, 360) });
+        const list = structuredClone(S.settings.printers); list[i].image = r.url; savePrinters(list);
+      } catch (err) { fail(err); }
+    };
 }
 async function savePrinters(list) {
   try { S.settings = await api('PUT', '/api/settings', { printers: list }); render(); } catch (e) { fail(e); }
@@ -10170,4 +10314,34 @@ Object.assign(ACTIONS, {
 });
 Object.assign(ACTIONS, {
   'shelf-labels': (el) => { if (el.dataset.id) closeModal(); openShelfLabels(el.dataset.id ? [+el.dataset.id] : [...(S.psel || [])].map(Number)); },
+});
+Object.assign(ACTIONS, { 'mk-hours': (el) => openMkHours(el.dataset.name) });
+Object.assign(ACTIONS, {
+  'tyo-ch': (el) => { S.tyo.ch = el.dataset.v; S.tyo.sel.clear(); render(); },
+  'hb-save': async () => { const b = { merchant_id: $('#hb-mid').value.trim(), user: $('#hb-user').value.trim(), commission_pct: $('#hb-com').value, interval_min: +$('#hb-iv').value || 5, stage: $('#hb-stage').checked, write: $('#hb-write').checked, deci: $('#hb-deci').value };
+    if ($('#hb-key').value.trim()) b.key = $('#hb-key').value.trim();
+    try { S.hb = await api('PUT', '/api/hb', b); toast('Hepsiburada ayarları kaydedildi'); const y = scrollY; await render(); scrollTo(0, y); } catch (e) { fail(e); } },
+  'hb-test': async (el) => { el.disabled = true; el.classList.add('busy');
+    try { S.hbTest = await api('POST', '/api/hb/test'); toast(`Bağlantı çalışıyor · ${S.hbTest.open_items} açık kalem · ${S.hbTest.packages} paket`); } catch (e) { S.hbTest = { hata: e.message }; fail(e); }
+    const y = scrollY; await render(); scrollTo(0, y); },
+  'hb-enable': async (el) => { try { S.hb = await api('PUT', '/api/hb', { enabled: el.dataset.v === '1' }); S.settings = await api('GET', '/api/settings');
+      if (S.hb.enabled) { toast('Hepsiburada takibi başladı, ilk eşitleme yapılıyor'); await api('POST', '/api/hb/sync').catch(fail); S.hb = await api('GET', '/api/hb'); S.tyOrders = null; } else toast('Hepsiburada takibi durduruldu');
+      const y = scrollY; await render(); scrollTo(0, y); renderNav(); } catch (e) { fail(e); } },
+  'hb-sync': async (el) => { el.disabled = true; el.classList.add('busy');
+    try { const r = await api('POST', '/api/hb/sync'); toast(r.busy ? 'Eşitleme zaten sürüyor' : `${r.orders} sipariş eşitlendi · ${r.deducted} adet stoktan düştü${r.unmatched ? ` · ${r.unmatched} eşleşmeyen` : ''}`); S.tyOrders = null; } catch (e) { fail(e); }
+    S.hb = await api('GET', '/api/hb').catch(() => S.hb); const y = scrollY; await render(); scrollTo(0, y); },
+});
+
+// Hepsiburada: paketi boz (uygulama içi onay)
+Object.assign(ACTIONS, {
+  'hb-unpack': (el) => {
+    const id = el.dataset.id, p = (S.tyOrders?.packages || []).find((x) => x.package_id === id);
+    openModal(`<div class="modal-h"><h2>Paketi boz</h2><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+      <div class="modal-b" style="display:grid;gap:10px"><p style="margin:0"><b>#${esc(p?.order_number || '')}</b> Hepsiburada'daki paketi bozulacak, sipariş <b>Yeni</b>'ye döner ve yeniden paketlenebilir.</p>
+        <p class="muted" style="margin:0;font-size:13px">Basılmış HepsiJet etiketi geçersiz olur, atın. Stoktan düşülen ürünler stoğa geri eklenmez (sipariş yine paketlenecek); sipariş iptal edilirse iptal kuralıyla geri eklenir.</p></div>
+      <div class="modal-f"><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" id="hbu-go">Paketi boz</button></div></div>`, 'narrow');
+    $('#hbu-go').onclick = async () => { const b = $('#hbu-go'); b.disabled = true;
+      try { await api('POST', '/api/hb/unpack', { package_id: id }); closeModal(); toast('Paket bozuldu; sipariş Yeni\'ye döndü'); await loadTyOrders(); await render(); }
+      catch (e) { b.disabled = false; fail(e); } };
+  },
 });

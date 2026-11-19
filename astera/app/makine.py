@@ -51,7 +51,38 @@ def _dur(r, now):
 
 def _jobs():
     return [dict(r) for r in _db().execute(
-        "SELECT printer, status, started_at, ends_at, finished_at FROM print_jobs WHERE status IN ('success','partial','failed','printing') AND printer IS NOT NULL AND printer<>''")]
+        """SELECT j.printer, j.status, j.started_at, j.ends_at, j.finished_at, j.quantity, j.good_quantity, j.product_id, j.component_id, j.order_id,
+                  COALESCE(p.name, c.name, o.title, NULLIF(TRIM(COALESCE(o.first_name,'') || ' ' || COALESCE(o.last_name,'')), ''), 'Diğer') name
+           FROM print_jobs j LEFT JOIN products p ON p.id=j.product_id LEFT JOIN components c ON c.id=j.component_id
+           LEFT JOIN custom_orders o ON o.id=j.order_id
+           WHERE j.status IN ('success','partial','failed','printing') AND j.printer IS NOT NULL AND j.printer<>''""")]
+
+
+def _stats(mine, now):
+    """Makine başına: en çok basılanlar, başarı oranı, en uzun baskı, ortalama süre."""
+    by = {}
+    done = [j for j in mine if j["status"] != "printing"]
+    for j in done:
+        k = (j["product_id"], j["component_id"], j["order_id"] and not j["product_id"], j["name"])
+        g = by.setdefault(k, {"name": j["name"], "kind": "product" if j["product_id"] else "comp" if j["component_id"] else "order" if j["order_id"] else "misc",
+                              "pid": j["product_id"], "jobs": 0, "units": 0, "fails": 0, "hours": 0.0})
+        g["jobs"] += 1
+        g["units"] += (j["good_quantity"] if j["good_quantity"] is not None else (j["quantity"] or 0)) if j["status"] != "failed" else 0
+        g["fails"] += 1 if j["status"] == "failed" else 0
+        g["hours"] += _dur(j, now) / 3600
+    top = sorted(by.values(), key=lambda g: (-g["jobs"], -g["units"]))[:6]
+    for g in top:
+        g["hours"] = round(g["hours"], 1)
+    ok = sum(1 for j in done if j["status"] == "success")
+    part = sum(1 for j in done if j["status"] == "partial")
+    durs = [_dur(j, now) for j in done]
+    longest = max(done, key=lambda j: _dur(j, now)) if done else None
+    units = sum((j["good_quantity"] if j["good_quantity"] is not None else (j["quantity"] or 0)) for j in done if j["status"] != "failed")
+    first = min((j["started_at"] or now) for j in mine) if mine else None
+    return {"top": top, "done": len(done), "ok_pct": round(ok * 100 / len(done)) if done else None, "partial": part,
+            "units": units, "avg_h": round(sum(durs) / len(durs) / 3600, 1) if durs else None,
+            "longest": {"name": longest["name"], "h": round(_dur(longest, now) / 3600, 1), "at": longest["started_at"]} if longest else None,
+            "first_at": first}
 
 
 def printers():
@@ -124,7 +155,8 @@ def summary():
                     "months": mon, "last": last, "since_hours": since_h, "since_days": since_d, "due": due,
                     "cost_total": cost, "cost_year": round(sum(x["cost"] or 0 for x in lg if x["date"].startswith(year)), 2),
                     "cost_per_hour": round(cost / total, 2) if total > 0 and cost else None, "log": list(reversed(lg)),
-                    "interval_hours": c.get("interval_hours"), "interval_days": c.get("interval_days"), "hours_offset": off})
+                    "interval_hours": c.get("interval_hours"), "interval_days": c.get("interval_days"), "hours_offset": off,
+                    "tracked_hours": round(total - off, 1), "stats": _stats(mine, now)})
     return out
 
 
@@ -173,6 +205,10 @@ def set_cfg(printer, b):
     ih = num(b.get("interval_hours"), 1, 100000) if "interval_hours" in b else old.get("interval_hours")
     idays = num(b.get("interval_days"), 1, 3650, int) if "interval_days" in b else old.get("interval_days")
     off = (num(b.get("hours_offset"), 0, 1000000) or 0) if "hours_offset" in b else (old.get("hours_offset") or 0)
+    if "current_hours" in b:   # makinenin kendi ekranındaki toplam saat: fark "başlangıç saati" olur
+        cur = num(b.get("current_hours"), 0, 1000000) or 0
+        tracked = sum(_dur(j, _now()) for j in _jobs() if j["printer"] == printer) / 3600
+        off = round(max(0.0, cur - tracked), 1)
     _db().execute("INSERT INTO machine_cfg(printer, interval_hours, interval_days, hours_offset) VALUES(?,?,?,?) ON CONFLICT(printer) DO UPDATE SET "
                   "interval_hours=excluded.interval_hours, interval_days=excluded.interval_days, hours_offset=excluded.hours_offset",
                   (printer, ih, idays, off))

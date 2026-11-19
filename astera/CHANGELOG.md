@@ -1,5 +1,13 @@
 # Sürüm notları
 
+## 1.14.0
+- Hepsiburada: siparişler Trendyol'la aynı listede (mor HB etiketiyle, son teslime göre iç içe sıralı), stok aynı kurala göre düşer, iptalde geri eklenir. Ürünler barkod, satıcı stok kodu ya da HB SKU ile eşleşir; eşleşmeyen satırda ürünü bir kez seçmek yeter. Ayarlar → Hepsiburada.
+- Hepsiburada'da paketleme, paketi bozma ve HepsiJet etiketi ("Paketlemeyi Hepsiburada'ya gönder" açıkken). Stok ve fiyat gönderilmez.
+- Siparişlerde Hepsi / Trendyol / Hepsiburada filtresi; Hepsiburada açıkken sekmenin adı "Pazaryeri".
+- Makineler: düzenleme (liste, tür, fotoğraf, yazıcı bağlantısı) Ayarlar'dan Üretim → Makineler'e taşındı. Makinenin güncel toplam saati girilebilir. Makine başına en çok basılanlar, başarı oranı, sağlam adet, ortalama ve en uzun baskı.
+- Yeni baskı penceresinde seçili ürünün bilgi kartı: görsel, stok öngörüsü ve son 3 baskı.
+- Sipariş penceresinin başlığı daha kompakt ve renkli; hızlı not düğmeleri.
+
 ## 1.13.0
 - Home Assistant: olaylar (baskı bitti/başarısız, yeni sipariş, sabah özeti, azalan stok, bakım, yeni yorum, kargo teslim) ve sensörler (bekleyen sipariş, bugün çıkacak, yazıcı kalan süre, azalan stok, bugünkü ciro). Ayarlar → Home Assistant.
 - Elektrik: ölçer prizin kWh sensöründen tüketim yazıcılara paylaştırılır (güçler kendiliğinden öğrenilir); makine kartında aylık kWh ve ₺, kâr hesabında ürün başı elektrik.

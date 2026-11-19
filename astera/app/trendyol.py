@@ -82,6 +82,7 @@ def public_settings():
             "ship_days": int(_get("ship_days", "1") or 1),
             "ship_skip_sunday": _get("ship_skip_sunday", "0") == "1",
             "plan_days": int(_get("plan_days", "14") or 14),
+            "hb_enabled": _get("hb_enabled", "0") == "1",
             "sleep_from": _get("sleep_from", "00:30") or "00:30",
             "sleep_to": _get("sleep_to", "08:30") or "08:30",
             "dry_days": _json_get("dry_days", {}),
@@ -463,7 +464,8 @@ def _due(status, row, mode=None):
 
 
 def _deduct(row_key, pid, qty, order_no, name, stats):
-    _change_stock(pid, -qty, "trendyol", ref=order_no, note=f"{name or ''} · {DEDUCT_NOTE[deduct_mode()]}".strip(" ·"))
+    hb = str(row_key).startswith("hb:")   # Hepsiburada satırı (aynı pazaryeri akışı, notta ayrılır)
+    _change_stock(pid, -qty, "trendyol", ref=order_no, note=(("Hepsiburada · " if hb else "") + f"{name or ''} · {DEDUCT_NOTE[deduct_mode()]}").strip(" ·"))
     _db().execute("UPDATE ty_lines SET state='deducted', product_id=?, packed_at=COALESCE(packed_at, ?) WHERE line_key=?",
                   (pid, _now(), row_key))
     stats["deducted"] += qty
@@ -816,6 +818,24 @@ def _open_lines():
     return out
 
 
+def _hb_open_lines():
+    """Hepsiburada'nın Yeni (paketlenmemiş) satırları: eşitlemede kaydedilenlerden."""
+    with _lock:
+        codes = _code_map()
+        names = {r["id"]: r["name"] for r in _db().execute(
+            "SELECT id, name || COALESCE(' — ' || NULLIF(variant_label,''), '') name FROM products")}
+        rows = [dict(r) for r in _db().execute(
+            """SELECT * FROM ty_lines WHERE channel='hb' AND ty_status IN ('Created','Awaiting') AND state NOT IN ('cancelled','restocked')""")]
+    out = []
+    for r in rows:
+        pid = r["product_id"] or _match(codes, {"barcode": r["barcode"], "merchantSku": r["merchant_sku"]})
+        out.append({"line_key": r["line_key"], "order_number": r["order_number"], "package_id": r["package_id"], "order_date": r["order_date"],
+                    "barcode": r["barcode"], "merchant_sku": r["merchant_sku"], "product_name": r["product_name"], "quantity": r["quantity"],
+                    "ty_status": r["ty_status"], "product_id": pid, "matched_name": names.get(pid), "known_state": r["state"],
+                    "deadline": r["deadline"], "channel": "hb"})
+    return out
+
+
 def diagnose():
     """Trendyol'un gerçekte ne döndürdüğünü özetler: durum başına paket sayısı, görülen durum adları, örnek paket."""
     now_ms = int(time.time() * 1000)
@@ -884,8 +904,17 @@ def preview_open_orders():
 
 
 def pick_list():
-    """Şu an Yeni durumundaki siparişlerdeki ürünleri toplar: hangi üründen toplam kaç adet, kaç siparişte."""
-    lines = _open_lines()
+    """Şu an Yeni durumundaki siparişlerdeki ürünleri toplar: hangi üründen toplam kaç adet, kaç siparişte.
+    Hepsiburada'nın açık siparişleri de (kayıtlı satırlardan) eklenir."""
+    hb_on = _get("hb_enabled", "0") == "1"
+    try:
+        lines = _open_lines() if (_get("ty_seller_id") or "") else []
+    except TrendyolError:
+        if not hb_on:
+            raise
+        lines = []
+    if hb_on:
+        lines += _hb_open_lines()
     with _lock:
         prods = {r["id"]: dict(r) for r in _db().execute("SELECT id, name || COALESCE(' — ' || NULLIF(variant_label,''), '') name, thumbnail, stock, print_type FROM products")}
     groups = {}
@@ -901,7 +930,7 @@ def pick_list():
             g.update(thumbnail=p["thumbnail"], stock=p["stock"], print_type=p["print_type"], name=p["name"])
         g["quantity"] += l["quantity"]
         g["orders"].append({"order_number": l["order_number"], "quantity": l["quantity"], "order_date": l["order_date"],
-                            "known_state": l["known_state"], "deadline": l["deadline"]})
+                            "known_state": l["known_state"], "deadline": l["deadline"], "channel": l.get("channel", "ty")})
     items = sorted(groups.values(), key=lambda g: (-g["quantity"], g["name"] or ""))
     for g in items:
         g["order_count"] = len({o["order_number"] for o in g["orders"]})
@@ -1023,6 +1052,7 @@ def start_poller():
 def backfill_details(max_days=90, where="unit_price IS NULL"):
     """Bu sürümden önce kaydedilmiş satırların fiyat/müşteri bilgilerini Trendyol'dan doldurur.
     Sadece mevcut satırları günceller; stoğa dokunmaz."""
+    where = f"({where}) AND COALESCE(channel,'ty')='ty'"   # Hepsiburada satırları Trendyol'dan doldurulmaz
     with _lock:
         r = _db().execute(f"SELECT MIN(NULLIF(order_date, 0)) m, COUNT(*) n FROM ty_lines WHERE {where}").fetchone()
     if not r["n"]:
@@ -1081,17 +1111,18 @@ def orders(month=None, start=None, end=None):
     pk = {}
     for r in rows:
         k = r["package_id"] or r["order_number"] or r["line_key"]
-        g = pk.setdefault(k, {"package_id": r["package_id"], "order_number": r["order_number"], "order_date": r["order_date"],
+        g = pk.setdefault(k, {"package_id": r["package_id"], "order_number": r["order_number"], "order_date": r["order_date"], "channel": r.get("channel") or "ty",
                               "customer": r["customer"], "city": r["city"], "district": r["district"], "pkg_total": r["pkg_total"], "deadline": r["deadline"],
                               "packed_at": r["packed_at"], "cargo_no": r["cargo_no"], "cargo_provider": r["cargo_provider"],
-                              "cargo_link": r["cargo_link"], "label_at": r["label_at"], "shipped_at": r.get("shipped_at"), "statuses": [], "lines": [], "discounts": None})
+                              "cargo_link": r["cargo_link"], "label_at": r["label_at"], "shipped_at": r.get("shipped_at"), "hb_pkg": r.get("hb_pkg"),
+                              "statuses": [], "lines": [], "discounts": None})
         if r.get("discounts") and not g["discounts"]:
             try:
                 g["discounts"] = json.loads(r["discounts"])
             except ValueError:
                 pass
-        for f in ("customer", "city", "district", "pkg_total", "deadline", "packed_at", "cargo_no", "cargo_provider", "cargo_link", "label_at", "shipped_at"):
-            g[f] = g[f] or r[f]
+        for f in ("customer", "city", "district", "pkg_total", "deadline", "packed_at", "cargo_no", "cargo_provider", "cargo_link", "label_at", "shipped_at", "hb_pkg"):
+            g[f] = g[f] or r.get(f)
         g["statuses"].append(r["ty_status"] or "")
         g["lines"].append({"line_key": r["line_key"], "product_id": r["product_id"], "name": r["matched_name"] or r["product_name"] or r["barcode"],
                            "ty_name": r["product_name"], "barcode": r["barcode"], "thumbnail": r["thumbnail"], "quantity": r["quantity"],
@@ -1099,6 +1130,7 @@ def orders(month=None, start=None, end=None):
                            "commission": r["commission"], "usual_commission": r["usual_commission"]})
     out, counts = [], {t: 0 for t in ORDER_TABS}
     hist = customer_history()
+    hb_write = _get("hb_write", "0") == "1"
     with _lock:
         notes = {r["order_number"]: (r["note"], r["updated_at"]) for r in _db().execute("SELECT * FROM ty_notes")}
     for g in pk.values():
@@ -1116,14 +1148,22 @@ def orders(month=None, start=None, end=None):
         if g["tab"] not in ACTIVE_TABS and not (a <= (g["order_date"] or 0) < b):
             continue
         counts[g["tab"]] += 1
-        g["can_pick"] = g["tab"] == "new" and all(l["line_id"] for l in g["lines"] if l["status"] not in CANCEL_STATES)
-        g["can_label"] = g["tab"] in ("picking", "shipped") or g["tab"] == "new" and bool(g.get("cargo_no"))
+        hb = g["channel"] == "hb"
+        if hb:   # Hepsiburada: "Paketlemeyi Hepsiburada'ya gönder" açıksa uygulamadan paketlenir, etiket Hepsiburada'dan
+            ok_ids = all(l["line_id"] and not str(l["line_id"]).startswith(f"hb:{g['order_number']}-")
+                         for l in g["lines"] if l["status"] not in CANCEL_STATES)
+            g["can_pick"] = hb_write and g["tab"] == "new" and ok_ids
+            g["can_label"] = g["tab"] in ("picking", "shipped") and bool(g.get("hb_pkg"))
+            g["can_unpack"] = hb_write and g["tab"] == "picking" and bool(g.get("hb_pkg"))
+        else:
+            g["can_pick"] = g["tab"] == "new" and all(l["line_id"] for l in g["lines"] if l["status"] not in CANCEL_STATES)
+            g["can_label"] = g["tab"] in ("picking", "shipped") or g["tab"] == "new" and bool(g.get("cargo_no"))
         out.append(g)
     tr = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
     cur = time.localtime()
     return {"packages": out, "counts": counts, "month": f"{y:04d}-{m:02d}", "label": f"{tr[m - 1]} {y}",
             "is_current": (y, m) == (cur.tm_year, cur.tm_mon), "last_sync": int(_get("ty_last_sync", "0") or 0),
-            "tracking_enabled": _get("ty_enabled", "0") == "1"}
+            "tracking_enabled": _get("ty_enabled", "0") == "1", "hb_write": hb_write}
 
 
 # ---------------------------------------------------------------- kargo etiketi (ortak etiket, ZPL)

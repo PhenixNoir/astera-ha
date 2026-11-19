@@ -167,15 +167,15 @@ def _eff_deadline(ms):
 
 
 def _trendyol():
-    if not (_get("ty_seller_id") or ""):
+    if not (_get("ty_seller_id") or "") and (_get("hb_enabled", "0") or "0") != "1":
         return
-    rows = _db().execute("""SELECT t.package_id, t.order_number, t.order_date, t.deadline, t.quantity, t.state, t.barcode, p.thumbnail,
+    rows = _db().execute("""SELECT t.package_id, t.order_number, t.order_date, t.deadline, t.quantity, t.state, t.barcode, p.thumbnail, COALESCE(t.channel,'ty') channel,
                                    COALESCE(p.name || COALESCE(' — ' || NULLIF(p.variant_label,''), ''), t.product_name) name
                             FROM ty_lines t LEFT JOIN products p ON p.id=t.product_id
                             WHERE t.ty_status IN ('Created','Awaiting')""").fetchall()
     pk = {}
     for r in rows:
-        g = pk.setdefault(r["package_id"] or r["order_number"], {"no": r["order_number"], "date": r["order_date"] or 0, "dl": r["deadline"], "names": [], "imgs": []})
+        g = pk.setdefault(r["package_id"] or r["order_number"], {"no": r["order_number"], "date": r["order_date"] or 0, "dl": r["deadline"], "names": [], "imgs": [], "ch": r["channel"]})
         g["names"].append(f"{r['name']} ×{r['quantity']}")
         g["imgs"].append([r["thumbnail"] or "", int(r["quantity"] or 1)])
     # yeni siparişler: son görülenden sonra gelenler tek bildirimde toplanır
@@ -192,7 +192,10 @@ def _trendyol():
         prev = prev_act.get("n", 0)
         pkgs = ([g["key"] for g in sorted(new, key=lambda g: -g["date"])] + (prev_act.get("pkgs") or []))[:30]
         n = prev + len(new)
-        names = "; ".join(x for g in new for x in g["names"])[:160]
+        names = "; ".join((("HB · " if g.get("ch") == "hb" else "") + x) for g in new for x in g["names"])[:160]
+        chs = {g.get("ch") for g in new} | set(prev_act.get("chs") or [])
+        mk = "Trendyol" if chs == {"ty"} else "Hepsiburada" if chs == {"hb"} else "pazaryeri"
+        nm = lambda k: f"{k} yeni {mk} siparişi"
         # bildirim şeridindeki küçük görseller: aynı görsel tek kez, adetler toplanır; en yeniler önde
         imgs = {}
         for g in sorted(new, key=lambda g: -g["date"]):
@@ -202,16 +205,16 @@ def _trendyol():
         t = _now()
         if cur and cur["resolved_at"] is None:
             _db().execute("UPDATE notifications SET title=?, body=?, action=?, updated_at=?, created_at=? WHERE id=?",
-                          (f"{n} yeni Trendyol siparişi", names, json.dumps({"t": "order", "href": "#/siparisler", "n": n, "pkgs": pkgs, "imgs": imgs}), t, t, cur["id"]))
+                          (nm(n), names, json.dumps({"t": "order", "href": "#/siparisler", "n": n, "pkgs": pkgs, "imgs": imgs, "chs": sorted(chs)}), t, t, cur["id"]))
             nid = cur["id"]
         else:
             nid = _db().execute("""INSERT INTO notifications(key,kind,level,title,body,action,created_at,updated_at,cleared)
                              VALUES('tynew','trendyol','info',?,?,?,?,?,1)""",
-                          (f"{n} yeni Trendyol siparişi", names, json.dumps({"t": "order", "href": "#/siparisler", "n": n, "pkgs": pkgs, "imgs": imgs}), t, t)).lastrowid
+                          (nm(n), names, json.dumps({"t": "order", "href": "#/siparisler", "n": n, "pkgs": pkgs, "imgs": imgs, "chs": sorted(chs)}), t, t)).lastrowid
         _set("nf_ty_seen", max(g["date"] for g in new))
         if on_event:
             try:
-                on_event("tynew", "trendyol", "info", f"{len(new)} yeni Trendyol siparişi", names)
+                on_event("tynew", "trendyol", "info", nm(len(new)), names)
             except Exception as e:  # noqa
                 print("HA olay hatası:", e)
         global _push
@@ -230,8 +233,8 @@ def _trendyol():
     _sync_group("tylate:", late)
     _sync_group("tysoon:", soon)
     um = {}
-    for r in _db().execute("SELECT barcode, MAX(product_name) n, COUNT(*) c FROM ty_lines WHERE state='unmatched' GROUP BY lower(barcode)"):
-        um[f"tyum:{(r['barcode'] or '').lower()}"] = ("trendyol", "warn", "Eşleşmeyen Trendyol ürünü", f"{r['n'] or r['barcode']} · {r['c']} satır",
+    for r in _db().execute("SELECT barcode, MAX(product_name) n, COUNT(*) c, MAX(COALESCE(channel,'ty')) ch FROM ty_lines WHERE state='unmatched' GROUP BY lower(barcode)"):
+        um[f"tyum:{(r['barcode'] or '').lower()}"] = ("trendyol", "warn", "Eşleşmeyen Hepsiburada ürünü" if r["ch"] == "hb" else "Eşleşmeyen Trendyol ürünü", f"{r['n'] or r['barcode']} · {r['c']} satır",
                                                        {"t": "go", "href": "#/hazirla"})
     _sync_group("tyum:", um)
 

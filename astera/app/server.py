@@ -55,6 +55,7 @@ import ha
 import yorum
 import kargo
 import gunler
+import hepsiburada
 import push
 import auth
 import updater
@@ -427,6 +428,7 @@ def init_db():
         yorum.migrate(db())
         kargo.migrate(db())
         gunler.init(db, get_setting)
+        hepsiburada.migrate(db())
         gunler.migrate(db())
         sync_part_grams()
         for col in ("order_date", "due_date"):   # eski örnek veriler tarihi saniye olarak yazmıştı → YYYY-AA-GG
@@ -1647,6 +1649,10 @@ def api_jobs_history(req):
     """Baskı geçmişi sayfa sayfa: {items, total}."""
     limit = max(1, min(500, int(req.query.get("limit") or 20)))
     offset = max(0, int(req.query.get("offset") or 0))
+    pid = req.query.get("pid")
+    if pid and str(pid).isdigit():   # tek ürünün son baskıları (yeni baskı penceresindeki bilgi kartı)
+        total = db().execute("SELECT COUNT(*) FROM print_jobs WHERE status<>'printing' AND product_id=?", (int(pid),)).fetchone()[0]
+        return {"items": job_rows("j.status<>'printing' AND j.product_id=?", (int(pid),), limit=limit, offset=offset), "total": total}
     total = db().execute("SELECT COUNT(*) FROM print_jobs WHERE status<>'printing'").fetchone()[0]
     return {"items": job_rows("j.status<>'printing'", limit=limit, offset=offset), "total": total}
 
@@ -2722,6 +2728,36 @@ def api_label_shelf(req):
     if err:
         raise ApiError(err, 502)
     return {"printed": len(items), "labels": (len(items) + 4) // 5}
+
+
+@route("GET", "/api/hb")
+def api_hb(req):
+    return hepsiburada.public()
+
+
+@route("PUT", "/api/hb")
+def api_hb_save(req):
+    try:
+        return hepsiburada.save(req.json())
+    except hepsiburada.HBError as e:
+        raise ApiError(str(e))
+
+
+@route("POST", "/api/hb/test", lock=False)
+def api_hb_test(req):
+    try:
+        return hepsiburada.test()
+    except hepsiburada.HBError as e:
+        raise ApiError(str(e), 502)
+
+
+@route("POST", "/api/hb/sync", lock=False)
+def api_hb_sync(req):
+    try:
+        r = hepsiburada.sync(manual=True)
+    except hepsiburada.HBError as e:
+        raise ApiError(str(e), 502)
+    return r
 
 
 @route("GET", "/api/energy")
@@ -4347,7 +4383,16 @@ def api_ty_picking(req):
         raise ApiError("Sipariş seçin")
     if len(ids) > 100:
         raise ApiError("Tek seferde en fazla 100 sipariş")
-    res = trendyol.set_picking(ids)
+    hb_ids = [str(x) for x in ids if str(x).startswith("hb-")]
+    ty_ids = [x for x in ids if not str(x).startswith("hb-")]
+    res = trendyol.set_picking(ty_ids) if ty_ids else {"done": [], "errors": [], "deducted": 0}
+    if hb_ids:   # Hepsiburada siparişleri kendi pazaryerine gider
+        try:
+            hr = hepsiburada.pack(hb_ids)
+        except hepsiburada.HBError as e:
+            hr = {"done": [], "errors": [{"package_id": x, "error": str(e)} for x in hb_ids], "deducted": 0}
+        res = {"done": res["done"] + hr["done"], "errors": res["errors"] + hr["errors"], "deducted": res["deducted"] + hr["deducted"],
+               "hb_done": hr["done"]}
     c = etiket.conf()
     if res["done"] and c["auto"] and (c["mode"] in ("share", "net") or os.environ.get("ATOLYE_LABEL_DIR")):
         # yalnızca etiketi Trendyol'dan alınabilen (TEX / Aras) paketler
@@ -4355,8 +4400,10 @@ def api_ty_picking(req):
             prov = {r["package_id"]: r["p"] for r in db().execute(
                 f"SELECT package_id, MAX(cargo_provider) p FROM ty_lines WHERE package_id IN ({','.join('?' * len(res['done']))}) GROUP BY package_id",
                 [str(x) for x in res["done"]])}
-        want = [x for x in res["done"] if trendyol.label_supported(prov.get(str(x))) or not prov.get(str(x))]
+        want = [x for x in res["done"] if not str(x).startswith("hb-") and (trendyol.label_supported(prov.get(str(x))) or not prov.get(str(x)))]
         res["labels"] = etiket.print_packages(want) if want else {"printed": [], "errors": []}
+        hl = hb_print(res.get("hb_done") or [])
+        res["labels"] = {"printed": res["labels"]["printed"] + hl["printed"], "errors": res["labels"]["errors"] + hl["errors"]}
     return res
 
 
@@ -4366,7 +4413,55 @@ def api_ty_label(req):
     ids = b.get("package_ids") or []
     if not isinstance(ids, list) or not ids or len(ids) > 100:
         raise ApiError("Paket seçin (en fazla 100)")
-    return etiket.print_packages(ids, refetch=bool(b.get("refetch")))
+    hb = [str(x) for x in ids if str(x).startswith("hb-")]
+    r = etiket.print_packages([x for x in ids if not str(x).startswith("hb-")], refetch=bool(b.get("refetch")))
+    if hb:
+        h = hb_print(hb)
+        r = {"printed": r["printed"] + h["printed"], "errors": r["errors"] + h["errors"]}
+    return r
+
+
+def hb_print(ids):
+    """Hepsiburada etiketlerini (ZPL) etiket yazıcısına gönderir."""
+    printed, errors = [], []
+    for i, pid in enumerate(ids):
+        try:
+            z, on = hepsiburada.label_zpl(pid)
+        except hepsiburada.HBError as e:
+            errors.append({"package_id": pid, "error": str(e)})
+            continue
+        err = etiket.send("\n".join(z))
+        if err:
+            errors.append({"package_id": pid, "order_number": on, "error": err})
+            if "ayarlanmamış" in err or "paylaşımına" in err or "bağlanılamadı" in err:
+                errors += [{"package_id": x, "error": "yazıcı sorunu nedeniyle basılmadı"} for x in ids[i + 1:]]
+                break
+            continue
+        trendyol.mark_label(pid)
+        printed.append(pid)
+    return {"printed": printed, "errors": errors}
+
+
+@route("POST", "/api/hb/label-img", lock=False)
+def api_hb_label_img(req):
+    """Yazdır penceresiyle basmak için Hepsiburada etiket görüntüleri."""
+    ids = [str(x) for x in (req.json().get("package_ids") or [])][:50]
+    labels, errors = [], []
+    for pid in ids:
+        try:
+            imgs, on = hepsiburada.label_images(pid)
+            labels.append({"package_id": pid, "order_number": on, "images": imgs})
+        except hepsiburada.HBError as e:
+            errors.append({"package_id": pid, "error": str(e)})
+    return {"labels": labels, "errors": errors}
+
+
+@route("POST", "/api/hb/unpack", lock=False)
+def api_hb_unpack(req):
+    try:
+        return hepsiburada.unpack(req.json().get("package_id"))
+    except hepsiburada.HBError as e:
+        raise ApiError(str(e), 502)
 
 
 @route("POST", "/api/trendyol/label-data", lock=False)
@@ -4893,6 +4988,8 @@ def main():
     yorum.start()
     kargo.init(db, DB_LOCK, get_setting, set_setting)
     kargo.start()
+    hepsiburada.init(db, DB_LOCK, get_setting, set_setting)
+    hepsiburada.start()
     notify.plan_fn = build_plan
     notify.weekly_fn = weekly_summary
     notify.start()
