@@ -207,6 +207,12 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+CREATE TABLE IF NOT EXISTS ty_com_fix (
+    order_number TEXT PRIMARY KEY,
+    pct REAL,
+    amount REAL,
+    updated_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS ty_notes (
     order_number TEXT PRIMARY KEY,
     note TEXT NOT NULL,
@@ -3812,6 +3818,31 @@ def api_settings_save(req):
     return {**trendyol.public_settings(), "lan_ips": lan_addresses()}
 
 
+@route("PUT", "/api/trendyol/orders/{no}/commission")
+def api_ty_com_fix(req, no):
+    """Siparişin gerçek komisyonunu elle düzeltme: oran (%) ya da tutar (₺). İkisi de boşsa düzeltme silinir.
+    Trendyol cari hesabında ödeme hesaplanınca oradaki gerçek tutar yine önce gelir."""
+    b = req.json()
+    def num(k):
+        v = b.get(k)
+        if v in (None, ""):
+            return None
+        try:
+            x = float(str(v).replace(",", "."))
+        except ValueError:
+            raise ApiError("Komisyon bir sayı olmalı")
+        if x < 0 or (k == "pct" and x > 100):
+            raise ApiError("Komisyon oranı 0–100 arasında olmalı")
+        return round(x, 2)
+    pct, amount = num("pct"), num("amount")
+    if pct is None and amount is None:
+        db().execute("DELETE FROM ty_com_fix WHERE order_number=?", (str(no),))
+    else:
+        db().execute("INSERT OR REPLACE INTO ty_com_fix(order_number, pct, amount, updated_at) VALUES(?,?,?,?)", (str(no), pct, amount, now()))
+    db().commit()
+    return {"ok": True, "pct": pct, "amount": amount}
+
+
 @route("PUT", "/api/trendyol/notes/{no}", lock=False)
 def api_ty_note(req, no):
     if not re.fullmatch(r"[\w-]{1,40}", no or ""):
@@ -4017,6 +4048,14 @@ def api_bambu(req):
                 p["err_ack"] = n["resolved_by"] == "user"
         printers.append(p)
     return {**snap, "printers": printers}
+
+
+@route("POST", "/api/bambu/adopt")
+def api_bambu_adopt(req):
+    try:
+        return bambu.adopt(str(req.json().get("printer") or ""))
+    except ValueError as e:
+        raise ApiError(str(e))
 
 
 @route("POST", "/api/bambu/events/{eid}/dismiss")
@@ -4272,8 +4311,11 @@ def api_ty_orders(req):
         for l in p["lines"]:
             l["ty_url"] = urls.get((l.get("barcode") or "").lower())
     cm = finans.commission_by_order([p["order_number"] for p in d["packages"]])
+    fx = {r["order_number"]: r for r in db().execute("SELECT * FROM ty_com_fix")}
     for p in d["packages"]:
         p["com_real"] = cm.get(str(p["order_number"]))
+        f = fx.get(str(p["order_number"]))   # elle girilen komisyon (ör. Trendyol Plus tarifesi)
+        p["com_fix"] = {"pct": f["pct"], "amount": f["amount"]} if f else None
     return d
 
 

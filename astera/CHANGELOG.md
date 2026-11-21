@@ -1,5 +1,11 @@
 # Sürüm notları
 
+## 1.14.1
+- Makine çizelgesi: makine basıyor ama ne bastığı seçilmemişse "Belirtilmedi" çubuğu çıkar; tıklayıp ya da sağ tıklayıp ne olduğunu seçebilirsin (kapatılmış uyarılar dahil). Baskı çubuklarına da sağ tık menüsü geldi.
+- Hazırla: stoğu artırıp azaltınca liste artık başa atlamıyor. Sipariş listesinde de not, eşleştirme gibi işlemlerden sonra kaydırma yeri korunuyor.
+- Sipariş kâr ayrıntısında komisyonu elle düzeltme (oran ya da tutar; ör. Trendyol Plus tarifesi). Komisyonun nereden alındığı artık her zaman yazıyor. Cari hesaptaki gerçek tutar gelince o kullanılır.
+- Telefonda sipariş satırında tarih ile teslim etiketinin üst üste binmesi düzeltildi; "Elektrik NaN kWh" yazısı düzeltildi.
+
 ## 1.14.0
 - Hepsiburada: siparişler Trendyol'la aynı listede (mor HB etiketiyle, son teslime göre iç içe sıralı), stok aynı kurala göre düşer, iptalde geri eklenir. Ürünler barkod, satıcı stok kodu ya da HB SKU ile eşleşir; eşleşmeyen satırda ürünü bir kez seçmek yeter. Ayarlar → Hepsiburada.
 - Hepsiburada'da paketleme, paketi bozma ve HepsiJet etiketi ("Paketlemeyi Hepsiburada'ya gönder" açıkken). Stok ve fiyat gönderilmez.

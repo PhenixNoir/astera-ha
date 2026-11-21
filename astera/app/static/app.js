@@ -472,8 +472,8 @@ async function render() {
   try { await page.load?.(); } catch (e) { fail(e); }
   if (route() !== r) return;
   if (page.title) { $('#page-title').textContent = page.title(); document.title = page.title() + ' · ' + appName(); }
-  const swap = () => { $('#view').innerHTML = page.html(); page.after?.(); tick(); countUp($('#view')); setTimeout(placeHints, 500); };
   const isNav = S.lastRoute !== r;
+  const swap = () => { const keep = isNav ? null : fitAnchors(); $('#view').innerHTML = page.html(); page.after?.(); if (keep) fitRestore(keep); tick(); countUp($('#view')); setTimeout(placeHints, 500); };
   S.lastRoute = r;
   document.documentElement.dataset.vt = isNav ? 'page' : 'update';
   // Sayfa geçişinde View Transition kullanılmaz: tarayıcı tüm sayfanın (yüzlerce ürün kartı) anlık görüntüsünü alırken
@@ -509,6 +509,31 @@ function fitBoxes() {
     const top = el.getBoundingClientRect().top + window.scrollY * Z;
     el.style.maxHeight = `${Math.max(380, top < H * 0.6 ? H - top - 24 : H - 120) / Z}px`;
   });
+}
+// Aynı sayfa yeniden çizilince (stok, not, eşleştirme…) uzun listelerin kaydırma yeri korunur: listede ekranın üstündeki
+// satır bulunur, yeni listede o satır aynı hizaya getirilir. Satır yoksa (sekme / filtre değişti) liste baştan başlar.
+const FIT_KEYS = ['data-pkg', 'data-k', 'data-pid', 'data-job', 'data-key', 'data-id', 'data-cid', 'data-name'];
+function fitAnchors() {
+  return $$('#view .fitbox').map((box, i) => {
+    if (box.scrollTop < 2) return null;
+    const bt = box.getBoundingClientRect().top;
+    for (const el of box.querySelectorAll(FIT_KEYS.map((k) => `[${k}]`).join(','))) {
+      const r = el.getBoundingClientRect(); if (r.bottom <= bt + 1 || !r.height) continue;
+      const k = FIT_KEYS.find((x) => el.hasAttribute(x));
+      return { i, cls: box.className, sel: `[${k}="${CSS.escape(el.getAttribute(k))}"]`, off: r.top - bt };
+    }
+    return null;
+  }).filter(Boolean);
+}
+function fitRestore(keep) {
+  if (!keep.length) return;
+  fitBoxes();
+  const boxes = $$('#view .fitbox');
+  for (const a of keep) {
+    const box = boxes[a.i]; if (!box || box.className !== a.cls) continue;
+    const el = box.querySelector(a.sel); if (!el) continue;
+    box.scrollTop += el.getBoundingClientRect().top - box.getBoundingClientRect().top - a.off;
+  }
 }
 let fitRaf = 0;
 const fitSoon = () => { cancelAnimationFrame(fitRaf); fitRaf = requestAnimationFrame(fitBoxes); };
@@ -2558,6 +2583,23 @@ document.addEventListener('change', async (e) => {
 });
 
 // ------------------------------------------------------------------ makine zaman çizelgesi
+// Bağlı makine basıyor ama Astera'da açık baskı yok (seçmeyi unuttun ya da uyarıyı kapattın): "Belirtilmedi" çubuğu
+function tlUnknown(name, o) {
+  if (!name || !o || (o.s !== 'run' && o.s !== 'paused')) return null;
+  const t = nowS(), ev = (S.bambu?.events || []).find((e) => e.printer === name && !e.done);
+  const rem = o.rem ?? ev?.remaining_min ?? null, pct = o.pct ?? ev?.percent ?? null;
+  let start = ev?.at || 0;
+  if (!start) start = rem && pct > 0 && pct < 100 ? t - Math.round(rem * 60 * pct / (100 - pct)) : t - 15 * 60;
+  return { start, end: t + Math.max(rem || 30, 1) * 60, rem, pct, file: o.file || ev?.file || '', prep: !!o.prep, ev };
+}
+async function tlAdopt(name) {
+  let ev = (S.bambu?.events || []).find((e) => e.printer === name && !e.done);
+  if (!ev) {
+    try { ev = await api('POST', '/api/bambu/adopt', { printer: name }); } catch (e) { return fail(e); }
+    if (S.bambu) { S.bambu.events = (S.bambu.events || []).filter((x) => x.id !== ev.id).concat(ev); if (S.bambuHidden) delete S.bambuHidden[ev.id]; }
+  }
+  openFromBambu(ev);
+}
 // Her makine bir satır: geçmiş birkaç saat (soluk), şu anki baskı, bitiş ve sonrasındaki boş zaman.
 function timelineHTML() {
   const printers = (S.settings?.printers || []).map((p) => p.name).filter(Boolean);
@@ -2582,7 +2624,8 @@ function timelineHTML() {
     const run = mine.filter((j) => j.ends_at > t);
     const waiting = mine.filter((j) => j.ends_at <= w0);   // çoktan bitmiş, sonucu girilmemiş
     const past = hist.filter((j) => (j.printer || '') === name && j.finished_at > w0);
-    const free = run.length ? Math.max(...run.map((j) => j.ends_at)) : t;
+    const unk = !run.length ? tlUnknown(name, states[name]) : null;   // makine basıyor ama Astera'da baskısı yok
+    const free = run.length ? Math.max(...run.map((j) => j.ends_at)) : unk ? unk.end : t;
     const freeMin = Math.round((w1 - free) / 60);
     const bar = (j, kind) => {
       const st = j.started_at, en = kind === 'past' ? j.finished_at : j.ends_at;
@@ -2597,12 +2640,16 @@ function timelineHTML() {
     return `<div class="tl-row">
       <div class="tl-name">${name ? printerThumb(name, 'xs') : ''}<span>${name ? esc(name) : '<span class="muted">Makinesiz</span>'}</span>${dot(name)}</div>
       <div class="tl-track">
-        ${free < w1 ? `<div class="tl-free" style="left:${X(free)}%;width:calc(100% - ${X(free)}%)">${freeMin >= 45 ? `<span>${run.length ? `${fmtClock(free)} sonrası boş` : 'şu an boş'}</span>` : ''}</div>` : ''}
+        ${free < w1 ? `<div class="tl-free" style="left:${X(free)}%;width:calc(100% - ${X(free)}%)">${freeMin >= 45 ? `<span>${run.length || unk ? `${fmtClock(free)} sonrası boş` : 'şu an boş'}</span>` : ''}</div>` : ''}
         ${past.map((j) => bar(j, 'past')).join('')}${mine.filter((j) => j.ends_at > w0).map((j) => bar(j, 'act')).join('')}
+        ${unk ? (() => { const st = Math.max(w0, unk.start), wp = X(unk.end) - X(st);
+          return `<button type="button" class="tl-bar tl-unk${wp < 13 ? ' narrow' : ''}${wp < 6 ? ' tiny' : ''}" style="left:${X(st)}%;width:calc(${X(unk.end)}% - ${X(st)}%)" data-act="tl-unk" data-pr="${esc(name)}"
+            title="${esc(`Basıyor ama ne olduğu belirtilmedi${unk.file ? ` · ${unk.file}` : ''}${unk.pct != null ? ` · %${unk.pct}` : ''} · tıkla ya da sağ tık: ne olduğunu seç`)}">
+            <i class="tl-q">?</i><span>Belirtilmedi${unk.file ? `<em> · ${esc(unk.file)}</em>` : ''}</span><small>${unk.prep ? 'hazırlanıyor' : unk.rem ? fmtClock(unk.end) : '…'}</small></button>`; })() : ''}
         ${waiting.length ? `<button type="button" class="tl-wait" data-act="tl-job" data-id="${waiting[0].id}" title="${esc(waiting.map((j) => `${j.product_name} ×${j.quantity}`).join(', '))}">${waiting.length} baskı sonuç bekliyor</button>` : ''}
       </div></div>`;
   };
-  const idle = names.filter((n) => n && !act.some((j) => j.printer === n && j.ends_at > t)).length;
+  const idle = names.filter((n) => n && !act.some((j) => j.printer === n && j.ends_at > t) && !tlUnknown(n, states[n])).length;
   return `<section class="panel tl"><div class="panel-h"><h2>Makine çizelgesi</h2><span class="muted" style="font-size:13px">${idle ? `${idle} makine şu an boşta` : 'tüm makineler çalışıyor'}</span></div>
     <div class="panel-b"><div class="tl-grid">
       <div class="tl-row tl-axis"><div class="tl-name"></div><div class="tl-track">${ticks.filter((v) => Math.abs(v - t) / span > (narrow ? 0.09 : 0.035)).map((v) => `<span style="left:${X(v)}%">${fmtClock(v)}</span>`).join('')}</div></div>
@@ -4267,14 +4314,14 @@ function breakdownHTML(r, mc) {
   const n = r.qty || 1;
   return `${n > 1 ? `<p class="pf-mq">${icon('cart')} Bu fiyatta müşteri <b>en az ${n} adet</b> alır; hesap ${n} adetlik siparişe göre (kargo, hizmet bedeli ve ambalaj bir kez).</p>` : ''}<table class="pf-bd"><tbody>
     ${row(n > 1 ? `Satış (${n} × ${fmtTL(r.price)})` : 'Satış fiyatı', fmtTL(r.total ?? r.price))}
-    ${row('Komisyon', neg(r.commission), `%${(r.commissionPct + '').replace('.', ',')}${r.comSrc ? ' · ' + esc(r.comSrc) : ''}`)}
+    ${row('Komisyon', neg(r.commission), `%${(r.commissionPct + '').replace('.', ',')}${r.comSrc ? ' · ' + esc(r.comSrc) : ''}${r.comEdit && !r.comReal ? ` <button type="button" class="pf-fix${r.comFixed ? ' on' : ''}" data-act="com-fix" data-no="${esc(r.comEdit)}" title="Trendyol'un bu siparişte kestiği komisyonu gir (ör. Trendyol Plus tarifesi)">${icon('edit')} ${r.comFixed ? 'düzeltildi' : 'düzelt'}</button>` : ''}`)}
     ${row('Kargo', neg(r.cargo), r.cargoTier || '')}
     ${row('Hizmet bedeli', neg(r.fee))}
     ${r.pack ? row('Ambalaj', neg(r.pack)) : ''}
     ${row('Malzeme', mc?.missingGrams ? '<span class="warn-text">gram yok</span>' : mc?.noPrice ? '<span class="warn-text">fiyat yok</span>' : neg(r.material),
       mc && !mc.missingGrams && !mc.noPrice ? `${n > 1 ? `${n} × ` : ''}${fmtGram(mc.grams)} · ${(Math.round(mc.perG * 1000) / 1000).toLocaleString('tr-TR')} ₺/g${fire ? ` · fire %${fire}` : ''}` : '')}
     ${r.extra ? row('Ek maliyet', neg(r.extra)) : ''}
-    ${r.elec ? row('Elektrik', neg(r.elec), `${(Math.round(r.elecKwh * 100) / 100).toLocaleString('tr-TR')} kWh${r.elecSrc ? ' · ' + r.elecSrc : ''}`) : ''}
+    ${r.elec ? row('Elektrik', neg(r.elec), r.elecKwh ? `${(Math.round(r.elecKwh * 100) / 100).toLocaleString('tr-TR')} kWh${r.elecSrc ? ' · ' + r.elecSrc : ''}` : '') : ''}
     ${r.acc ? row('Aksesuar', neg(r.acc)) : ''}
     </tbody><tbody class="pf-sub">
     ${row('Elde kalan', fmtTL(r.net), 'KDV dahil')}
@@ -4621,28 +4668,37 @@ function orderProfit(pkg) {
   if (!S.profit) return null;
   const cfg = S.profit.cfg, v = 1 + cfg.vat / 100;
   const live = pkg.lines.filter((l) => !TY_CANCEL.has(l.status));
-  let P = 0, com = 0, mat = 0, extra = 0, grams = 0, over = null, comLine = 0, elec = 0, acc = 0; const missing = new Set();
+  let P = 0, com = 0, mat = 0, extra = 0, grams = 0, over = null, comLine = 0, elec = 0, kwh = 0, acc = 0; const missing = new Set(), srcs = new Set();
   for (const l of live) {
     if (l.unit_price == null) { missing.add('fiyat bilgisi yok'); continue; }
     const rev = l.unit_price * l.quantity; P += rev;
     const p = l.product_id ? productById(l.product_id) : null;
     // Önce siparişin kendi komisyon oranı (kampanyalı / indirimli komisyon dahil), yoksa ürünün oranı
-    const rate = l.commission != null && l.commission >= 0 ? l.commission : p ? (p.commission_pct ?? p.ty_commission ?? catCommission(p.category) ?? cfg.commission) : cfg.commission;
-    if (l.commission != null) comLine++;
+    let rate;
+    if (l.commission != null && l.commission >= 0) { rate = l.commission; comLine++; }
+    else if (p?.commission_pct != null) { rate = p.commission_pct; srcs.add('ürüne özel oran'); }
+    else if (p?.ty_commission != null) { rate = p.ty_commission; srcs.add('ürünün Trendyol oranı'); }
+    else if (p && catCommission(p.category) != null) { rate = catCommission(p.category); srcs.add(`${p.category} oranı`); }
+    else { rate = cfg.commission; srcs.add('varsayılan oran'); }
     com += rev * rate / 100;
     if (!p) { missing.add('eşleşmeyen ürün'); continue; }
     const mc = materialCost(p);
     if (mc.missingGrams && !(p.extra_cost > 0)) missing.add('gramı girilmemiş ürün');
     else if (mc.noPrice) missing.add(mc.resin ? 'reçine fiyatı yok' : 'filament fiyatı yok');
     mat += mc.cost * l.quantity; grams += (mc.grams || 0) * l.quantity; extra += (p.extra_cost || 0) * l.quantity;
-    elec += (elecOf(p).elec || 0) * l.quantity; acc += (p.acc_cost || 0) * l.quantity;
+    const eo = elecOf(p); elec += (eo.elec || 0) * l.quantity; kwh += (eo.elecKwh || 0) * l.quantity; acc += (p.acc_cost || 0) * l.quantity;
     if (p.cargo_fee != null) over = Math.max(over ?? 0, p.cargo_fee);
   }
   if (!P) return null;
   const realCargo = pkg.cargo_real != null && pkg.cargo_real > 0;
   const comReal = pkg.com_real != null && pkg.com_real > 0;
+  // Öncelik: cari hesaptaki gerçek tutar > elle düzeltme > siparişteki oran > ürün / kategori / varsayılan oran
+  const fx = pkg.com_fix, fixOn = !comReal && fx && (fx.amount != null || fx.pct != null);
   if (comReal) com = pkg.com_real;
-  const r = { price: P, commission: com, commissionPct: Math.round(com / P * 1000) / 10, comSrc: comReal ? 'cari hesaptan' : comLine ? 'siparişteki oran' : '', cargo: realCargo ? pkg.cargo_real : cargoFor(pkg.pkg_total ?? P, over),
+  else if (fixOn) com = fx.amount != null ? fx.amount : P * fx.pct / 100;
+  const r = { price: P, commission: com, commissionPct: Math.round(com / P * 1000) / 10,
+    comSrc: comReal ? 'cari hesaptan' : fixOn ? 'elle düzeltildi' : comLine === live.length ? 'siparişteki oran' : comLine ? 'siparişteki oran + ürün oranı' : [...srcs].join(', '),
+    comEdit: pkg.order_number, comFixed: !!fixOn, comReal, elecKwh: kwh, cargo: realCargo ? pkg.cargo_real : cargoFor(pkg.pkg_total ?? P, over),
     cargoTier: realCargo ? `kargo faturasından${pkg.cargo_desi ? `, ${pkg.cargo_desi} desi` : ''}` : cargoTierLabel(pkg.pkg_total ?? P),
     fee: cfg.service_fee, pack: cfg.packaging, material: mat * (1 + cfg.fire_pct / 100), extra, elec, acc };
   if (!realCargo) {   // barem altı sipariş son teslimden sonra kargoya verildiyse / verilecekse kargo üst baremden kesilir
@@ -6510,15 +6566,28 @@ function todayCutoffS() {
   return Math.floor(c.getTime() / 1000);
 }
 
-function fillPick() {
+function fillPick(anchorK) {
   const d = S.pick, a = analyzePick(d), cut = todayCutoffS();
   $('#pick-sum').innerHTML = `<b>${d.unit_count}</b> adet · <b>${d.order_count}</b> yeni sipariş
     ${a.today ? ` · <span class="sum-today"><b>${a.today}</b> sipariş bugün çıkmalı${cut && cut > nowS() ? `, kargoya ${dlChip(cut)}` : ''}</span>` : ''}
     ${a.late ? ` · <span class="dl dl-late">${a.late} gecikmiş</span>` : ''}
     <span class="faint"> · ${fmtWhen(d.fetched_at)} güncellendi</span>`;
+  const box = $('#pick-list'); if (!box) return;
   const open = new Set($$('#pick-list details.pick-item[open]').map((x) => x.dataset.k));
-  $('#pick-list').innerHTML = pickListHTML();
+  // Liste yeniden çizilince kaydırma yeri korunur: kaydırma kutusu ve pencere aynı yerde kalır, dokunulan ürün ekranda aynı hizada durur
+  const scs = [box, ...box.querySelectorAll('.fitbox')].map((x) => x.scrollTop), wy = window.scrollY;
+  const pick = (k) => k != null ? [...box.querySelectorAll('details.pick-item')].find((x) => x.dataset.k === String(k)) : null;
+  const y0 = pick(anchorK)?.getBoundingClientRect().top;
+  box.innerHTML = pickListHTML();
   if (open.size) $$('#pick-list details.pick-item').forEach((x) => { if (open.has(x.dataset.k)) x.open = true; });
+  fitBoxes();   // yeni kaydırma kutusunun yüksekliği hemen verilsin; yoksa kaydırma yeri tutmaz
+  [box, ...box.querySelectorAll('.fitbox')].forEach((x, i) => { if (scs[i]) x.scrollTop = scs[i]; });
+  if (window.scrollY !== wy) window.scrollTo(0, wy);
+  const el = y0 != null ? pick(anchorK) : null;
+  if (el) {
+    const dy = el.getBoundingClientRect().top - y0;
+    if (Math.abs(dy) > 1) { const sc = el.closest('.fitbox'); if (sc && sc.scrollHeight > sc.clientHeight) sc.scrollTop += dy; else window.scrollBy(0, dy); }
+  }
 }
 // Hazırla satırı durumu: hazır (yeşil) · eksik baskıda karşılanıyor (sarı) · eksik (kırmızı) · eşleşmedi
 function pickState(i) {
@@ -6732,7 +6801,7 @@ function openMachine(name) {
 }
 
 // ---------- Sağ tık menüleri: tek dağıtıcı. Shift + sağ tık tarayıcının kendi menüsünü açar; telefonda basılı tutunca açılır.
-const CTX_TARGETS = '.tyo-row[data-pkg], .no-it[data-no], .ocard[data-id], .pcard[data-pid], .need-card[data-npid], article.job[data-job], .jobrow[data-job], #pbar .pb[data-name], .sticky[data-td], .apb-g, .pk-card[data-id], .mk-card, .spool-card[data-id], .pick-item[data-k], .cu-row[data-key], .cl-row[data-key], .cl-card[data-cid], .q-row[data-key], .q-card[data-qid], .nf[data-nf], .plan-it[data-key]';
+const CTX_TARGETS = '.tl-unk[data-pr], .tl-bar[data-act="tl-job"], .tyo-row[data-pkg], .no-it[data-no], .ocard[data-id], .pcard[data-pid], .need-card[data-npid], article.job[data-job], .jobrow[data-job], #pbar .pb[data-name], .sticky[data-td], .apb-g, .pk-card[data-id], .mk-card, .spool-card[data-id], .pick-item[data-k], .cu-row[data-key], .cl-row[data-key], .cl-card[data-cid], .q-row[data-key], .q-card[data-qid], .nf[data-nf], .plan-it[data-key]';
 function tyNoteOpen(p, v) {
   S.tyNoteEdit = p.order_number; drawerOpen('ty', String(p.package_id));
   setTimeout(() => { const ta = $('#tn-ta'); if (ta) { ta.value = (p.note ? p.note + '\n' : '') + (v || ''); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } }, 320);
@@ -6912,7 +6981,7 @@ function pickCtxItems(it) {
   const p = productById(it.product_id), id = it.product_id;
   const stk = async (d) => { try { const r = await api('POST', `/api/products/${id}/stock`, { delta: d, reason: 'adjust', note: 'Hazırla sayfasından' });
     (S.pick?.items || []).forEach((i) => { if (i.product_id === id) { i.on_shelf = (i.on_shelf ?? 0) + d; i.shortage = Math.max(0, i.quantity - i.on_shelf); } });
-    if (p) p.stock = r.stock; toast(`${p?.name || 'Ürün'}: stok ${r.stock}`); fillPick(); } catch (e) { fail(e); } };
+    if (p) p.stock = r.stock; toast(`${p?.name || 'Ürün'}: stok ${r.stock}`); fillPick(id); } catch (e) { fail(e); } };
   return { title: `<b>${esc(p?.name || it.name || 'Ürün')}</b> · ${it.quantity} adet isteniyor`, items: [
     { icon: icon('print'), label: 'Baskı ver', hint: it.shortage > 0 ? `${it.shortage} eksik` : '', run: () => openNewPrint(id) },
     { icon: '➕', label: 'Stoğa 1 ekle', run: () => stk(1) },
@@ -8997,7 +9066,7 @@ const ACTIONS = {
       const r = await api('POST', `/api/products/${id}/stock`, { delta: d, reason: 'adjust', note: 'Hazırla sayfasından' });
       (S.pick?.items || []).forEach((i) => { if (i.product_id === id) { i.on_shelf = (i.on_shelf ?? 0) + d; i.shortage = Math.max(0, i.quantity - i.on_shelf); } });
       const p = productById(id); if (p) p.stock = r.stock;
-      toast(`${p?.name || 'Ürün'}: stok ${r.stock}`); fillPick();
+      toast(`${p?.name || 'Ürün'}: stok ${r.stock}`); fillPick(el.closest('.pick-item')?.dataset.k);
     } catch (e) { fail(e); }
   },
   'pick-match': async (el) => {
@@ -10343,5 +10412,48 @@ Object.assign(ACTIONS, {
     $('#hbu-go').onclick = async () => { const b = $('#hbu-go'); b.disabled = true;
       try { await api('POST', '/api/hb/unpack', { package_id: id }); closeModal(); toast('Paket bozuldu; sipariş Yeni\'ye döndü'); await loadTyOrders(); await render(); }
       catch (e) { b.disabled = false; fail(e); } };
+  },
+});
+
+// Makine çizelgesi: "Belirtilmedi" çubuğu ve baskı çubukları için sağ tık
+Object.assign(ACTIONS, { 'tl-unk': (el) => tlAdopt(el.dataset.pr) });
+CTX_EXTRA.push((el) => {
+  if (el.matches('.tl-unk')) {
+    const n = el.dataset.pr, u = tlUnknown(n, printerStates().find((o) => o.name === n));
+    return { title: `${printerThumb(n, 'xs')} <b>${esc(n)}</b> · ne bastığı belirtilmedi`, items: [
+      { icon: icon('check'), label: 'Ne bastığını seç', hint: u?.file || '', run: () => tlAdopt(n) },
+      u?.file ? { icon: icon('copy'), label: 'Dosya adını kopyala', run: () => copyText(u.file, 'Dosya adı') } : null,
+      '-', { icon: '📜', label: 'Makine kartı', run: () => openMachine(n) }].filter(Boolean) };
+  }
+  if (el.matches('.tl-bar[data-act="tl-job"]')) { const j = S.jobs?.find((x) => x.id === +el.dataset.id); return j && jobCtxItems(j); }
+  return null;
+});
+
+// Sipariş kâr ayrıntısında komisyonu elle düzeltme (ör. Trendyol Plus tarifesiyle düşük komisyon)
+Object.assign(ACTIONS, {
+  'com-fix': (el) => {
+    const no = el.dataset.no, p = (S.tyOrders?.packages || []).find((x) => String(x.order_number) === String(no));
+    const r = p ? orderProfit(p) : null, fx = p?.com_fix || {};
+    openModal(`<div class="modal-h"><h2>Komisyonu düzelt</h2><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+      <div class="modal-b" style="display:grid;gap:12px">
+        <p class="muted" style="margin:0;font-size:13.5px">#${esc(no)} · satış ${r ? fmtTL(r.price) : ''}. Trendyol panelinde bu siparişte kesilen komisyonu yaz (oran ya da tutar). Ödeme hesaplanınca cari hesaptaki gerçek tutar kendiliğinden kullanılır.</p>
+        <div class="cf-seg seg" role="tablist"><button type="button" class="${fx.amount != null ? '' : 'on'}" data-m="pct">Oran (%)</button><button type="button" class="${fx.amount != null ? 'on' : ''}" data-m="amount">Tutar (₺)</button></div>
+        <label class="field"><span id="cf-l">${fx.amount != null ? 'Komisyon tutarı (KDV dahil)' : 'Komisyon oranı'}</span><div class="input-group"><input class="input" id="cf-v" inputmode="decimal" value="${fx.amount ?? fx.pct ?? ''}" placeholder="${fx.amount != null ? '3,36' : '3,1'}"><span class="suffix" id="cf-s">${fx.amount != null ? '₺' : '%'}</span></div></label>
+        <p class="faint" id="cf-p" style="margin:0;font-size:13px"></p>
+      </div>
+      <div class="modal-f">${p?.com_fix ? '<button class="btn btn-ghost" id="cf-del">Düzeltmeyi kaldır</button>' : ''}<div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" id="cf-ok">Kaydet</button></div></div>`, 'narrow');
+    let m = fx.amount != null ? 'amount' : 'pct';
+    const prev = () => { const v = +String($('#cf-v').value).replace(',', '.'); const P = r?.price || 0;
+      $('#cf-p').textContent = !v || !P ? '' : m === 'pct' ? `= ${fmtTL(P * v / 100)} komisyon` : `= %${(Math.round(v / P * 1000) / 10).toLocaleString('tr-TR')} oran`; };
+    $$('.cf-seg button').forEach((b) => b.onclick = () => { m = b.dataset.m; $$('.cf-seg button').forEach((x) => x.classList.toggle('on', x === b));
+      $('#cf-l').textContent = m === 'pct' ? 'Komisyon oranı' : 'Komisyon tutarı (KDV dahil)'; $('#cf-s').textContent = m === 'pct' ? '%' : '₺'; prev(); $('#cf-v').focus(); });
+    $('#cf-v').oninput = prev; prev(); setTimeout(() => $('#cf-v').select(), 50);
+    const save = async (body) => {
+      try { const res = await api('PUT', `/api/trendyol/orders/${encodeURIComponent(no)}/commission`, body);
+        if (p) p.com_fix = res.pct == null && res.amount == null ? null : { pct: res.pct, amount: res.amount };
+        closeModal(); toast(p?.com_fix ? 'Komisyon düzeltildi' : 'Düzeltme kaldırıldı'); render(); } catch (e) { fail(e); } };
+    $('#cf-ok').onclick = () => { const v = String($('#cf-v').value).trim(); if (!v) return save({}); save(m === 'pct' ? { pct: v } : { amount: v }); };
+    $('#cf-v').onkeydown = (e) => { if (e.key === 'Enter') $('#cf-ok').click(); };
+    if ($('#cf-del')) $('#cf-del').onclick = () => save({});
   },
 });

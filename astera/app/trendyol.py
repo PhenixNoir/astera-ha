@@ -767,6 +767,18 @@ def pkg_info(pkg):
             "cargo_link": pkg.get("cargoTrackingLink") or None}
 
 
+def _line_com(line):
+    """Satırın komisyon oranı. Trendyol çoğunlukla "commission" verir; farklı adla gelirse (ör. kampanyalı / Plus tarifesi)
+    adında "commission" geçen ilk sayısal alan kullanılır."""
+    v = _f(line.get("commission"))
+    if v is not None:
+        return v
+    for k, x in line.items():
+        if "commission" in k.lower() and isinstance(x, (int, float)) and not isinstance(x, bool) and 0 <= x <= 100:
+            return float(x)
+    return None
+
+
 def _store_details(pkg, line, key, info=None):
     info = info or pkg_info(pkg)
     lid = next((line.get(f) for f in LINE_ID_FIELDS if line.get(f)), None)
@@ -777,7 +789,7 @@ def _store_details(pkg, line, key, info=None):
                      discounts=COALESCE(?, discounts), customer_id=COALESCE(?, customer_id), shipped_at=COALESCE(shipped_at, ?) WHERE line_key=?""",
                   (line_unit_revenue(line), info["pkg_total"], info["customer"], info["city"], info["deadline"],
                    str(lid) if lid else None, info.get("cargo_no"), info.get("cargo_provider"), info.get("cargo_link"),
-                   _f(line.get("commission")), info.get("district"), info.get("discounts"), info.get("customer_id"), info.get("shipped_at"), key))
+                   _line_com(line), info.get("district"), info.get("discounts"), info.get("customer_id"), info.get("shipped_at"), key))
 
 
 def _line_key(pkg, line):

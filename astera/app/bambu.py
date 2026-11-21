@@ -262,7 +262,7 @@ class Worker(threading.Thread):
         s["task_key"] = task_key
         gstate = (s.get("gcode_state") or "").upper()
         self._set_status(
-            state=gstate, file=s.get("subtask_name") or s.get("gcode_file") or "",
+            state=gstate, file=s.get("subtask_name") or s.get("gcode_file") or "", task=task_key,
             percent=s.get("mc_percent"), remaining_min=s.get("mc_remaining_time"),
             layer=s.get("layer_num"), total_layers=s.get("total_layer_num"),
             error_code=s.get("print_error") or 0, temps=_bambu_temps(s),
@@ -456,7 +456,7 @@ def _auto_create(printer, task_key, file_name, remaining, percent, objects=None)
     return _db().execute("SELECT * FROM print_jobs WHERE id=?", (cur.lastrowid,)).fetchone()
 
 
-def _add_event(printer, task_key, file_name, remaining, percent, pid, reason, objects=None, component_id=None, guess=None, guess_qty=None):
+def _add_event(printer, task_key, file_name, remaining, percent, pid, reason, objects=None, component_id=None, guess=None, guess_qty=None, at=None):
     with _ev_lock:
         for e in _events:
             if e["printer"] == printer and e["task"] == task_key:
@@ -466,7 +466,7 @@ def _add_event(printer, task_key, file_name, remaining, percent, pid, reason, ob
                 return
         _events.append({"id": f"{printer}|{task_key}", "printer": printer, "task": task_key, "file": file_name,
                         "remaining_min": remaining, "percent": percent, "product_id": pid, "component_id": component_id,
-                        "reason": reason, "guess": guess, "guess_qty": guess_qty, "objects": objects, "at": _now()})
+                        "reason": reason, "guess": guess, "guess_qty": guess_qty, "objects": objects, "at": at or _now()})
 
 
 def link_event(event_id, job_id, file_name, product_id, component_id=None, remember_file=True):
@@ -498,6 +498,27 @@ def link_event(event_id, job_id, file_name, product_id, component_id=None, remem
 def dismiss_event(event_id):
     with _ev_lock:
         _events[:] = [e for e in _events if e["id"] != event_id]
+
+
+def adopt(printer):
+    """Basmakta olan ama Astera'da kaydı olmayan baskı (uyarısı kapatılmış ya da yoksayılmış): ne basıldığını seçmek için
+    uyarıyı geri getirir. Başlangıç, yazıcının yüzde / kalan süresinden geriye hesaplanır."""
+    st = dict(_status.get(printer) or {})
+    tk = st.get("task")
+    if not tk or (st.get("state") or "").upper() not in ACTIVE:
+        raise ValueError("Bu makine şu an basmıyor")
+    if _db().execute("SELECT 1 FROM print_jobs WHERE status='printing' AND printer=? AND bambu_task=?", (printer, tk)).fetchone():
+        raise ValueError("Bu baskı zaten kayıtlı")
+    _ignored.discard((printer, tk))
+    with _ev_lock:
+        ev = next((e for e in _events if e["printer"] == printer and e["task"] == tk), None)
+    if ev:
+        return dict(ev)
+    rem, pct = int(st.get("remaining_min") or 0), int(st.get("percent") or 0)
+    elapsed = int(rem * 60 * pct / (100 - pct)) if 0 < pct < 100 and rem else 0
+    _add_event(printer, tk, st.get("file") or "", rem, pct, None, "unknown", at=_now() - elapsed)
+    with _ev_lock:
+        return dict(next(e for e in _events if e["printer"] == printer and e["task"] == tk))
 
 
 def snapshot():
@@ -585,7 +606,7 @@ class _LinkBase(threading.Thread):
 
     def _feed(self, gstate, task_key, file_name, remaining_min, percent, layer=None, total_layers=None, error_code=0, objects=None):
         """Ortak durum akışı: istemci durumunu güncelle ve Astera baskılarını yönet (Bambu'daki handle)."""
-        self._set_status(online=True, connecting=False, error=None, state=gstate, file=file_name, percent=percent,
+        self._set_status(online=True, connecting=False, error=None, state=gstate, task=task_key, file=file_name, percent=percent,
                          remaining_min=remaining_min, layer=layer, total_layers=total_layers, error_code=error_code)
         s = {"mc_remaining_time": remaining_min, "mc_percent": percent, "subtask_name": file_name,
              "layer_num": layer, "total_layer_num": total_layers, "objects": objects}
