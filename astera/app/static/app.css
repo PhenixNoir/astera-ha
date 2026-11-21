@@ -4957,3 +4957,15 @@ button.cu-ev:hover { background: var(--sheet-2); }
 .cf-seg { display: inline-flex; gap: 4px; padding: 4px; border-radius: 10px; background: var(--sheet-2); justify-self: start; }
 .cf-seg button { all: unset; cursor: pointer; padding: 6px 12px; border-radius: 7px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .cf-seg button.on { background: var(--sheet); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+
+/* Yanlışlıkla hazırlanıp Yeni'ye geri alınan sipariş */
+.bk-chip { grid-column: 1 / -1; justify-self: start; margin-top: 3px; padding: 1px 7px; border-radius: 99px; font-size: 10.5px; font-weight: 700; white-space: nowrap;
+  color: #b7791f; background: color-mix(in srgb, #E3B008 16%, transparent); border: 1px solid color-mix(in srgb, #E3B008 45%, transparent);
+  animation: bk-in .6s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes bk-in { from { opacity: 0; transform: translateX(-8px) scale(.9); } to { opacity: 1; transform: none; } }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .bk-chip { color: #F5C542; } }
+:root[data-theme="dark"] .bk-chip { color: #F5C542; }
+.bk-note { display: block; font-size: 12.5px; line-height: 1.45; padding: 9px 11px; border-radius: 10px; color: var(--ink-2);
+  background: color-mix(in srgb, #E3B008 9%, var(--sheet)); border: 1px solid color-mix(in srgb, #E3B008 35%, var(--line)); }
+.bk-btn:hover { color: #b7791f; }
+@media (prefers-reduced-motion: reduce) { .bk-chip { animation: none; } }

@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.14.2
+- Yanlışlıkla Hazırlanıyor'a çekilen sipariş "Yeni'ye geri al" ile burada Yeni'ye döner (Trendyol / Hepsiburada'daki durum değişmez). Yeni listesinde "geri alındı" etiketiyle ve Hazırla listesinde görünür; "Hazırlandı" deyince yalnız burada işaretlenir, stok ikinci kez düşmez.
+- Çoklu siparişlerdeki ürün tikleri artık zorunlu değil; işaretlenmemiş ürün olsa da sipariş hazırlanır, barkod basılır.
+
 ## 1.14.1
 - Makine çizelgesi: makine basıyor ama ne bastığı seçilmemişse "Belirtilmedi" çubuğu çıkar; tıklayıp ya da sağ tıklayıp ne olduğunu seçebilirsin (kapatılmış uyarılar dahil). Baskı çubuklarına da sağ tık menüsü geldi.
 - Hazırla: stoğu artırıp azaltınca liste artık başa atlamıyor. Sipariş listesinde de not, eşleştirme gibi işlemlerden sonra kaydırma yeri korunuyor.

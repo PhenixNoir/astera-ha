@@ -207,6 +207,10 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+CREATE TABLE IF NOT EXISTS ty_back (
+    package_id TEXT PRIMARY KEY,
+    at INTEGER
+);
 CREATE TABLE IF NOT EXISTS ty_com_fix (
     order_number TEXT PRIMARY KEY,
     pct REAL,
@@ -3818,6 +3822,12 @@ def api_settings_save(req):
     return {**trendyol.public_settings(), "lan_ips": lan_addresses()}
 
 
+@route("POST", "/api/trendyol/back")
+def api_ty_back(req):
+    """Yanlışlıkla Hazırlanıyor'a çekilen siparişleri burada Yeni'ye geri alır (pazaryerindeki durum değişmez)."""
+    return trendyol.back_to_new(req.json().get("package_ids") or [])
+
+
 @route("PUT", "/api/trendyol/orders/{no}/commission")
 def api_ty_com_fix(req, no):
     """Siparişin gerçek komisyonunu elle düzeltme: oran (%) ya da tutar (₺). İkisi de boşsa düzeltme silinir.
@@ -4425,6 +4435,8 @@ def api_ty_picking(req):
         raise ApiError("Sipariş seçin")
     if len(ids) > 100:
         raise ApiError("Tek seferde en fazla 100 sipariş")
+    back = trendyol.back_ids(ids)   # Yeni'ye geri alınmışlar: pazaryerinde zaten hazırlanıyor, yalnız burada işaretlenir
+    ids = [x for x in ids if str(x) not in back]
     hb_ids = [str(x) for x in ids if str(x).startswith("hb-")]
     ty_ids = [x for x in ids if not str(x).startswith("hb-")]
     res = trendyol.set_picking(ty_ids) if ty_ids else {"done": [], "errors": [], "deducted": 0}
@@ -4435,16 +4447,25 @@ def api_ty_picking(req):
             hr = {"done": [], "errors": [{"package_id": x, "error": str(e)} for x in hb_ids], "deducted": 0}
         res = {"done": res["done"] + hr["done"], "errors": res["errors"] + hr["errors"], "deducted": res["deducted"] + hr["deducted"],
                "hb_done": hr["done"]}
+    if back:
+        bd = trendyol.back_done(back)
+        res = dict(res, done=res["done"] + bd["done"], back_done=bd["done"])
+        hb_back = [x for x in back if x.startswith("hb-")]
+        if hb_back:
+            res["hb_done"] = (res.get("hb_done") or []) + hb_back
     c = etiket.conf()
     if res["done"] and c["auto"] and (c["mode"] in ("share", "net") or os.environ.get("ATOLYE_LABEL_DIR")):
         # yalnızca etiketi Trendyol'dan alınabilen (TEX / Aras) paketler
         with DB_LOCK:
-            prov = {r["package_id"]: r["p"] for r in db().execute(
-                f"SELECT package_id, MAX(cargo_provider) p FROM ty_lines WHERE package_id IN ({','.join('?' * len(res['done']))}) GROUP BY package_id",
-                [str(x) for x in res["done"]])}
-        want = [x for x in res["done"] if not str(x).startswith("hb-") and (trendyol.label_supported(prov.get(str(x))) or not prov.get(str(x)))]
+            rows = db().execute(
+                f"SELECT package_id, MAX(cargo_provider) p, MAX(label_at) l FROM ty_lines WHERE package_id IN ({','.join('?' * len(res['done']))}) GROUP BY package_id",
+                [str(x) for x in res["done"]]).fetchall()
+        prov = {r["package_id"]: r["p"] for r in rows}
+        # geri alınıp yeniden hazırlananlardan barkodu zaten basılmış olanlar tekrar basılmaz
+        skip = {r["package_id"] for r in rows if r["l"] and r["package_id"] in back}
+        want = [x for x in res["done"] if str(x) not in skip and not str(x).startswith("hb-") and (trendyol.label_supported(prov.get(str(x))) or not prov.get(str(x)))]
         res["labels"] = etiket.print_packages(want) if want else {"printed": [], "errors": []}
-        hl = hb_print(res.get("hb_done") or [])
+        hl = hb_print([x for x in (res.get("hb_done") or []) if x not in skip])
         res["labels"] = {"printed": res["labels"]["printed"] + hl["printed"], "errors": res["labels"]["errors"] + hl["errors"]}
     return res
 

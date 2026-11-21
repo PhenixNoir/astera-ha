@@ -5085,7 +5085,7 @@ function tyoRow(p, r) {
     ${sel ? `<input type="checkbox" class="tyo-cb" data-tyo-sel="${esc(p.package_id)}" ${S.tyo.sel.has(p.package_id) ? 'checked' : ''} aria-label="Siparişi seç">` : cbCol ? '<span class="tyo-cb-sp"></span>' : ''}
     <details class="tyo" ${S.tyo.open.has(p.package_id) ? 'open' : ''} data-tyo-open="${esc(p.package_id)}">
       <summary>
-        <span class="tyo-no"><b>${chBadge(p)}${esc(p.order_number)}</b><small class="faint">${date}</small></span>
+        <span class="tyo-no"><b>${chBadge(p)}${esc(p.order_number)}</b><small class="faint">${date}</small>${p.back_at ? `<span class="bk-chip" title="Yanlışlıkla hazırlanmış, ${esc(fmtWhen(p.back_at))} Yeni'ye geri alındı. ${p.channel === 'hb' ? 'Hepsiburada' : 'Trendyol'}'da hâlâ Hazırlanıyor görünür.">↩ geri alındı</span>` : ''}</span>
         <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l, ti) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" style="${floatVars(p.package_id + ':' + ti)}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? qtyBadge(l.quantity, 'tt-qb') : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
         <span class="tyo-who"><b>${esc(p.customer || '—')}</b>${p.note ? `<span class="tn-pin" title="${esc(p.note)}">📝 ${esc(p.note)}</span>` : ''}<small class="muted">${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''}${plusTags(p)}${orderRuleHits(p).map((h) => ` <span class="rule-tag t-${h.tone}" title="${esc(h.text)}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? ` <span class="near-tag" title="Mağazayla aynı yer: pakete not eklemeyi unutmayın">${icon('pin')} Yakın · not ekle</span>` : ''}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
         <span class="tyo-amt">${r ? fmtTL(r.price) : p.pkg_total != null ? fmtTL(p.pkg_total) : '–'}</span>
@@ -5180,16 +5180,8 @@ function ocMoreUpd() {
   pill.classList.add('on');
 }
 addEventListener('resize', () => ocMoreUpd());
-// ayrıntı panelinden hazırla / barkod: işaretlenmemiş kalem varsa önce uyar
-function ocGuard(el, go) {
-  const root = el.closest('.drw'); if (!root) return go();
-  const left = [...root.querySelectorAll('.oc-item[data-ock]:not(.ck)')];
-  if (!left.length) return go();
-  left[0].scrollIntoView({ behavior: REDUCED() ? 'auto' : 'smooth', block: 'center' });
-  left.forEach((x) => { x.classList.remove('oc-warn'); void x.offsetWidth; x.classList.add('oc-warn'); });
-  const b = root.querySelector('.oc-chk'); if (b) { b.classList.remove('shake'); void b.offsetWidth; b.classList.add('shake'); }
-  toast(`${left.length} ürün işaretlenmedi; önce kontrol edin`, { bad: true, action: 'Yine de devam et', onAction: go });
-}
+// ayrıntı panelinden hazırla / barkod: çoklu siparişteki tikler yalnız yardımcı; işaretlenmemiş kalem olsa da işlem hemen yapılır
+function ocGuard(el, go) { return go(); }
 function tyoBody(p) {
   const r = p.tab === 'cancelled' ? null : orderProfit(p);
   const sh = ordShort(p);
@@ -5218,7 +5210,9 @@ function tyoBody(p) {
   const tex = isTEX(p.cargo_provider);
   const pfOpen = (() => { try { return localStorage.getItem('tyoPf') === '1'; } catch { return false; } })();
   const hb = p.channel === 'hb';
-  const acts = hb && !p.can_pick && !p.can_label && !p.can_unpack ? `<span class="hb-note">${HB_LOGO}<span>${p.tab === 'new' && !S.tyOrders?.hb_write ? 'Paketlemek için: Ayarlar → Hepsiburada → “Paketlemeyi Hepsiburada\'ya gönder”. Kapalıyken paketleme Hepsiburada panelinden; paketlenince stok burada kendiliğinden düşer.' : 'Hepsiburada siparişi: paketlenince stok burada kendiliğinden düşer.'}</span></span>` : `${p.tab === 'new' ? (p.can_pick ? `<button class="oc-btn pri" data-act="tyo-pick" data-id="${esc(p.package_id)}">${icon('pack')} ${hb ? 'Hepsiburada\'da paketle' : 'Hazırlanıyor\'a çek'}</button>` : '<span class="muted" style="font-size:13px">Bu sipariş buradan çekilemiyor; bir kez Yenile\'ye basın.</span>') : ''}
+  const acts = hb && !p.can_pick && !p.can_label && !p.can_unpack ? `<span class="hb-note">${HB_LOGO}<span>${p.tab === 'new' && !S.tyOrders?.hb_write ? 'Paketlemek için: Ayarlar → Hepsiburada → “Paketlemeyi Hepsiburada\'ya gönder”. Kapalıyken paketleme Hepsiburada panelinden; paketlenince stok burada kendiliğinden düşer.' : 'Hepsiburada siparişi: paketlenince stok burada kendiliğinden düşer.'}</span></span>` : `${p.tab === 'new' ? (p.can_pick ? `<button class="oc-btn pri" data-act="tyo-pick" data-id="${esc(p.package_id)}">${icon('pack')} ${p.back_at ? 'Hazırlandı' : hb ? 'Hepsiburada\'da paketle' : 'Hazırlanıyor\'a çek'}</button>` : '<span class="muted" style="font-size:13px">Bu sipariş buradan çekilemiyor; bir kez Yenile\'ye basın.</span>') : ''}
+    ${p.back_at ? `<span class="bk-note">↩ Yanlışlıkla hazırlanmıştı, Yeni'ye geri alındı. ${hb ? 'Hepsiburada' : 'Trendyol'}'da hâlâ Hazırlanıyor; “Hazırlandı” deyince yalnız burada işaretlenir.</span>` : ''}
+    ${p.tab === 'picking' && !p.back_at ? `<button type="button" class="hb-unp bk-btn" data-act="ty-back" data-id="${esc(p.package_id)}">Yanlışlıkla mı hazırlandı? <u>Yeni'ye geri al</u></button>` : ''}
     ${p.can_label ? `<button class="oc-btn${p.tab !== 'new' && !p.label_at ? ' pri' : ''}" data-act="ty-label" data-id="${esc(p.package_id)}">${icon(p.label_at ? 'check' : 'print')} ${hb ? (p.label_at ? 'Etiketi tekrar bas' : 'HepsiJet etiketini bas') : p.label_at ? 'Barkodu tekrar bas' : 'Barkodu bas'}</button>${p.label_at ? `<small class="faint oc-lbl">${fmtWhen(p.label_at)} basıldı</small>` : ''}` : ''}
     ${p.can_unpack ? `<button type="button" class="hb-unp" data-act="hb-unpack" data-id="${esc(p.package_id)}">Yanlış mı paketlendi? <u>Paketi boz</u></button>` : ''}`;
   const hits = orderRuleHits(p);
@@ -5849,17 +5843,23 @@ async function tyoPick(ids) {
   pk.forEach((p) => p.lines.forEach((l) => { if (l.product_id && !TY_CANCEL.has(l.status) && l.state !== 'deducted') needBy[l.product_id] = (needBy[l.product_id] || 0) + l.quantity; }));
   const short = Object.entries(needBy).map(([pid, n]) => ({ p: productById(+pid), n })).filter((x) => x.p && x.n > x.p.stock);
   const warn = short.length ? `\n\nDİKKAT: Şu ürünler sistemde paketlenecek adetten az görünüyor:\n${short.map((x) => `• ${x.p.name}: sistemde ${x.p.stock}, paketlenecek ${x.n}`).join('\n')}\nRafta gerçekten varsa bir baskı kaydı eksik olabilir. Devam ederseniz stok 0'da durur ve fark panoda "Kontrol edilecekler"e düşer.` : '';
-  const nHB = pk.filter((p) => p.channel === 'hb').length, nTY = pk.length - nHB;
-  const what = [nTY ? `${nTY} sipariş Trendyol'da Hazırlanıyor durumuna çekilecek` : '', nHB ? `${nHB} sipariş Hepsiburada'da paketlenecek` : ''].filter(Boolean).join(', ');
-  if (!asked && !confirm(`${what} ve ürünler stoktan düşülecek.${unm ? `\n${unm} siparişte eşleşmeyen ürün var; onların stoğu düşülemez.` : ''}${warn}\n\n${nTY ? "Trendyol'da bu işlem geri alınamaz." : ''}${nHB ? `${nTY ? ' ' : ''}Hepsiburada paketi gerekirse "Paketi boz" ile geri alınır.` : ''} Devam edilsin mi?`)) return;
+  const fresh = pk.filter((p) => !p.back_at), nBack = pk.length - fresh.length;
+  const nHB = fresh.filter((p) => p.channel === 'hb').length, nTY = fresh.length - nHB;
+  const what = [nTY ? `${nTY} sipariş Trendyol'da Hazırlanıyor durumuna çekilecek` : '', nHB ? `${nHB} sipariş Hepsiburada'da paketlenecek` : ''].filter(Boolean).join(', ')
+    + (nBack ? `${fresh.length ? '; ' : ''}${nBack} geri alınmış sipariş yalnız burada Hazırlanıyor'a döner` : '');
+  if (!asked && fresh.length && !confirm(`${what} ve ürünler stoktan düşülecek.${unm ? `\n${unm} siparişte eşleşmeyen ürün var; onların stoğu düşülemez.` : ''}${warn}\n\n${nTY ? "Trendyol'da bu işlem geri alınamaz." : ''}${nHB ? `${nTY ? ' ' : ''}Hepsiburada paketi gerekirse "Paketi boz" ile geri alınır.` : ''} Devam edilsin mi?`)) return;
   try {
     if (!S.labelCfg) S.labelCfg = await api('GET', '/api/label/settings').catch(() => null);
     const r = await api('POST', '/api/trendyol/picking', { package_ids: ids });
     ids.forEach((i) => S.tyo.sel.delete(i));
-    if (r.done.length) island('ok', `<b>${r.done.length > 1 ? `${r.done.length} sipariş çıkarıldı` : 'Sipariş çıkarıldı'}</b> · ${r.hb_done?.length === r.done.length ? "Hepsiburada'da paketlendi" : r.hb_done?.length ? `Hazırlanıyor'a çekildi, ${r.hb_done.length} tanesi Hepsiburada'da paketlendi` : "Hazırlanıyor'a çekildi"}${r.deducted ? ` · ${r.deducted} adet stoktan düştü` : ''}`, { ms: 1800 });
+    if (r.done.length) island('ok', `<b>${r.done.length > 1 ? `${r.done.length} sipariş çıkarıldı` : 'Sipariş çıkarıldı'}</b> · ${r.back_done?.length === r.done.length ? 'Hazırlanıyor\'a döndü' : r.hb_done?.length === r.done.length ? "Hepsiburada'da paketlendi" : r.hb_done?.length ? `Hazırlanıyor'a çekildi, ${r.hb_done.length} tanesi Hepsiburada'da paketlendi` : "Hazırlanıyor'a çekildi"}${r.deducted ? ` · ${r.deducted} adet stoktan düştü` : ''}`, { ms: 1800 });
     if (r.errors.length) toast(`${r.errors.length} sipariş çekilemedi: ${r.errors.slice(0, 3).map((e) => `${e.order_number || e.package_id} (${e.error})`).join('; ')}`, { bad: true });
     if (r.labels) labelToast(r.labels);
-    else if (r.done.length && S.labelCfg?.auto && !labelServerMode()) await browserLabels(r.done).catch(fail);
+    else if (r.done.length && S.labelCfg?.auto && !labelServerMode()) {
+      const printed = new Set(pk.filter((p) => p.back_at && p.label_at).map((p) => p.package_id));   // geri alınıp barkodu basılmış olan tekrar basılmaz
+      const want = r.done.filter((x) => !printed.has(x));
+      if (want.length) await browserLabels(want).catch(fail);
+    }
     await Promise.all([loadTyOrders(), loadProducts()]); await render();
     if (drwNext !== null && r.done.length) setTimeout(() => {
       const ok = drwNext && DRAWER_KINDS.ty.rows().some((x) => x.dataset.pkg === drwNext);
@@ -6818,7 +6818,8 @@ function tyCtxItems(p) {
   const no = String(p.order_number);
   return { title: `<b>${esc(no)}</b> · ${esc(p.customer || '')}`, items: [
     { icon: icon('expand'), label: 'Ayrıntıyı aç', run: () => drawerOpen('ty', String(p.package_id)) },
-    p.tab === 'new' ? { icon: icon('pack'), label: p.channel === 'hb' ? "Hepsiburada'da paketle" : "Hazırlanıyor'a çek", off: !p.can_pick, run: () => tyoPick([p.package_id]) } : null,
+    p.tab === 'new' ? { icon: icon('pack'), label: p.back_at ? 'Hazırlandı' : p.channel === 'hb' ? "Hepsiburada'da paketle" : "Hazırlanıyor'a çek", off: !p.can_pick, run: () => tyoPick([p.package_id]) } : null,
+    p.tab === 'picking' ? { icon: '↩', label: "Yeni'ye geri al", hint: 'yanlışlıkla hazırlandıysa', run: () => tyBack([p.package_id]) } : null,
     p.can_label ? { icon: icon('print'), label: p.label_at ? 'Barkodu tekrar bas' : 'Barkodu bas', run: () => tyLabel([p.package_id]) } : null,
     '-',
     { icon: icon('copy'), label: 'Sipariş no kopyala', hint: no, run: () => copyText(no, 'Sipariş no') },
@@ -10457,3 +10458,22 @@ Object.assign(ACTIONS, {
     if ($('#cf-del')) $('#cf-del').onclick = () => save({});
   },
 });
+
+// Yanlışlıkla Hazırlanıyor'a çekilen siparişi burada Yeni'ye geri al (pazaryerindeki durum değişmez)
+async function tyBack(ids) {
+  const pk = (S.tyOrders?.packages || []).filter((p) => ids.includes(p.package_id));
+  const one = pk.length === 1 ? pk[0] : null;
+  openModal(`<div class="modal-h"><h2>Yeni'ye geri al</h2><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+    <div class="modal-b" style="display:grid;gap:10px"><p style="margin:0">${one ? `<b>#${esc(one.order_number)}</b>${one.customer ? ` · ${esc(one.customer)}` : ''}` : `<b>${pk.length} sipariş</b>`} burada tekrar <b>Yeni</b> sekmesinde ve Hazırla listesinde görünecek.</p>
+      <p class="muted" style="margin:0;font-size:13px">Trendyol / Hepsiburada'daki durum değişmez (orada Hazırlanıyor kalır). Stoktan düşülen ürünler geri eklenmez, çünkü sipariş yine hazırlanacak. Hazırlayınca “Hazırlandı” de; pazaryerine bir şey gönderilmez.</p></div>
+    <div class="modal-f"><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" id="bk-go">↩ Yeni'ye geri al</button></div></div>`, 'narrow');
+  $('#bk-go').onclick = async () => { const b = $('#bk-go'); b.disabled = true;
+    try { const r = await api('POST', '/api/trendyol/back', { package_ids: ids });
+      ids.forEach((i) => S.tyo.sel.delete(i)); closeModal();
+      if (r.done.length) island('ok', `<b>${r.done.length > 1 ? `${r.done.length} sipariş` : 'Sipariş'} Yeni'ye geri alındı</b>`, { ms: 1800 });
+      if (r.errors.length) toast(`${r.errors.length} sipariş geri alınamadı: ${r.errors.slice(0, 2).map((e) => e.error).join('; ')}`, { bad: true });
+      if (DRW.kind === 'ty') drawerClose();
+      await loadTyOrders(); await render();
+    } catch (e) { b.disabled = false; fail(e); } };
+}
+Object.assign(ACTIONS, { 'ty-back': (el) => tyBack([el.dataset.id]) });
