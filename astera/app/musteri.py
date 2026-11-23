@@ -50,6 +50,13 @@ CREATE TABLE IF NOT EXISTS ty_questions (
     first_seen INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_q_status ON ty_questions(status);
+CREATE TABLE IF NOT EXISTS ty_claim_stock (
+    item_id TEXT PRIMARY KEY,
+    claim_id TEXT,
+    decision TEXT,
+    product_id INTEGER,
+    at INTEGER
+);
 """
 
 # Kalem durumlarından iadenin genel durumu: işlem bekleyen varsa o, yoksa yolda olan, yoksa sonuç
@@ -189,7 +196,7 @@ def claims(tab="action"):
         last = json.loads(last)
     except ValueError:
         last = {}
-    return {"items": out, "counts": counts, "sync": last}
+    return {"items": out, "counts": counts, "sync": last, "restock_pending": restock_pending()}
 
 
 _reasons_cache = {"at": 0, "list": []}
@@ -252,8 +259,68 @@ def approve(claim_id, item_ids, restock=False):
                         added += 1
             _db().execute("UPDATE ty_claims SET restocked=restocked+? WHERE claim_id=?", (added, str(claim_id)))
             _db().commit()
+    with _lock:   # buradan onaylananlar için stok kararı verildi: "Trendyol'da onaylandı, stoğa eklensin mi?" sorulmaz
+        for i in ids:
+            _db().execute("INSERT OR REPLACE INTO ty_claim_stock(item_id, claim_id, decision, at) VALUES(?,?,?,?)",
+                          (i, str(claim_id), "added" if restock else "skip", _now()))
+        _db().commit()
     _refresh_one(claim_id)
     return {"approved": len(ids), "restocked": added}
+
+
+# ---------------------------------------------------------------- Trendyol'da (panelden ya da kendiliğinden) onaylanan iadeler
+# Uygulamadan onaylanmayan iade kalemleri için "stoğa eklensin mi?" diye sorulur. Özellik açıldığı andan önceki iadeler sorulmaz.
+
+def _stock_since():
+    v = _get("claim_stock_since", "")
+    if not v:
+        v = str(_now())
+        _set("claim_stock_since", v)
+    return int(v)
+
+
+def restock_pending():
+    """Onaylanmış ama stok kararı verilmemiş iade kalemleri. (Kilit tutan yerden çağrılır.)"""
+    since = _stock_since()
+    done = {r[0] for r in _db().execute("SELECT item_id FROM ty_claim_stock")}
+    idx = None
+    out = []
+    for r in _db().execute("""SELECT claim_id, order_number, customer, items, last_modified FROM ty_claims
+                              WHERE items LIKE '%"Accepted"%' AND COALESCE(last_modified, first_seen) >= ? ORDER BY last_modified DESC""", (since,)):
+        for it in json.loads(r["items"] or "[]"):
+            if it.get("status") != "Accepted" or not it.get("id") or str(it["id"]) in done:
+                continue
+            if idx is None:
+                idx = _product_index()
+            m = idx.get((it.get("barcode") or "").lower())
+            out.append({"item_id": str(it["id"]), "claim_id": r["claim_id"], "order_number": r["order_number"], "customer": r["customer"],
+                        "product": it.get("product"), "barcode": it.get("barcode"), "reason": it.get("reason"), "auto": bool(it.get("auto")),
+                        "product_id": m[0] if m else None, "our_name": m[1] if m else None, "thumbnail": m[2] if m else None,
+                        "at": r["last_modified"]})
+    return out
+
+
+def restock_decide(item_ids, add):
+    """Seçilen kalemler için karar: add=True → eşleşen ürün stoğuna 1 eklenir; False → eklenmez (bir daha sorulmaz)."""
+    with _lock:
+        pend = {p["item_id"]: p for p in restock_pending()}
+        added, skipped = 0, 0
+        for i in [str(x) for x in item_ids]:
+            p = pend.get(i)
+            if not p:
+                continue
+            ok = bool(add and p["product_id"])
+            if ok:
+                _change_stock(p["product_id"], 1, "return", ref=p["order_number"],
+                              note="İade (Trendyol'da onaylandı) — stoğa geri eklendi")
+                _db().execute("UPDATE ty_claims SET restocked=restocked+1 WHERE claim_id=?", (p["claim_id"],))
+                added += 1
+            else:
+                skipped += 1
+            _db().execute("INSERT OR REPLACE INTO ty_claim_stock(item_id, claim_id, decision, product_id, at) VALUES(?,?,?,?,?)",
+                          (i, p["claim_id"], "added" if ok else "skip", p["product_id"], _now()))
+        _db().commit()
+    return {"added": added, "skipped": skipped}
 
 
 def reject(claim_id, item_ids, reason_id, description, files):

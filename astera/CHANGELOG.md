@@ -1,5 +1,13 @@
 # Sürüm notları
 
+## 1.15.0
+- Ürün eşleştirme artık ayrı pencerede: arama, ürün görselleri, raftaki stok ve ada göre önerilen ürünler (benzerlik yüzdesiyle); ↑↓ ve Enter ile hızlı seçim.
+- İadeler: Trendyol panelinden ya da Trendyol'un kendiliğinden onayladığı iadeler için "stoğa eklensin mi?" bildirimi; İadeler sayfasında ürün ürün "Stoğa ekle / Ekleme".
+- Makine çizelgesi: baskının üzerine gelince bilgi kartı (ilerleme, katman, kalan süre, başlangıç–bitiş, malzeme, kimin için; biten baskıda sağlam / fire).
+- Sipariş penceresinde ürüne sağ tık: stoğa ekle / çıkar, "rafta şu kadar var", baskı ver, ürünü düzenle, barkodu kopyala.
+- Yeni baskıda sipariş seçmek seçili makineyi artık değiştirmiyor (aynı özel sipariş iki makineye verilince biri yanlış makineye düşüyordu). Seçilen makinede açık baskı varsa uyarı çıkar.
+- Basılmakta olan baskıyı başka makineye taşıma ("Makineyi değiştir"; "Belirtilmedi" çubuğundan da). Yazıcı uyarısından açılan özel sipariş baskısı artık yazıcıya bağlanıyor.
+
 ## 1.14.2
 - Yanlışlıkla Hazırlanıyor'a çekilen sipariş "Yeni'ye geri al" ile burada Yeni'ye döner (Trendyol / Hepsiburada'daki durum değişmez). Yeni listesinde "geri alındı" etiketiyle ve Hazırla listesinde görünür; "Hazırlandı" deyince yalnız burada işaretlenir, stok ikinci kez düşmez.
 - Çoklu siparişlerdeki ürün tikleri artık zorunlu değil; işaretlenmemiş ürün olsa da sipariş hazırlanır, barkod basılır.

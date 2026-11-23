@@ -495,6 +495,18 @@ def link_event(event_id, job_id, file_name, product_id, component_id=None, remem
             remember(ev["file"], product_id=None if component_id else product_id, component_id=component_id)
 
 
+def event_for(printer):
+    """Yazıcının şu an süren (bitmemiş) görevi için bekleyen uyarı; yoksa yazıcı basıyorsa uyarı yeniden açılır."""
+    with _ev_lock:
+        ev = next((dict(e) for e in _events if e["printer"] == printer and not e.get("done")), None)
+    if ev:
+        return ev
+    try:
+        return adopt(printer)
+    except (ValueError, StopIteration):
+        return None
+
+
 def dismiss_event(event_id):
     with _ev_lock:
         _events[:] = [e for e in _events if e["id"] != event_id]

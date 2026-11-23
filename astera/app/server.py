@@ -1896,6 +1896,8 @@ def _create_job(req):
              _order_label(o), start, start + minutes * 60, json.dumps(alloc) if alloc else None))
         db().execute("UPDATE custom_orders SET status='printing', printer=COALESCE(NULLIF(?,''),printer), "
                      "print_minutes=COALESCE(print_minutes,?), updated_at=? WHERE id=?", (printer, minutes, now(), oid))
+        if b.get("bambu_event"):   # yazıcının "ne basıyorsun?" uyarısından açıldıysa baskıyı o yazıcı görevine bağla
+            bambu.link_event(b["bambu_event"], cur.lastrowid, None, None, remember_file=False)
         asama.sync(oid)
         return job_rows("j.id=?", (cur.lastrowid,))[0]
 
@@ -2182,6 +2184,29 @@ def api_job_change(req, jid):
     if b.get("remember_file", True) is not False and note.startswith("Bambu: "):
         bambu.remember(note[7:].strip(), product_id=pid, component_id=cid)
     return job_rows("j.id=?", (jid,))[0]
+
+
+@route("POST", "/api/jobs/{jid}/printer")
+def api_job_printer(req, jid):
+    """Basılmakta olan baskıyı başka makineye taşır (yanlış makinede açıldıysa). Yazıcı bağlantısı sıfırlanır;
+    yeni makinede bekleyen "ne basıyorsun?" uyarısı varsa baskı hemen ona bağlanır."""
+    j = db().execute("SELECT * FROM print_jobs WHERE id=?", (int(jid),)).fetchone()
+    if not j or j["status"] != "printing":
+        raise ApiError("Yalnız basılmakta olan baskının makinesi değiştirilebilir")
+    pr = str(req.json().get("printer") or "").strip()
+    if pr and pr not in {p["name"] for p in _printer_list()}:
+        raise ApiError("Makine bulunamadı")
+    if pr == (j["printer"] or ""):
+        return job_rows("j.id=?", (int(jid),))[0]
+    db().execute("UPDATE print_jobs SET printer=?, bambu_task=NULL, bambu_state=NULL, bambu_percent=NULL, bambu_layer=NULL WHERE id=?",
+                 (pr or None, int(jid)))
+    if j["order_id"] and pr:
+        db().execute("UPDATE custom_orders SET printer=? WHERE id=? AND COALESCE(printer,'')=?", (pr, j["order_id"], j["printer"] or ""))
+    ev = bambu.event_for(pr) if pr else None
+    if ev:
+        bambu.link_event(ev["id"], int(jid), None, None, remember_file=False)
+    db().commit()
+    return job_rows("j.id=?", (int(jid),))[0]
 
 
 @route("POST", "/api/jobs/{jid}/ignore")
@@ -4369,6 +4394,13 @@ def api_claim_reasons(req):
 def api_claim_approve(req, cid):
     b = req.json()
     return musteri.approve(cid, b.get("item_ids") or [], bool(b.get("restock")))
+
+
+@route("POST", "/api/claims/restock", lock=False)
+def api_claim_restock(req):
+    """Trendyol'da onaylanan iadeler: stoğa ekle ya da ekleme kararı."""
+    b = req.json()
+    return musteri.restock_decide(b.get("item_ids") or [], bool(b.get("add")))
 
 
 @route("POST", "/api/claims/{cid}/reject", lock=False)

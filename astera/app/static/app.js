@@ -2080,11 +2080,14 @@ function npLive() {
   NP.live = st || null;
   $('#np-time-field')?.classList.toggle('hidden', !!st);
   const box = $('#np-live');
+  // bağlantısız makinede de: seçilen makinede şu an Astera'da açık bir baskı varsa uyar (yanlış makine seçilmesin)
+  const busyJob = !st && NP.printer ? S.jobs.find((j) => j.status === 'printing' && j.printer === NP.printer && j.ends_at > nowS()) : null;
   if (box) {
-    box.classList.toggle('hidden', !st);
+    box.classList.toggle('hidden', !st && !busyJob);
     const dup = st ? S.jobs.find((j) => j.status === 'printing' && j.printer === NP.printer && j.bambu_task) : null;
-    box.classList.toggle('warn', !!dup);
-    box.innerHTML = st ? `${printerThumb(NP.printer, 'xs')}<span><b>${esc(NP.printer)}</b> şu an <b>${esc(st.file || 'bir dosya')}</b> basıyor${st.percent != null ? ` · %${st.percent}` : ''}${st.remaining_min ? ` · kalan ${fmtDur(st.remaining_min)}` : ''}.<br>${dup
+    box.classList.toggle('warn', !!dup || !!busyJob);
+    box.innerHTML = busyJob ? `${printerThumb(NP.printer, 'xs')}<span><b>${esc(NP.printer)}</b> şu an <b>${esc(busyJob.product_name || 'bir baskı')} ×${busyJob.quantity}</b> basıyor (bitiş ${fmtClock(busyJob.ends_at)}).<br><small>Doğru makine mi? Aynı anda iki baskı açılırsa çizelgede üst üste biner.</small></span>`
+      : st ? `${printerThumb(NP.printer, 'xs')}<span><b>${esc(NP.printer)}</b> şu an <b>${esc(st.file || 'bir dosya')}</b> basıyor${st.percent != null ? ` · %${st.percent}` : ''}${st.remaining_min ? ` · kalan ${fmtDur(st.remaining_min)}` : ''}.<br>${dup
       ? `<small><b>Bu baskı zaten kayıtlı: ${esc(dup.product_name || '')} ×${dup.quantity}.</b> Yeni kayıt açarsanız ürün iki kez sayılır; başka bir makine seçin.</small>`
       : '<small class="muted">Süre yazıcıdan alınıyor ve baskı boyunca kendiliğinden güncellenir.</small>'}</span>` : '';
   }
@@ -2225,7 +2228,8 @@ function npPickOrder(id) {
   $$('#np-type button').forEach((x) => x.classList.toggle('on', x.dataset.v === NP.ptype));
   npFill(NP.oitems?.length ? NP.oitems.reduce((a, x) => a + x.qty, 0) : (orderLeft(o) || o.quantity), o.print_minutes);
   if (NP.oside) npSide();
-  if (o.printer) npSetPrinter(o.printer);
+  // siparişin son makinesi yalnız makine seçilmemişse önerilir: seçtiğin (ya da yazıcı uyarısından gelen) makine değişmez
+  if (o.printer && !NP.printer) npSetPrinter(o.printer);
   npRenderList(); npEnds();
   if (!o.print_minutes) setTimeout(() => $('#np-h')?.select(), 30);
 }
@@ -2634,7 +2638,7 @@ function timelineHTML() {
       const cls = kind === 'past' ? `past ${j.status}` : due ? 'due' : 'run';
       const tip = `${j.product_name} ×${j.quantity} · ${fmtClock(st)}–${fmtClock(en)}${kind === 'past' ? ` · ${({ success: 'başarılı', partial: 'kısmen', failed: 'başarısız' })[j.status] || ''}` : due ? ' · sonuç bekliyor' : ` · ${fmtDur((en - t) / 60)} kaldı`}`;
       const wpct = X(en) - X(st);
-      return `<button type="button" class="tl-bar ${cls}${wpct < 13 ? ' narrow' : ''}${wpct < 6 ? ' tiny' : ''}" style="left:${X(st)}%;width:calc(${X(en)}% - ${X(st)}%)" title="${esc(tip)}" ${kind === 'act' ? `data-act="tl-job" data-id="${j.id}"` : 'tabindex="-1"'}>
+      return `<button type="button" class="tl-bar ${cls}${wpct < 13 ? ' narrow' : ''}${wpct < 6 ? ' tiny' : ''}" style="left:${X(st)}%;width:calc(${X(en)}% - ${X(st)}%)" aria-label="${esc(tip)}" data-tj="${kind === 'past' ? 'h' : 'a'}${j.id}" ${kind === 'act' ? `data-act="tl-job" data-id="${j.id}"` : 'tabindex="-1"'}>
         ${miniThumb(j.thumbnail)}<span>${esc(j.product_name)}${j.quantity > 1 ? ` ×${j.quantity}` : ''}</span>${kind === 'act' ? `<small>${due ? 'sonuç bekliyor' : fmtClock(en)}</small>` : ''}</button>`;
     };
     return `<div class="tl-row">
@@ -2644,7 +2648,7 @@ function timelineHTML() {
         ${past.map((j) => bar(j, 'past')).join('')}${mine.filter((j) => j.ends_at > w0).map((j) => bar(j, 'act')).join('')}
         ${unk ? (() => { const st = Math.max(w0, unk.start), wp = X(unk.end) - X(st);
           return `<button type="button" class="tl-bar tl-unk${wp < 13 ? ' narrow' : ''}${wp < 6 ? ' tiny' : ''}" style="left:${X(st)}%;width:calc(${X(unk.end)}% - ${X(st)}%)" data-act="tl-unk" data-pr="${esc(name)}"
-            title="${esc(`Basıyor ama ne olduğu belirtilmedi${unk.file ? ` · ${unk.file}` : ''}${unk.pct != null ? ` · %${unk.pct}` : ''} · tıkla ya da sağ tık: ne olduğunu seç`)}">
+            aria-label="${esc(`Basıyor ama ne olduğu belirtilmedi${unk.file ? ` · ${unk.file}` : ''}${unk.pct != null ? ` · %${unk.pct}` : ''} · tıkla ya da sağ tık: ne olduğunu seç`)}">
             <i class="tl-q">?</i><span>Belirtilmedi${unk.file ? `<em> · ${esc(unk.file)}</em>` : ''}</span><small>${unk.prep ? 'hazırlanıyor' : unk.rem ? fmtClock(unk.end) : '…'}</small></button>`; })() : ''}
         ${waiting.length ? `<button type="button" class="tl-wait" data-act="tl-job" data-id="${waiting[0].id}" title="${esc(waiting.map((j) => `${j.product_name} ×${j.quantity}`).join(', '))}">${waiting.length} baskı sonuç bekliyor</button>` : ''}
       </div></div>`;
@@ -5200,11 +5204,11 @@ function tyoBody(p) {
       : st <= 0 && p.tab === 'new' && !cancel ? `<span class="oc-out">${icon('alert')} Rafta yok</span>` : `<span class="oc-shelf">rafta <b>${st}</b>${ms && !l.state?.startsWith('deduct') ? ` <span class="oc-after">→ bu siparişten sonra <b>${Math.max(0, ms.shelf - ms.ahead - ms.need)}</b></span>` : ''}</span>`;
     const pmiss = pr?.parts?.length && out ? Math.max(0, (pr.parts_total || 0) - (pr.parts_ready || 0)) : 0;
     const parts = pmiss ? `<span class="oc-parts" title="Sonraki set için elde ${pr.parts_ready}/${pr.parts_total} parça">${pmiss}/${pr.parts_total} parça eksik</span>` : '';
-    return `<div class="oc-item${cancel ? ' cancel' : ''}${out ? (part ? ' out part' : ' out') : ''}"${chk && !cancel ? ` data-ock="${esc(`${l.barcode || l.name || ''}#${li}`)}"` : ''}>
+    return `<div class="oc-item${cancel ? ' cancel' : ''}${out ? (part ? ' out part' : ' out') : ''}"${pr ? ` data-ocp="${pr.id}"` : ''}${l.barcode ? ` data-bc="${esc(l.barcode)}"` : ''}${l.ty_url && /^https?:\/\//.test(l.ty_url) ? ` data-url="${esc(l.ty_url)}"` : ''}${chk && !cancel ? ` data-ock="${esc(`${l.barcode || l.name || ''}#${li}`)}"` : ''}>
       ${chk && !cancel ? '<button type="button" class="oc-ck" aria-label="Kontrol edildi"></button>' : ''}<span class="oc-img${l.thumbnail ? '' : ' none'}" style="${thumbStyle(l.thumbnail)}" data-zoom="${esc(l.thumbnail || '')}" data-title="${esc(l.name || '')}">${qtyBadge(l.quantity)}</span>
       <div class="oc-tx"><b>${pr || (l.ty_url && /^https?:\/\//.test(l.ty_url)) ? `<button type="button" class="oc-name" data-act="oc-pmenu" data-pid="${pr ? pr.id : ''}" data-url="${esc(l.ty_url && /^https?:\/\//.test(l.ty_url) ? l.ty_url : '')}" data-name="${esc(pr?.name || l.name || '')}">${esc(l.name || 'Bilinmeyen ürün')}<svg class="oc-caret" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></button>` : esc(l.name || 'Bilinmeyen ürün')}</b>${l.ty_name && pr && l.ty_name !== l.name ? `<small class="faint">${esc(l.ty_name)}</small>` : ''}
         <div class="oc-meta">${l.barcode ? `<span class="mono">${esc(l.barcode)}</span>` : ''}${shelf}${parts}${state}${l.unit_price != null ? `<span class="faint oc-up">${fmtTL(l.unit_price)}</span>` : ''}${!cancel && l.commission != null && l.commission >= 0 ? `<span class="oc-com${l.usual_commission && l.commission < l.usual_commission - 0.4 ? ' cut' : ''}" title="${l.usual_commission && l.commission < l.usual_commission - 0.4 ? `Bu siparişte indirimli; ürünün olağan komisyonu %${fmtPctNum(l.usual_commission)}` : 'Bu üründen kesilen komisyon oranı'}">komisyon %${fmtPctNum(l.commission)}</span>` : ''}</div>
-        ${!l.product_id && l.barcode && !cancel ? `<div class="pick-match"><select class="input" data-tyo-match="${esc(l.barcode)}"><option value="">Hangi ürününüz?</option>${S.products.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select><button class="btn btn-sm btn-ok" data-act="tyo-match" data-code="${esc(l.barcode)}">Eşleştir</button></div>` : ''}</div></div>`;
+        ${!l.product_id && l.barcode && !cancel ? `<div class="pick-match">${mpBtn('tyo', { code: l.barcode, name: l.ty_name || l.name, thumb: l.thumbnail, price: l.unit_price, ch: p.channel, no: p.order_number })}</div>` : ''}</div></div>`;
   }).join('');
   const dl = effDeadline(p.deadline);
   const tex = isTEX(p.cargo_provider);
@@ -5923,6 +5927,7 @@ PAGES.iadeler = {
       <span class="spacer"></span>${syncLine(d.sync, 'Son kontrol')}<button class="btn btn-sm" data-act="mu-sync">${icon('refresh')} Yenile</button></div>
       ${t === 'transit' ? '<p class="muted cl-hint">Müşteri iade talebi açtı; paketi henüz kargoya vermemiş ya da yolda olabilir. Trendyol bu ikisini ayırmıyor; kargo numarasına tıklayıp takipten bakabilirsiniz. Paket size ulaşınca iade "İşlem bekleyen"e geçer.</p>' : ''}
       ${t === 'action' ? '<p class="muted cl-hint">İade paketi elinize ulaştı; ürünü kontrol edip onaylayın ya da gerekçesiyle reddedin. Trendyol belirli bir süre içinde işlem yapılmazsa iadeyi kendiliğinden onaylar.</p>' : ''}
+      ${clRestockHTML(d.restock_pending || [])}
       <div class="cl-list dr-list">${d.items.length ? d.items.map(claimRow).join('') : `<div class="empty panel"><h3>${t === 'action' ? 'İşlem bekleyen iade yok' : t === 'transit' ? 'Gelecek iade yok' : 'Son 30 günde sonuçlanan iade yok'}</h3></div>`}</div>`;
   },
   after() { drawerSync(); },
@@ -6643,8 +6648,7 @@ function pickListHTML() {
           <span class="faint">${o.dl ? `son ${fmtDl(o.dl)}` : fmtWhen(Math.floor(o.order_date / 1000))}</span>${dlChip(o.dl, o.need)}<b>×${o.quantity}</b></div>`).join('')}
         ${i.orders.some((o) => o.urg === 'nofit') ? `<p class="nofit-note">${icon('clock')} Eksik adetleri basmak yaklaşık ${fmtDur(Math.round(Math.max(...i.orders.map((o) => o.need)) / 60))} sürer; son teslime yetişmiyor.</p>` : ''}
         ${i.product_id ? '' : `<div class="pick-actions">${i.barcode ? `<div class="pick-match"><span class="muted">Bu, hangi ürününüz?</span>
-              <select class="input" data-pick-match="${esc(i.barcode)}"><option value="">Ürün seçin…</option>${S.products.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
-              <button class="btn btn-sm btn-ok" data-act="pick-match" data-code="${esc(i.barcode)}">Eşleştir</button></div>`
+              ${mpBtn('pick', { code: i.barcode, name: i.name, thumb: i.thumbnail })}</div>`
           : `<span class="muted">Bu satırda barkod yok; Trendyol'da ürüne barkod tanımlayın.</span>`}</div>`}
       </div></details>`;
   }).join('')}</div>${packedTodayHTML()}`;
@@ -6658,8 +6662,7 @@ function packedTodayHTML() {
       const tag = !notDed ? '<span class="tag tag-ok">Paketlendi · stoktan düştü</span>'
         : x.unmatched ? '<span class="tag tag-warn">Eşleşmedi, stoktan düşülmedi</span>'
         : `<span class="tag tag-mute">${notDed} adet takip başlangıcından önce</span>`;
-      const match = x.unmatched && x.barcode ? `<div class="pick-match" style="margin-top:6px"><select class="input" data-pick-match="${esc(x.barcode)}"><option value="">Hangi ürününüz?</option>${S.products.map((q) => `<option value="${q.id}">${esc(q.name)}</option>`).join('')}</select>
-        <button class="btn btn-sm btn-ok" data-act="pick-match" data-code="${esc(x.barcode)}">Eşleştir ve düş</button></div>` : '';
+      const match = x.unmatched && x.barcode ? `<div class="pick-match" style="margin-top:6px">${mpBtn('pick', { code: x.barcode, name: x.name, thumb: x.thumbnail })}</div>` : '';
       return `<li>${miniThumb(x.thumbnail)}<div class="grow"><div class="t">${esc(x.name || 'Ürün')}</div>
         <div class="s">${x.order_count} sipariş · son ${fmtWhen(x.last_at)}</div>${match}</div>${tag}<span class="ty-qty">${x.quantity}</span></li>`;
     }).join('')}</ul></details>`;
@@ -6801,7 +6804,7 @@ function openMachine(name) {
 }
 
 // ---------- Sağ tık menüleri: tek dağıtıcı. Shift + sağ tık tarayıcının kendi menüsünü açar; telefonda basılı tutunca açılır.
-const CTX_TARGETS = '.tl-unk[data-pr], .tl-bar[data-act="tl-job"], .tyo-row[data-pkg], .no-it[data-no], .ocard[data-id], .pcard[data-pid], .need-card[data-npid], article.job[data-job], .jobrow[data-job], #pbar .pb[data-name], .sticky[data-td], .apb-g, .pk-card[data-id], .mk-card, .spool-card[data-id], .pick-item[data-k], .cu-row[data-key], .cl-row[data-key], .cl-card[data-cid], .q-row[data-key], .q-card[data-qid], .nf[data-nf], .plan-it[data-key]';
+const CTX_TARGETS = '.oc-item[data-ocp], .tl-unk[data-pr], .tl-bar[data-act="tl-job"], .tyo-row[data-pkg], .no-it[data-no], .ocard[data-id], .pcard[data-pid], .need-card[data-npid], article.job[data-job], .jobrow[data-job], #pbar .pb[data-name], .sticky[data-td], .apb-g, .pk-card[data-id], .mk-card, .spool-card[data-id], .pick-item[data-k], .cu-row[data-key], .cl-row[data-key], .cl-card[data-cid], .q-row[data-key], .q-card[data-qid], .nf[data-nf], .plan-it[data-key]';
 function tyNoteOpen(p, v) {
   S.tyNoteEdit = p.order_number; drawerOpen('ty', String(p.package_id));
   setTimeout(() => { const ta = $('#tn-ta'); if (ta) { ta.value = (p.note ? p.note + '\n' : '') + (v || ''); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } }, 320);
@@ -6883,6 +6886,8 @@ function jobCtxItems(j) {
     live ? { icon: '✅', label: 'Başarılı bitti (hepsi sağlam)', run: () => finishJob(j.id, true) } : null,
     live ? { icon: '❌', label: 'Başarısız oldu…', run: () => openResult(j.id) } : null,
     { icon: icon('edit'), label: 'Düzenle', run: () => ACTIONS['job-menu'](fakeEl({ id })) },
+    live ? { icon: icon('print'), label: 'Makineyi değiştir', sub: (S.settings?.printers || []).filter((x) => x.name !== j.printer).map((x) => ({
+      label: x.name, hint: tlBusyHint(x.name), run: () => jobMove(j.id, x.name) })) } : null,
     live ? { icon: icon('clock'), label: '15 dk uzat', run: () => ACTIONS['job-snooze'](fakeEl({ id, m: '15' })) } : null,
     '-',
     j.printer ? { icon: icon('print'), label: 'Bu makinede yeni baskı', run: () => openNewPrint({ printer: j.printer }) } : null,
@@ -7070,12 +7075,12 @@ CTX_EXTRA.push((el) => {
 function ctxMenu(x, y, items, title) {
   ctxClose(true);
   const norm = (it) => (!it || it === '-' ? it : { label: it.label ?? it.t, icon: it.icon ?? (it.ic ? icon(it.ic) : ''), run: it.run ?? it.fn, danger: it.danger ?? it.bad, off: it.off,
-    hint: it.hint ?? it.k, input: it.input, text: it.text, btn: it.btn, placeholder: it.placeholder, sub: it.sub, on: it.on });
+    hint: it.hint ?? it.k, input: it.input, text: it.text, btn: it.btn, placeholder: it.placeholder, sub: it.sub, on: it.on, signed: it.signed, zero: it.zero, btnLabel: it.btn });
   items = items.map(norm).filter(Boolean).filter((it, i, a) => it !== '-' || (i > 0 && a[i - 1] !== '-' && i < a.length - 1));
   const z = ZF(); x /= z; y /= z;
   const m = document.createElement('div'); m.className = 'ctx'; m.setAttribute('role', 'menu');
   m.innerHTML = (title ? `<div class="ctx-t">${title}</div>` : '') + items.map((it, i) => it === '-' ? '<hr>'
-    : it.input ? `<div class="ctx-in" style="--i:${i}"><span>${it.icon || ''}</span><span>${esc(it.label)}</span>${it.text ? `<input type="text" maxlength="200" placeholder="${esc(it.placeholder || '')}" data-ci="${i}">` : `<input type="number" min="0" step="any" inputmode="decimal" placeholder="${esc(it.placeholder || 'adet')}" data-ci="${i}">`}<button type="button" data-cg="${i}">${esc(it.btn || (it.text ? 'Kaydet' : 'Ekle'))}</button></div>`
+    : it.input ? `<div class="ctx-in" style="--i:${i}"><span>${it.icon || ''}</span><span>${esc(it.label)}</span>${it.text ? `<input type="text" maxlength="200" placeholder="${esc(it.placeholder || '')}" data-ci="${i}">` : it.signed ? `<input type="text" inputmode="numeric" pattern="[-+]?[0-9]*" placeholder="${esc(it.placeholder || 'adet')}" data-ci="${i}">` : `<input type="number" min="0" step="any" inputmode="decimal" placeholder="${esc(it.placeholder || 'adet')}" data-ci="${i}">`}<button type="button" data-cg="${i}">${esc(it.btn || (it.text ? 'Kaydet' : 'Ekle'))}</button></div>`
     : `<button type="button" role="menuitem" class="ctx-i${it.danger ? ' danger' : ''}${it.on ? ' on' : ''}" data-c="${i}" style="--i:${i}"${it.off ? ' disabled' : ''}><span class="ctx-ic">${it.icon || ''}</span><span class="ctx-l">${esc(it.label)}</span>${it.hint ? `<small>${esc(it.hint)}</small>` : ''}${it.sub ? '<span class="ctx-sub">›</span>' : ''}</button>`).join('');
   document.body.appendChild(m);
   const vw = innerWidth / z, vh = innerHeight / z, r = { width: m.offsetWidth, height: m.offsetHeight };
@@ -7088,7 +7093,8 @@ function ctxMenu(x, y, items, title) {
     if (b) { const it = items[+b.dataset.c]; if (it.sub) return ctxMenu(x * z, y * z, [{ icon: '←', label: 'Geri', run: () => ctxMenu(x * z, y * z, items, title) }, '-', ...it.sub], esc(it.label)); return run(it.run); }
     const g = e.target.closest('[data-cg]'); if (g) { const i = +g.dataset.cg, raw = String(m.querySelector(`[data-ci="${i}"]`).value).trim();
       if (items[i].text) { if (raw) run(() => items[i].run(raw)); return; }
-      const v = parseFloat(raw.replace(',', '.')); if (v > 0) run(() => items[i].run(v)); }
+      const v = parseFloat(raw.replace(',', '.').replace(/^\+/, ''));
+      if (items[i].signed ? Number.isFinite(v) && v !== 0 : items[i].zero ? v >= 0 : v > 0) run(() => items[i].run(v)); }
   });
   m.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.matches('[data-ci]')) { e.preventDefault(); m.querySelector(`[data-cg="${e.target.dataset.ci}"]`).click(); }
@@ -7677,8 +7683,7 @@ PAGES.satis = {
             <p class="muted" style="margin:0 0 10px;font-size:14px">Bu satırların barkodu hiçbir ürününüzde yok. Ürünü seçin; barkod o ürüne kaydedilir. Sipariş paketlenmişse stok hemen düşer, Yeni ise paketlenince düşer.</p>
             <div class="unmatched">${S.tyUnmatched.map((l) => `<div class="um"><div><div class="t">${esc(l.product_name || '')} <span class="muted">×${l.quantity}</span></div>
               <div class="s">Sipariş ${esc(l.order_number)} · barkod ${esc(l.barcode || '—')}${l.merchant_sku ? ' · ' + esc(l.merchant_sku) : ''} · ${fmtWhen(Math.floor(l.order_date / 1000))}</div></div>
-              <select class="input" data-um="${esc(l.line_key)}">${productOpts}</select>
-              <button class="btn btn-ok btn-sm" data-act="ty-match" data-k="${esc(l.line_key)}">Eşleştir</button>
+              ${mpBtn('um', { k: l.line_key, code: l.barcode || l.merchant_sku, name: l.product_name, no: l.order_number, ch: l.channel })}
               <button class="btn btn-ghost btn-sm" data-act="ty-ignore" data-k="${esc(l.line_key)}">Yoksay</button></div>`).join('')}</div></div>` : ''}
           ${S.tyRecent.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Sipariş</th><th>Ürün</th><th class="num">Adet</th><th>Durum</th><th>Tarih</th></tr></thead><tbody>
             ${S.tyRecent.map((l) => `<tr><td>${esc(l.order_number)}</td><td>${esc(l.matched_name || l.product_name || '')}</td><td class="num">${l.quantity}</td>
@@ -9906,7 +9911,7 @@ document.addEventListener('click', (e) => {
     const el = e.target.closest?.(SEL);
     if (el === cur) return;
     hide();
-    if (!el || el.closest('.drop')) return;
+    if (!el || el.closest('.drop, .tl-bar')) return;   // çizelge çubuğunda kendi bilgi kartı açılır
     cur = el; timer = setTimeout(() => cur === el && show(el), 140);
   });
   document.addEventListener('scroll', hide, true);
@@ -10423,6 +10428,7 @@ CTX_EXTRA.push((el) => {
     const n = el.dataset.pr, u = tlUnknown(n, printerStates().find((o) => o.name === n));
     return { title: `${printerThumb(n, 'xs')} <b>${esc(n)}</b> · ne bastığı belirtilmedi`, items: [
       { icon: icon('check'), label: 'Ne bastığını seç', hint: u?.file || '', run: () => tlAdopt(n) },
+      ...tlMoveCands(n).map((j) => ({ icon: '↪', label: `“${j.product_name}” ×${j.quantity} bu makinede basılıyor`, hint: `şu an ${j.printer} üzerinde`, run: () => jobMove(j.id, n) })),
       u?.file ? { icon: icon('copy'), label: 'Dosya adını kopyala', run: () => copyText(u.file, 'Dosya adı') } : null,
       '-', { icon: '📜', label: 'Makine kartı', run: () => openMachine(n) }].filter(Boolean) };
   }
@@ -10477,3 +10483,270 @@ async function tyBack(ids) {
     } catch (e) { b.disabled = false; fail(e); } };
 }
 Object.assign(ACTIONS, { 'ty-back': (el) => tyBack([el.dataset.id]) });
+
+// Yanlış makinede açılmış baskıyı doğru makineye taşı (yazıcı bağlantısı yeni makinede kurulur)
+function tlBusyHint(name) {
+  const j = (S.jobs || []).find((x) => x.status === 'printing' && x.printer === name && x.ends_at > nowS());
+  return j ? `${j.product_name || 'baskı'} basıyor` : tlUnknown(name, printerStates().find((o) => o.name === name)) ? 'belirtilmedi' : 'boşta';
+}
+// "Belirtilmedi" makinesine taşınabilecek baskılar: başka makinede açık, yazıcı görevine bağlanmamış (ya da o makinede üst üste binmiş)
+function tlMoveCands(name) {
+  const t = nowS(), live = (S.jobs || []).filter((j) => j.status === 'printing' && j.printer && j.printer !== name && j.ends_at > t);
+  return live.filter((j) => !j.bambu_task || live.some((k) => k !== j && k.printer === j.printer)).slice(0, 4);
+}
+async function jobMove(id, printer) {
+  try {
+    const j = await api('POST', `/api/jobs/${id}/printer`, { printer });
+    const i = S.jobs.findIndex((x) => x.id === j.id); if (i >= 0) S.jobs[i] = j;
+    island('ok', `<b>${esc(j.product_name || 'Baskı')}</b> · ${esc(printer)} makinesine taşındı`, { ms: 1800 });
+    await Promise.all([loadJobs(), S.bambu ? loadBambu().catch(() => {}) : null]);
+    render();
+  } catch (e) { fail(e); }
+}
+
+// ================================================================== çizelge: baskının üzerine gelince bilgi kartı (A: kompakt)
+const TJ = { el: null, key: null, timer: 0, hide: 0 };
+const tjDay = (ts) => { const d = new Date(ts * 1000), n = new Date(); const k = (x) => Math.round(new Date(x.getFullYear(), x.getMonth(), x.getDate()) / 864e5);
+  const df = k(d) - k(n); return df === 0 ? 'bugün' : df === -1 ? 'dün' : df === 1 ? 'yarın' : d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }); };
+function tjFor(j) {   // kimin için
+  if (j.is_misc) return 'Diğer amaçlı';
+  if (j.is_order) return `Özel sipariş${j.parts?.length ? ` · ${j.parts.length} parça` : ''}`;
+  if (j.is_component) return 'Parça stoğu';
+  const it = (S.pick?.items || []).find((x) => x.product_id === j.product_id);
+  if (!it || !it.orders?.length) return 'Stoğa';
+  const cut = todayCutoffS(), today = it.orders.filter((o) => o.deadline && o.deadline <= cut).length;
+  return `${it.orders.length} Trendyol siparişi${today ? ` (${today}'${today === 1 ? 'i' : 'si'} bugün)` : ''}`;
+}
+function tjMat(j) {
+  const sp = j.spools || [], g = Math.round(sp.reduce((a, x) => a + (x.grams || 0), 0) || (j.unit_grams || 0) * (j.quantity || 1));
+  const m = sp[0];
+  const name = m ? [m.color_name || colorName(m.color_hex), m.material].filter(Boolean).join(' ') : (j.print_type === 'SLA' ? 'Reçine' : '');
+  if (!name && !g) return '';
+  return `${m ? `<i class="tj-dot${swatchCls(m.color_hex)}" style="${swatchStyle(m.color_hex)}"></i>` : ''}${[name ? esc(name) + (sp.length > 1 ? ` +${sp.length - 1}` : '') : '', g ? `${g} g` : ''].filter(Boolean).join(' · ')}`;
+}
+function tjBody(b) {
+  const t = nowS();
+  if (b.matches('.tl-unk')) {
+    const n = b.dataset.pr, u = tlUnknown(n, printerStates().find((o) => o.name === n)); if (!u) return '';
+    return `<div class="tj-h"><div class="tj-im tj-q">?</div><div><b>Ne bastığı belirtilmedi</b><small>${esc(n)}</small></div></div>
+      ${u.pct != null ? `<div class="tj-pg"><i style="width:${u.pct}%"></i></div><div class="tj-pl"><span><b>%${u.pct}</b></span><span>${u.rem ? `kalan <b>${fmtDur(u.rem)}</b>` : ''}</span></div>` : ''}
+      <div class="tj-kv">${u.file ? `<span>Dosya</span><b class="tj-f">${esc(u.file)}</b>` : ''}<span>Biter</span><b>${fmtClock(u.end)} · ${tjDay(u.end)}</b></div>
+      <div class="tj-hint">Tıkla ya da sağ tıkla: ne olduğunu seç</div>`;
+  }
+  const k = b.dataset.tj, past = k[0] === 'h', id = +k.slice(1);
+  const j = (past ? S.history : S.jobs)?.find((x) => x.id === id); if (!j) return '';
+  const st = j.started_at, en = past ? j.finished_at : j.ends_at, due = !past && en <= t;
+  const pct = past ? 100 : j.bambu_percent != null ? j.bambu_percent : Math.max(0, Math.min(100, Math.round((t - st) / Math.max(1, en - st) * 100)));
+  const lay = !past && j.bambu_layer && !/^0\//.test(j.bambu_layer) ? j.bambu_layer : '';
+  const unit = j.parts?.length ? 'parça' : 'adet';
+  let prog;
+  if (past) {
+    const good = j.good_quantity ?? (j.status === 'success' ? j.quantity : 0), bad = Math.max(0, (j.quantity || 0) - good);
+    const tone = j.status === 'failed' ? 'bad' : j.status === 'partial' ? 'mid' : 'ok';
+    prog = `<div class="tj-pg ${tone}"><i style="width:${j.quantity ? Math.round(good / j.quantity * 100) : 0}%"></i></div>
+      <div class="tj-pl"><span><b>${({ success: '✓ Başarılı', partial: 'Kısmen', failed: '✕ Başarısız' })[j.status] || 'Bitti'}</b></span><span><b>${good}</b> sağlam${bad ? ` · <b>${bad}</b> fire` : ''}</span></div>`;
+  } else {
+    prog = `<div class="tj-pg${due ? ' due' : ''}"><i style="width:${pct}%"></i></div>
+      <div class="tj-pl"><span><b>%${pct}</b>${lay ? ` · katman ${esc(lay)}` : j.bambu_percent == null ? ' <em>tahmini</em>' : ''}</span><span>${due ? '<b class="tj-due">sonuç bekliyor</b>' : `kalan <b>${fmtDur((en - t) / 60)}</b>`}</span></div>`;
+  }
+  const mat = tjMat(j);
+  return `<div class="tj-h"><div class="tj-im${j.thumbnail ? '' : ' none'}" style="${thumbStyle(j.thumbnail)}"></div><div><b>${esc(j.product_name || 'Baskı')}</b><small>×${j.quantity} ${unit}${j.printer ? ` · ${esc(j.printer)}` : ''}</small></div></div>
+    ${prog}
+    <div class="tj-kv"><span>Başladı</span><b>${fmtClock(st)} · ${tjDay(st)}</b><span>${past ? 'Bitti' : 'Biter'}</span><b>${fmtClock(en)} · ${tjDay(en)}</b>
+      ${mat ? `<span>Malzeme</span><b>${mat}</b>` : ''}${past ? '' : `<span>Kimin için</span><b>${esc(tjFor(j))}</b>`}${j.note && !j.is_order ? `<span>Not</span><b class="tj-f">${esc(j.note)}</b>` : ''}</div>`;
+}
+function tjShow(b) {
+  const body = tjBody(b); if (!body) return;
+  tjHide(true);
+  const m = document.createElement('div'); m.className = 'tj-pop'; m.setAttribute('role', 'tooltip'); m.innerHTML = body;
+  document.body.appendChild(m); TJ.el = m;
+  const z = ZF(), r = b.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight;
+  // fare çubuğun neresindeyse kart oraya yakın açılır (uzun çubuklarda)
+  const ax = TJ.mx != null ? Math.max(r.left + 12, Math.min(r.right - 12, TJ.mx)) : r.left + Math.min(r.width / 2, 60);
+  const left = clamp(ax / z - w / 2, 8, innerWidth / z - w - 8);
+  const below = r.bottom / z + 10 + h < innerHeight / z - 8;
+  m.style.left = left + 'px'; m.style.top = (below ? r.bottom / z + 10 : r.top / z - 10 - h) + 'px';
+  m.classList.toggle('up', !below); m.style.setProperty('--ax', (ax / z - left) + 'px');
+  m.addEventListener('pointerenter', () => clearTimeout(TJ.hide)); m.addEventListener('pointerleave', () => tjHide());
+}
+function tjHide(now) {
+  clearTimeout(TJ.hide); clearTimeout(TJ.timer);
+  const go = () => { const el = TJ.el; TJ.el = null; TJ.key = null; if (!el) return; el.classList.add('out'); setTimeout(() => el.remove(), REDUCED() ? 0 : 140); };
+  if (now) go(); else TJ.hide = setTimeout(go, 150);
+}
+document.addEventListener('pointerover', (e) => {
+  if (e.pointerType !== 'mouse') return;
+  const b = e.target.closest?.('.tl-bar[data-tj], .tl-unk[data-pr]');
+  if (!b) return;
+  const key = b.dataset.tj || 'u' + b.dataset.pr;
+  clearTimeout(TJ.hide); if (TJ.key === key && TJ.el) return;
+  clearTimeout(TJ.timer); TJ.key = key; TJ.mx = e.clientX;
+  TJ.timer = setTimeout(() => { if (TJ.key === key && b.isConnected && b.matches(':hover')) tjShow(b); }, TJ.el ? 60 : 280);
+});
+document.addEventListener('pointerout', (e) => {
+  if (e.pointerType !== 'mouse') return;
+  const b = e.target.closest?.('.tl-bar[data-tj], .tl-unk[data-pr]'); if (!b) return;
+  if (e.relatedTarget && (b.contains(e.relatedTarget) || e.relatedTarget.closest?.('.tj-pop'))) return;
+  clearTimeout(TJ.timer); TJ.key = TJ.el ? TJ.key : null; tjHide();
+});
+['scroll', 'pointerdown', 'contextmenu'].forEach((ev) => document.addEventListener(ev, (e) => { if (!e.target.closest?.('.tj-pop')) tjHide(true); }, true));
+
+// Sipariş penceresinde ürüne sağ tık: stok değiştirme, baskı ver, ürünü aç
+function drwRefresh() {   // çekmeceyi yerinde yeniden çiz (kaydırma yeri korunur)
+  const root = $('#drw'); if (!root || !DRW.kind) return;
+  const sc = [...root.querySelectorAll('*')].filter((x) => x.scrollTop > 0).map((x, i) => [x.className, x.scrollTop]);
+  drawerOpen(DRW.kind, DRW.key);
+  for (const [cls, top] of sc) { const el = [...root.querySelectorAll('*')].find((x) => x.className === cls && x.scrollHeight > x.clientHeight); if (el) el.scrollTop = top; }
+}
+function ocItemCtx(el) {
+  const id = +el.dataset.ocp, p = productById(id); if (!p) return null;
+  const stk = async (d, note) => {
+    if (!d) return;
+    try {
+      const r = await api('POST', `/api/products/${id}/stock`, { delta: d, reason: 'adjust', note: note || 'Sipariş penceresinden' });
+      p.stock = r.stock;
+      (S.pick?.items || []).forEach((i) => { if (i.product_id === id) { i.on_shelf = (i.on_shelf ?? 0) + d; i.shortage = Math.max(0, i.quantity - i.on_shelf); } });
+      island('ok', `<b>${esc(p.name)}</b> · stok ${r.stock}`, { ms: 1600 });
+      drwRefresh(); if (!$('#drw')?.contains(el)) render();
+    } catch (e) { fail(e); }
+  };
+  const url = el.dataset.url, bc = el.dataset.bc;
+  return { title: `<b>${esc(p.name)}</b> · rafta <b>${p.stock}</b>`, items: [
+    { icon: '➕', label: 'Stoğa 1 ekle', run: () => stk(1) },
+    { icon: '➖', label: 'Stoktan 1 çıkar', off: p.stock <= 0, run: () => stk(-1) },
+    { input: true, signed: true, icon: '🔢', label: 'Ekle / çıkar', placeholder: '+3 / -2', btn: 'Uygula', run: (v) => stk(Math.round(v)) },
+    { input: true, zero: true, icon: '🎯', label: 'Rafta şu kadar var', placeholder: String(p.stock), btn: 'Ayarla', run: (v) => stk(Math.round(v) - p.stock, 'Sayım (sipariş penceresi)') },
+    '-',
+    { icon: icon('print'), label: 'Baskı ver', run: () => openNewPrint(id) },
+    { icon: icon('edit'), label: 'Ürünü düzenle', run: () => openProductEditor(id) },
+    { icon: icon('chart'), label: 'Satış istatistikleri', run: () => { S.statQ = p.name; location.hash = '#/istatistik'; } },
+    bc ? { icon: icon('copy'), label: 'Barkodu kopyala', hint: bc, run: () => copyText(bc, 'Barkod') } : null,
+    url ? { icon: icon('external'), label: "Trendyol'da aç", run: () => window.open(url, '_blank', 'noopener') } : null,
+  ].filter(Boolean) };
+}
+CTX_EXTRA.push((el) => el.matches('.oc-item[data-ocp]') ? ocItemCtx(el) : null);
+
+// Trendyol'da (panelden ya da kendiliğinden) onaylanan iadeler: stoğa eklensin mi?
+function clRestockHTML(list) {
+  if (!list.length) return '';
+  return `<section class="panel crs" aria-label="Stok kararı bekleyen iadeler">
+    <header class="crs-h"><span class="crs-ic">${icon('return')}</span><div class="grow"><b>${list.length} iade Trendyol'da onaylandı</b><small class="muted">Uygulamadan onaylanmadığı için stoğa eklenmedi. Ürün sağlamsa “Stoğa ekle” de; kırık / kullanılmışsa “Ekleme”.</small></div>
+      ${list.length > 1 ? `<button class="btn btn-sm" data-act="crs" data-all="0">Hiçbirini ekleme</button><button class="btn btn-sm btn-primary" data-act="crs" data-all="1">${icon('plus')} Hepsini stoğa ekle</button>` : ''}</header>
+    <div class="crs-list">${list.map((p, i) => `<div class="crs-it" style="--i:${i}" data-it="${esc(p.item_id)}">${miniThumb(p.thumbnail)}
+      <span class="grow"><b>${esc(p.our_name || p.product || 'Ürün')}</b><small class="muted">${esc(p.order_number)}${p.customer ? ` · ${esc(p.customer)}` : ''}${p.reason ? ` · ${esc(p.reason)}` : ''}</small>
+        <span class="crs-tags">${p.auto ? '<span class="tag">Trendyol kendiliğinden onayladı</span>' : '<span class="tag">Trendyol panelinden onaylandı</span>'}${p.at ? `<small class="faint">${fmtWhen(p.at)}</small>` : ''}</span></span>
+      ${p.product_id ? `<span class="crs-stk faint">rafta ${productById(p.product_id)?.stock ?? '—'}</span>
+        <button class="btn btn-sm" data-act="crs" data-id="${esc(p.item_id)}" data-add="0">Ekleme</button>
+        <button class="btn btn-sm btn-primary" data-act="crs" data-id="${esc(p.item_id)}" data-add="1">${icon('plus')} Stoğa ekle</button>`
+        : `<span class="tag tag-warn" title="İadedeki barkod (${esc(p.barcode || '—')}) hiçbir ürüne kayıtlı değil">Ürün eşleşmedi</span>
+        <button class="btn btn-sm" data-act="crs" data-id="${esc(p.item_id)}" data-add="0">Geç</button>`}</div>`).join('')}</div></section>`;
+}
+Object.assign(ACTIONS, {
+  crs: async (el) => {
+    const list = S.claims?.restock_pending || [];
+    const all = el.dataset.all != null, add = all ? el.dataset.all === '1' : el.dataset.add === '1';
+    const ids = all ? list.filter((p) => !add || p.product_id).map((p) => p.item_id) : [el.dataset.id];
+    if (!ids.length) return;
+    $$('.crs [data-act="crs"]').forEach((b) => { b.disabled = true; });
+    try {
+      const r = await api('POST', '/api/claims/restock', { item_ids: ids, add });
+      ids.forEach((i) => $(`.crs-it[data-it="${CSS.escape(i)}"]`)?.classList.add('gone'));
+      island('ok', r.added ? `<b>${r.added} ürün stoğa eklendi</b>` : `<b>${r.skipped} iade</b> · stoğa eklenmedi`, { ms: 1600 });
+      await new Promise((res) => setTimeout(res, REDUCED() ? 0 : 320));
+      await Promise.all([loadProducts(), loadNotifs()]); render();
+    } catch (e) { fail(e); $$('.crs [data-act="crs"]').forEach((b) => { b.disabled = false; }); }
+  },
+});
+
+// ================================================================== ürün eşleştirme penceresi (A: arama + görselli liste)
+// Pazaryeri satırının hangi ürün olduğunu seçmek: önerilenler (ad benzerliği) üstte, yazdıkça süzülür, ↑↓ / Enter.
+function mpBtn(kind, d) {
+  const attrs = Object.entries(d).filter(([, v]) => v != null && v !== '').map(([k, v]) => `data-mp-${k}="${esc(String(v))}"`).join(' ');
+  return `<button type="button" class="btn btn-sm mp-open" data-act="mp-open" data-mp-kind="${kind}" ${attrs}>${icon('search')} Hangi ürün? Seç…</button>`;
+}
+const MP_STOP = new Set(['ve', 'ile', 'için', 'icin', 'bir', 'li', 'lı', 'lu', 'lü', 'set', 'seti', 'adet', 'cm', 'mm', 'baskı', 'baski', '3d', 'hediye', 'hediyelik', 'özel', 'ozel', 'tasarım', 'tasarim', 'dekoratif', 'dekor', 'ürün', 'urun', 'model', 'figür', 'figur']);
+const mpNorm = (x) => String(x || '').toLocaleLowerCase('tr').normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/ı/g, 'i');
+const mpTok = (x) => [...new Set(mpNorm(x).split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !MP_STOP.has(w)))];
+function mpScore(src, p) {   // 0..1: kaynak adın kelimelerinden kaçı üründe var (4 harfli kök eşleşmesi de sayılır)
+  if (!src.length) return 0;
+  const pt = mpTok(`${p.name} ${p.variant_label || ''}`); if (!pt.length) return 0;
+  let hit = 0;
+  for (const w of src) {
+    if (pt.includes(w)) hit += 1;
+    else if (w.length >= 4 && pt.some((q) => q.length >= 4 && (q.startsWith(w.slice(0, 4)) || w.startsWith(q.slice(0, 4))))) hit += 0.6;
+  }
+  const cover = hit / src.length, prec = Math.min(1, hit / pt.length);
+  return Math.round((cover * 0.7 + prec * 0.3) * 100) / 100;
+}
+function openMatchPicker(d) {
+  return new Promise((resolve) => {
+    let done = false; const fin = (v) => { if (!done) { done = true; resolve(v); } };
+    const prods = (S.products || []).filter((p) => !p.archived);
+    const src = mpTok(d.name), scored = prods.map((p) => ({ p, sc: mpScore(src, p) }));
+    const sugg = scored.filter((x) => x.sc >= 0.3).sort((a, b) => b.sc - a.sc).slice(0, 4);
+    const same = d.code ? (S.tyOrders?.packages || []).reduce((n, pk) => n + (pk.lines || []).filter((l) => !l.product_id && l.barcode === d.code).length, 0) : 0;
+    const hay = (p) => mpNorm([p.name, p.variant_label, p.category, p.barcodes, p.sku].filter(Boolean).join(' '));
+    const row = (p, sc, i) => `<button type="button" class="mp-row" role="option" data-pid="${p.id}" style="--i:${Math.min(i, 12)}">
+      <span class="mp-im${p.thumbnail ? '' : ' none'}" style="${thumbStyle(p.thumbnail)}"></span>
+      <span class="mp-g"><b>${esc(p.name)}${p.variant_label ? ` <span class="faint">— ${esc(p.variant_label)}</span>` : ''}</b><small>${[p.category, p.barcodes ? `${String(p.barcodes).split(',').filter((x) => x.trim()).length} kod kayıtlı` : 'kod yok'].filter(Boolean).map(esc).join(' · ')}</small></span>
+      <span class="mp-stk${p.stock > 0 ? '' : ' none'}">rafta ${p.stock}</span>${sc != null ? `<span class="mp-pct">%${Math.round(sc * 100)}${i === 0 ? ' benzer' : ''}</span>` : ''}</button>`;
+    openModal(`<div class="modal-h"><h2>Ürünü eşleştir</h2><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+      <div class="mp-src"><span class="mp-im${d.thumb ? '' : ' none'}" style="${thumbStyle(d.thumb)}"></span>
+        <span class="mp-g"><b>${d.ch === 'hb' ? '<span class="ch-p hb">HB</span>' : d.ch ? '<span class="ch-p ty">TY</span>' : ''}${esc(d.name || 'Pazaryeri ürünü')}</b>
+        <small>${[d.code ? `<span class="mono">${esc(d.code)}</span>` : '', d.price ? fmtTL(+d.price) : '', d.no ? `sipariş ${esc(d.no)}` : ''].filter(Boolean).join(' · ')}</small></span></div>
+      <div class="mp-q"><span>${icon('search')}</span><input type="search" id="mp-q" placeholder="Ürün adı, barkod, kategori…" autocomplete="off" aria-label="Ürün ara"><kbd>↑↓ Enter</kbd></div>
+      <div class="mp-list" id="mp-list" role="listbox"></div>
+      <div class="mp-f"><small class="muted">${icon('check')} Kod (${esc(d.code || '—')}) seçtiğin ürüne kaydedilir; bu üründen gelen siparişler bir daha sorulmaz.${same > 1 ? ` <b>Bu koddaki ${same} satır</b> birlikte eşleşir.` : ''}</small>
+        <div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-ok" id="mp-ok" disabled>Eşleştir</button></div></div>`, 'mp-modal', () => fin(null));
+    const list = $('#mp-list'), q = $('#mp-q'); let cur = null;
+    const pick = (pid) => { cur = pid; $$('.mp-row', list).forEach((r) => r.classList.toggle('on', +r.dataset.pid === pid)); $('#mp-ok').disabled = !pid; };
+    const draw = () => {
+      const t = mpNorm(q.value).split(/\s+/).filter(Boolean);
+      let html;
+      if (!t.length) {
+        const rest = prods.filter((p) => !sugg.some((x) => x.p === p)).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+        html = (sugg.length ? `<div class="mp-lbl">Önerilen</div>${sugg.map((x, i) => row(x.p, x.sc, i)).join('')}` : '')
+          + `<div class="mp-lbl">Tüm ürünler · ${prods.length}</div>${rest.slice(0, 200).map((p, i) => row(p, null, i + sugg.length)).join('')}`;
+      } else {
+        const hits = scored.filter((x) => { const h = hay(x.p); return t.every((w) => h.includes(w)); }).sort((a, b) => b.sc - a.sc || a.p.name.localeCompare(b.p.name, 'tr'));
+        html = hits.length ? `<div class="mp-lbl">${hits.length} sonuç</div>${hits.slice(0, 200).map((x, i) => row(x.p, x.sc >= 0.3 ? x.sc : null, i)).join('')}` : `<div class="mp-empty">“${esc(q.value)}” ile eşleşen ürün yok</div>`;
+      }
+      list.innerHTML = html;
+      const first = list.querySelector('.mp-row');
+      pick(first && (t.length || sugg.length) ? +first.dataset.pid : null);
+    };
+    q.addEventListener('input', draw);
+    list.addEventListener('click', (e) => { const r = e.target.closest('.mp-row'); if (r) pick(+r.dataset.pid); });
+    list.addEventListener('dblclick', (e) => { const r = e.target.closest('.mp-row'); if (r) { pick(+r.dataset.pid); $('#mp-ok').click(); } });
+    q.addEventListener('keydown', (e) => {
+      const rows = $$('.mp-row', list); if (!rows.length) return;
+      const i = rows.findIndex((r) => +r.dataset.pid === cur);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault(); const n = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];
+        pick(+n.dataset.pid); n.scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'Enter' && cur) { e.preventDefault(); $('#mp-ok').click(); }
+    });
+    $('#mp-ok').onclick = () => { if (!cur) return; fin(cur); closeModal(); };
+    draw(); setTimeout(() => q.focus(), 60);
+  });
+}
+Object.assign(ACTIONS, {
+  'mp-open': async (el) => {
+    const d = {}; for (const [k, v] of Object.entries(el.dataset)) if (k.startsWith('mp') && k !== 'mpKind') d[k.slice(2).toLowerCase()] = v;
+    const kind = el.dataset.mpKind, pid = await openMatchPicker(d); if (!pid) return;
+    const nm = productById(pid)?.name || 'ürün';
+    try {
+      if (kind === 'um') {
+        const r = await api('POST', `/api/trendyol/lines/${encodeURIComponent(d.k)}/match`, { product_id: pid, save_barcode: true });
+        island('ok', `<b>${esc(nm)}</b> ile eşleşti${r.deducted ? ` · ${r.deducted} adet stoktan düştü` : ''}`, { ms: 1800 });
+        await loadProducts(); render();
+      } else {
+        const r = await api('POST', `/api/products/${pid}/barcode`, { code: d.code });
+        island('ok', `<b>${esc(nm)}</b> ile eşleşti${r.deducted ? ` · paketlenmiş ${r.deducted} adet stoktan düştü` : ''}`, { ms: 1800 });
+        await loadProducts();
+        if (kind === 'pick') { await loadPick(true).catch(() => {}); if ($('#pick-list')) fillPick(); else render(); }
+        else { await loadTyOrders(); render(); if (DRW.kind) drwRefresh(); }
+      }
+    } catch (e) { fail(e); }
+  },
+});

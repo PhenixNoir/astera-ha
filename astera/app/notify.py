@@ -256,6 +256,15 @@ def _claims():
         else:
             wanted[f"claim:{r['claim_id']}:c"] = ("claim", "warn", f"Yeni iade talebi · {r['order_number']}",
                                                   f"{r['customer'] or ''}: {names}".strip(": "), {"t": "go", "href": "#/iadeler?tab=transit"})
+    try:   # Trendyol'da (panelden / kendiliğinden) onaylanan iadeler: stoğa eklensin mi?
+        import musteri
+        pend = musteri.restock_pending()
+    except Exception:   # noqa — iade modülü hazır değilse
+        pend = []
+    if pend:
+        names = ", ".join(sorted({p["our_name"] or p["product"] or "Ürün" for p in pend}))[:160]
+        wanted[f"claim:stock:{pend[0]['item_id']}"] = ("claim", "warn", f"{len(pend)} iade Trendyol'da onaylandı · stoğa eklensin mi?",
+                                 names, {"t": "go", "href": "#/iadeler?tab=done"})
     _sync_group("claim:", wanted)
 
 
