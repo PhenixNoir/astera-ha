@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.15.1
+- Yeni Trendyol siparişleri Trendyol'da kendiliğinden "İşleme alındı" yapılır (müşteri hazırlandığını hemen görür). Panelde sipariş Yeni'de kalır ("TY'de işleme alındı" etiketiyle), stok düşmez; "Hazırlanıyor'a çek" deyince burada Hazırlanıyor'a geçer ve stok o an düşer. Ayarlar → Trendyol'dan kapatılabilir.
+- Stok yetmezken Hazırlanıyor'a çekilen siparişte olmayan ürün Hazırla listesinde "raftan" sayılıyordu; artık yalnız gerçekten stoktan düşen adet sayılır, iptalde de yalnız o kadarı geri eklenir. Açık siparişler güncellemede düzeltilir.
+
 ## 1.15.0
 - Ürün eşleştirme artık ayrı pencerede: arama, ürün görselleri, raftaki stok ve ada göre önerilen ürünler (benzerlik yüzdesiyle); ↑↓ ve Enter ile hızlı seçim.
 - İadeler: Trendyol panelinden ya da Trendyol'un kendiliğinden onayladığı iadeler için "stoğa eklensin mi?" bildirimi; İadeler sayfasında ürün ürün "Stoğa ekle / Ekleme".

@@ -5089,7 +5089,7 @@ function tyoRow(p, r) {
     ${sel ? `<input type="checkbox" class="tyo-cb" data-tyo-sel="${esc(p.package_id)}" ${S.tyo.sel.has(p.package_id) ? 'checked' : ''} aria-label="Siparişi seç">` : cbCol ? '<span class="tyo-cb-sp"></span>' : ''}
     <details class="tyo" ${S.tyo.open.has(p.package_id) ? 'open' : ''} data-tyo-open="${esc(p.package_id)}">
       <summary>
-        <span class="tyo-no"><b>${chBadge(p)}${esc(p.order_number)}</b><small class="faint">${date}</small>${p.back_at ? `<span class="bk-chip" title="Yanlışlıkla hazırlanmış, ${esc(fmtWhen(p.back_at))} Yeni'ye geri alındı. ${p.channel === 'hb' ? 'Hepsiburada' : 'Trendyol'}'da hâlâ Hazırlanıyor görünür.">↩ geri alındı</span>` : ''}</span>
+        <span class="tyo-no"><b>${chBadge(p)}${esc(p.order_number)}</b><small class="faint">${date}</small>${p.auto_acc ? `<span class="aa-chip" title="Trendyol'da ${esc(fmtWhen(p.auto_acc))} kendiliğinden İşleme alındı; müşteri hazırlandığını görüyor. Burada siz hazırlayana kadar Yeni kalır.">✓ TY'de işleme alındı</span>` : ''}${p.back_at ? `<span class="bk-chip" title="Yanlışlıkla hazırlanmış, ${esc(fmtWhen(p.back_at))} Yeni'ye geri alındı. ${p.channel === 'hb' ? 'Hepsiburada' : 'Trendyol'}'da hâlâ Hazırlanıyor görünür.">↩ geri alındı</span>` : ''}</span>
         <span class="tyo-thumbs">${thumbs.slice(0, 3).map((l, ti) => `<span class="tt${sh.by[l.product_id]?.miss ? ' out' : ''}" style="${floatVars(p.package_id + ':' + ti)}">${miniThumb(l.thumbnail)}${l.quantity > 1 ? qtyBadge(l.quantity, 'tt-qb') : ''}</span>`).join('')}${thumbs.length > 3 ? `<span class="tt more">+${thumbs.length - 3}</span>` : ''}</span>
         <span class="tyo-who"><b>${esc(p.customer || '—')}</b>${p.note ? `<span class="tn-pin" title="${esc(p.note)}">📝 ${esc(p.note)}</span>` : ''}<small class="muted">${esc(p.city || '')}${p.district ? ` · ${esc(p.district)}` : ''}${plusTags(p)}${orderRuleHits(p).map((h) => ` <span class="rule-tag t-${h.tone}" title="${esc(h.text)}">${{ gift: '🎁', info: 'ℹ️', warn: '⚠️' }[h.tone] || '🎁'} ${esc(h.text)}</span>`).join('')}${isNear(p) ? ` <span class="near-tag" title="Mağazayla aynı yer: pakete not eklemeyi unutmayın">${icon('pin')} Yakın · not ekle</span>` : ''}${unmatched ? ' · <span class="warn-text">eşleşmeyen ürün</span>' : ''}${stTag ? ` · <span class="tag">${stTag}</span>` : ''}${sh.state === 'all' ? ' · <span class="sh-tag all">hepsi eksik</span>' : sh.state === 'some' ? ` · <span class="sh-tag some">${Object.values(sh.by).filter((x) => x.miss).length} kalem eksik</span>` : Object.values(sh.by).some((x) => x.print) ? ' · <span class="sh-tag pr">baskıda</span>' : ''}</small></span>
         <span class="tyo-amt">${r ? fmtTL(r.price) : p.pkg_total != null ? fmtTL(p.pkg_total) : '–'}</span>
@@ -5847,10 +5847,10 @@ async function tyoPick(ids) {
   pk.forEach((p) => p.lines.forEach((l) => { if (l.product_id && !TY_CANCEL.has(l.status) && l.state !== 'deducted') needBy[l.product_id] = (needBy[l.product_id] || 0) + l.quantity; }));
   const short = Object.entries(needBy).map(([pid, n]) => ({ p: productById(+pid), n })).filter((x) => x.p && x.n > x.p.stock);
   const warn = short.length ? `\n\nDİKKAT: Şu ürünler sistemde paketlenecek adetten az görünüyor:\n${short.map((x) => `• ${x.p.name}: sistemde ${x.p.stock}, paketlenecek ${x.n}`).join('\n')}\nRafta gerçekten varsa bir baskı kaydı eksik olabilir. Devam ederseniz stok 0'da durur ve fark panoda "Kontrol edilecekler"e düşer.` : '';
-  const fresh = pk.filter((p) => !p.back_at), nBack = pk.length - fresh.length;
+  const fresh = pk.filter((p) => !p.back_at && !p.auto_acc), nBack = pk.length - fresh.length;
   const nHB = fresh.filter((p) => p.channel === 'hb').length, nTY = fresh.length - nHB;
   const what = [nTY ? `${nTY} sipariş Trendyol'da Hazırlanıyor durumuna çekilecek` : '', nHB ? `${nHB} sipariş Hepsiburada'da paketlenecek` : ''].filter(Boolean).join(', ')
-    + (nBack ? `${fresh.length ? '; ' : ''}${nBack} geri alınmış sipariş yalnız burada Hazırlanıyor'a döner` : '');
+    + (nBack ? `${fresh.length ? '; ' : ''}${nBack} sipariş (Trendyol'da zaten işleme alınmış) yalnız burada Hazırlanıyor'a geçer` : '');
   if (!asked && fresh.length && !confirm(`${what} ve ürünler stoktan düşülecek.${unm ? `\n${unm} siparişte eşleşmeyen ürün var; onların stoğu düşülemez.` : ''}${warn}\n\n${nTY ? "Trendyol'da bu işlem geri alınamaz." : ''}${nHB ? `${nTY ? ' ' : ''}Hepsiburada paketi gerekirse "Paketi boz" ile geri alınır.` : ''} Devam edilsin mi?`)) return;
   try {
     if (!S.labelCfg) S.labelCfg = await api('GET', '/api/label/settings').catch(() => null);
@@ -7800,6 +7800,8 @@ function tyConnHTML() {
             <label class="switch"><input type="checkbox" id="ty-restock" ${st.ty_restock_cancel ? 'checked' : ''}> İptal edilen siparişleri stoğa geri ekle</label>
             <label class="switch"><input type="checkbox" id="ty-en" ${st.ty_enabled ? 'checked' : ''}> Otomatik takip açık</label>
           </div>
+          <div class="ty-write${st.ty_auto_accept !== false ? ' on' : ''}"><label class="switch"><input type="checkbox" id="ty-auto" ${st.ty_auto_accept !== false ? 'checked' : ''}> <b>Yeni siparişleri Trendyol'da hemen “İşleme alındı” yap</b></label>
+            <small>Sipariş düşer düşmez Trendyol'da İşleme alınır; müşteri hazırlandığını görür. Burada sipariş <b>Yeni</b>'de kalır, stok düşmez; siz “Hazırlanıyor'a çek” deyince burada Hazırlanıyor'a geçer ve stok o an düşer.</small></div>
           <div class="ty-write${st.ty_write ? ' on' : ''}"><label class="switch"><input type="checkbox" id="ty-write" ${st.ty_write ? 'checked' : ''}> <b>Trendyol'a değişiklik gönder</b></label>
             <small>Açıkken Astera'dan Trendyol'daki ürün fiyatı ve siparişin kargo firması değiştirilebilir; her değişiklikten önce "eski → yeni" onayı istenir. Kapalıyken Trendyol'a hiçbir değişiklik gönderilmez. Ürün düzenleme ekranı yalnızca Astera'yı değiştirir, Trendyol'a hiçbir şey göndermez.</small></div>
           <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-primary" data-act="ty-save">Kaydet</button><button class="btn" data-act="ty-test">Bağlantıyı dene</button><button class="btn" data-act="ty-diag">Tanılama</button></div>
@@ -8914,7 +8916,7 @@ const ACTIONS = {
     try { const r = await api('POST', `/api/products/${id}/stock`, { delta: -q, reason: 'sale', ref: $('#ms-ref').value.trim() || null }); toast(`${productById(id).name}: stok ${r.stock}`); $('#ms-ref').value = ''; $('#ms-q').value = 1; await loadProducts(); $('#ms-p').innerHTML = `<option value="">Ürün seçin…</option>` + S.products.map((p) => `<option value="${p.id}">${esc(p.name)} (stok ${p.stock})</option>`).join(''); } catch (e) { fail(e); }
   },
   'ty-save': async () => {
-    const body = { ty_seller_id: $('#ty-sid').value, ty_api_key: $('#ty-key').value, ty_interval_min: +$('#ty-int').value || 5, ty_restock_cancel: $('#ty-restock').checked, ty_enabled: $('#ty-en').checked, ty_write: $('#ty-write').checked };
+    const body = { ty_seller_id: $('#ty-sid').value, ty_api_key: $('#ty-key').value, ty_interval_min: +$('#ty-int').value || 5, ty_restock_cancel: $('#ty-restock').checked, ty_enabled: $('#ty-en').checked, ty_write: $('#ty-write').checked, ty_auto_accept: $('#ty-auto').checked };
     if (body.ty_write && !S.settings?.ty_write && !confirm("Trendyol'a değişiklik gönderme açılacak. Fiyat ve kargo firması değişiklikleri (her seferinde onayınızla) Trendyol'a gönderilebilecek. Devam edilsin mi?")) return;
     if ($('#ty-since').value) body.ty_since = new Date($('#ty-since').value).getTime();
     if ($('#ty-sec').value) body.ty_api_secret = $('#ty-sec').value;

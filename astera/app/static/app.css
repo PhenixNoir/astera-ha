@@ -5051,3 +5051,8 @@ button.cu-ev:hover { background: var(--sheet-2); }
 .mp-open { gap: 6px; } .mp-open svg { width: 14px; height: 14px; }
 @media (max-width: 640px) { .modal.mp-modal { max-height: 100dvh; height: 100dvh; border-radius: 0; } .mp-q kbd { display: none; } .mp-row .mp-pct { display: none; } }
 @media (prefers-reduced-motion: reduce) { .mp-row { animation: none; } }
+
+/* Trendyol'da kendiliğinden İşleme alınmış (burada Yeni) */
+.aa-chip { grid-column: 1 / -1; justify-self: start; margin-top: 3px; padding: 1px 7px; border-radius: 99px; font-size: 10.5px; font-weight: 700; white-space: nowrap;
+  color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent); animation: bk-in .6s cubic-bezier(.2, .8, .2, 1) both; }
+@media (prefers-reduced-motion: reduce) { .aa-chip { animation: none; } }

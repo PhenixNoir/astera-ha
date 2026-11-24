@@ -92,6 +92,7 @@ def public_settings():
             "geliver_set": bool(_get("geliver_token", "")),
             "weekly_at": _get("weekly_at") or "1 09:00",
             "ty_write": _get("ty_write", "0") == "1",
+            "ty_auto_accept": _get("ty_auto_accept", "1") == "1",
         }
 
 
@@ -148,7 +149,7 @@ def save_settings(b):
             _set("ty_api_secret", b["ty_api_secret"].strip())
         if "ty_interval_min" in b:
             _set("ty_interval_min", max(2, int(b["ty_interval_min"] or 5)))
-        for k in ("ty_restock_cancel", "ty_stage", "ty_write"):
+        for k in ("ty_restock_cancel", "ty_stage", "ty_write", "ty_auto_accept"):
             if k in b:
                 _set(k, "1" if b[k] else "0")
         if "ty_enabled" in b:
@@ -465,9 +466,11 @@ def _due(status, row, mode=None):
 
 def _deduct(row_key, pid, qty, order_no, name, stats):
     hb = str(row_key).startswith("hb:")   # Hepsiburada satırı (aynı pazaryeri akışı, notta ayrılır)
+    have = _db().execute("SELECT stock FROM products WHERE id=?", (pid,)).fetchone()
+    real = min(qty, max(0, (have["stock"] or 0) if have else 0))   # stok sıfırın altına inmez: gerçekte çıkan adet
     _change_stock(pid, -qty, "trendyol", ref=order_no, note=(("Hepsiburada · " if hb else "") + f"{name or ''} · {DEDUCT_NOTE[deduct_mode()]}").strip(" ·"))
-    _db().execute("UPDATE ty_lines SET state='deducted', product_id=?, packed_at=COALESCE(packed_at, ?) WHERE line_key=?",
-                  (pid, _now(), row_key))
+    _db().execute("UPDATE ty_lines SET state='deducted', product_id=?, packed_at=COALESCE(packed_at, ?), ded_qty=? WHERE line_key=?",
+                  (pid, _now(), real, row_key))
     stats["deducted"] += qty
 
 
@@ -495,15 +498,18 @@ def _advance(row, status, pid, restock, stats, since_ms, order_no=None, name=Non
         elif not pid and st != "unmatched" and not packed:
             _db().execute("UPDATE ty_lines SET state='unmatched' WHERE line_key=?", (key,))
     elif st == "deducted":
+        real = row["ded_qty"] if "ded_qty" in row.keys() and row["ded_qty"] is not None else qty   # gerçekte stoktan çıkan
         if cancelled and restock:
-            _change_stock(row["product_id"], qty, "trendyol", ref=order_no, note="İptal — stoğa geri eklendi")
+            if real:
+                _change_stock(row["product_id"], real, "trendyol", ref=order_no, note="İptal — stoğa geri eklendi")
             _db().execute("UPDATE ty_lines SET state='restocked' WHERE line_key=?", (key,))
-            stats["restocked"] += qty
-        elif status == "Created" and mode == "picking" and row["packed_at"] is None:
+            stats["restocked"] += real
+        elif status == "Created" and mode == "picking" and row["packed_at"] is None and not _is_back(row["package_id"]):
             # Eski kuralla Yeni iken düşülmüştü; artık paketlenince düşülüyor, stoğa geri koy
-            _change_stock(row["product_id"], qty, "trendyol", ref=order_no, note="Yeni sipariş — paketlenince düşülecek")
-            _db().execute("UPDATE ty_lines SET state='pending', packed_at=NULL WHERE line_key=?", (key,))
-            stats["restocked"] += qty
+            if real:
+                _change_stock(row["product_id"], real, "trendyol", ref=order_no, note="Yeni sipariş — paketlenince düşülecek")
+            _db().execute("UPDATE ty_lines SET state='pending', packed_at=NULL, ded_qty=NULL WHERE line_key=?", (key,))
+            stats["restocked"] += real
 
 
 def _process_line(pkg, line, codes, restock, since_ms, stats, key=None):
@@ -511,6 +517,8 @@ def _process_line(pkg, line, codes, restock, since_ms, stats, key=None):
     order_no = str(pkg.get("orderNumber") or "")
     order_date = from_ty(pkg.get("orderDate") or 0)
     status = line_status(pkg, line)
+    if status == "Picking" and _is_auto(pkg.get("id")):
+        status = "Created"   # Trendyol'da kendiliğinden İşleme alındı; burada siz hazırlayana kadar Yeni (stok düşmez)
     qty = line_qty(line)
     cancelled, packed = status in CANCEL_STATES, status in PACKED_STATES
     row = _db().execute("SELECT * FROM ty_lines WHERE line_key=?", (key,)).fetchone()
@@ -537,10 +545,12 @@ def _process_line(pkg, line, codes, restock, since_ms, stats, key=None):
         row = _db().execute("SELECT * FROM ty_lines WHERE line_key=?", (key,)).fetchone()
     if row is not None and not cancelled and row["state"] == "deducted" and qty < (row["quantity"] or 0):
         diff = row["quantity"] - qty   # düşülmüş adetten bir kısmı iptal edildi
-        if restock and row["product_id"]:
-            _change_stock(row["product_id"], diff, "trendyol", ref=order_no, note=f"Kısmi iptal — {diff} adet stoğa geri eklendi")
-            stats["restocked"] += diff
-        _db().execute("UPDATE ty_lines SET quantity=? WHERE line_key=?", (qty, key))
+        real = row["ded_qty"] if row["ded_qty"] is not None else row["quantity"]
+        back = max(0, real - qty)        # önce stokta olmayan (düşülemeyen) kısım iptal sayılır
+        if restock and row["product_id"] and back:
+            _change_stock(row["product_id"], back, "trendyol", ref=order_no, note=f"Kısmi iptal — {back} adet stoğa geri eklendi")
+            stats["restocked"] += back
+        _db().execute("UPDATE ty_lines SET quantity=?, ded_qty=? WHERE line_key=?", (qty, min(real, qty) if row["ded_qty"] is not None else None, key))
         row = _db().execute("SELECT * FROM ty_lines WHERE line_key=?", (key,)).fetchone()
 
     if row is None:
@@ -619,6 +629,12 @@ def sync(manual=False):
             except Exception:
                 _db().rollback()
                 raise
+        try:
+            aa = auto_accept()
+            if aa.get("accepted"):
+                stats["auto_accepted"] = aa["accepted"]
+        except Exception as e:   # noqa — kendiliğinden işleme alma eşitlemeyi bozmasın
+            print("Kendiliğinden işleme alma hatası:", e)
         if _get("ty_backfill_v1") == "1" and _get("ty_backfill_dist") != "1":
             try:   # ilçe bu sürümden önce saklanmıyordu: açık siparişler için doldur
                 stats["backfilled_dist"] = backfill_details(max_days=21, where="district IS NULL")
@@ -815,7 +831,7 @@ def _open_lines():
                 if key in seen:
                     continue
                 seen.add(key)
-                row = _db().execute("SELECT state FROM ty_lines WHERE line_key=?", (key,)).fetchone()
+                row = _db().execute("SELECT state, ded_qty FROM ty_lines WHERE line_key=?", (key,)).fetchone()
                 pid = _match(codes, line)
                 out.append({
                     "line_key": key, "order_number": str(pkg.get("orderNumber") or ""),
@@ -823,7 +839,7 @@ def _open_lines():
                     "barcode": line.get("barcode"), "merchant_sku": line.get("merchantSku"),
                     "product_name": line.get("productName"), "quantity": line_qty(line),
                     "ty_status": status, "product_id": pid, "matched_name": names.get(pid),
-                    "known_state": row["state"] if row else None,
+                    "known_state": row["state"] if row else None, "known_ded": row["ded_qty"] if row else None,
                     "deadline": pkg_deadline(pkg),
                 })
     out.sort(key=lambda x: x["order_date"], reverse=True)
@@ -844,7 +860,7 @@ def _hb_open_lines():
         out.append({"line_key": r["line_key"], "order_number": r["order_number"], "package_id": r["package_id"], "order_date": r["order_date"],
                     "barcode": r["barcode"], "merchant_sku": r["merchant_sku"], "product_name": r["product_name"], "quantity": r["quantity"],
                     "ty_status": r["ty_status"], "product_id": pid, "matched_name": names.get(pid), "known_state": r["state"],
-                    "deadline": r["deadline"], "channel": "hb"})
+                    "known_ded": r["ded_qty"], "deadline": r["deadline"], "channel": "hb"})
     return out
 
 
@@ -944,12 +960,13 @@ def pick_list():
             g.update(thumbnail=p["thumbnail"], stock=p["stock"], print_type=p["print_type"], name=p["name"])
         g["quantity"] += l["quantity"]
         g["orders"].append({"order_number": l["order_number"], "quantity": l["quantity"], "order_date": l["order_date"],
-                            "known_state": l["known_state"], "deadline": l["deadline"], "channel": l.get("channel", "ty"), "back": bool(l.get("back"))})
+                            "known_state": l["known_state"], "known_ded": l.get("known_ded"), "deadline": l["deadline"], "channel": l.get("channel", "ty"), "back": bool(l.get("back"))})
     items = sorted(groups.values(), key=lambda g: (-g["quantity"], g["name"] or ""))
     for g in items:
         g["order_count"] = len({o["order_number"] for o in g["orders"]})
         # Takipte düşülmüş Yeni siparişler stoktan zaten çıkmış durumda; raftaki fiziksel adet = stok + bunlar
-        deducted = sum(o["quantity"] for o in g["orders"] if o["known_state"] == "deducted")
+        # stoktan düşülmüş ama henüz kargoya verilmemiş adet rafta sayılır; stok yetmezken düşülen kısım (gerçekte olmayan) sayılmaz
+        deducted = sum((o["quantity"] if o.get("known_ded") is None else o["known_ded"]) for o in g["orders"] if o["known_state"] == "deducted")
         g["on_shelf"] = (g["stock"] + deducted) if g["stock"] is not None else None
         g["shortage"] = max(0, g["quantity"] - g["on_shelf"]) if g["on_shelf"] is not None else None
     # Bugün paketlenenler: Trendyol'da bugün Hazırlanıyor'a geçen tüm satırlar (düşülmeyenler ayrıca işaretli)
@@ -1147,7 +1164,7 @@ def orders(month=None, start=None, end=None):
     hb_write = _get("hb_write", "0") == "1"
     with _lock:
         notes = {r["order_number"]: (r["note"], r["updated_at"]) for r in _db().execute("SELECT * FROM ty_notes")}
-        backs = {r["package_id"]: r["at"] for r in _db().execute("SELECT * FROM ty_back")}
+        backs = {r["package_id"]: (r["at"], r["auto"]) for r in _db().execute("SELECT * FROM ty_back")}
     stale = []
     for g in pk.values():
         g["note"], g["note_at"] = notes.get(g["order_number"], (None, None))
@@ -1155,11 +1172,14 @@ def orders(month=None, start=None, end=None):
         live = [st for st in g["statuses"] if st not in CANCEL_STATES]
         g["status"] = live[0] if live else (g["statuses"][0] if g["statuses"] else "")
         g["tab"] = _tab_of(g["status"])
-        g["back_at"] = None
-        if str(g["package_id"]) in backs:   # yanlışlıkla çekildi, burada Yeni'ye geri alındı (pazaryerinde durum değişmez)
-            if g["tab"] == "picking":
-                g["tab"], g["back_at"] = "new", backs[str(g["package_id"])]
-            else:
+        g["back_at"], g["auto_acc"] = None, None
+        bk = backs.get(str(g["package_id"]))
+        if bk:
+            if bk[1] and g["tab"] == "new":   # Trendyol'da kendiliğinden İşleme alındı, burada Yeni
+                g["auto_acc"] = bk[0]
+            elif g["tab"] == "picking" and not bk[1]:   # yanlışlıkla çekildi, burada Yeni'ye geri alındı
+                g["tab"], g["back_at"] = "new", bk[0]
+            elif g["tab"] not in ("new", "picking"):
                 stale.append(str(g["package_id"]))
         # Trendyol Plus / indirimli komisyon: indirim etiketinde "Plus" geçiyor ya da satırın komisyonu ürünün olağan komisyonundan düşük
         names = " ".join(d.get("n", "") for d in (g["discounts"] or [])).lower()
@@ -1171,7 +1191,7 @@ def orders(month=None, start=None, end=None):
             continue
         counts[g["tab"]] += 1
         hb = g["channel"] == "hb"
-        if g["back_at"]:   # geri alınmış: "hazırla" yalnız burada işaretler, pazaryerine bir şey gönderilmez
+        if g["back_at"] or g["auto_acc"]:   # geri alınmış / Trendyol'da zaten İşleme alınmış: "hazırla" yalnız burada işaretler
             g["can_pick"], g["can_unpack"] = True, False
             g["can_label"] = bool(g.get("hb_pkg")) if hb else True
         elif hb:   # Hepsiburada: "Paketlemeyi Hepsiburada'ya gönder" açıksa uygulamadan paketlenir, etiket Hepsiburada'dan
@@ -1592,6 +1612,58 @@ def mark_label(package_id):
         _db().commit()
 
 
+def _is_back(package_id):
+    return bool(_db().execute("SELECT 1 FROM ty_back WHERE package_id=?", (str(package_id or ""),)).fetchone())
+
+
+def _is_auto(package_id):
+    return bool(package_id) and bool(_db().execute("SELECT 1 FROM ty_back WHERE package_id=? AND auto=1", (str(package_id),)).fetchone())
+
+
+# ---------------------------------------------------------------- yeni siparişi Trendyol'da kendiliğinden "İşleme alındı" yapmak
+# Müşteri siparişin hazırlandığını hemen görür (soru azalır). Bu uygulamada sipariş Yeni kalır, stok düşmez; siz
+# "Hazırlanıyor'a çek" deyince yalnız burada Hazırlanıyor'a geçer ve stok o an düşer. Trendyol'a ikinci istek gitmez.
+_auto_fail = {}
+
+
+def auto_accept(limit=40):
+    with _lock:
+        if _get("ty_auto_accept", "1") != "1" or not _get("ty_seller_id", ""):
+            return {"accepted": 0}
+        cs = sorted(CANCEL_STATES)
+        rows = [dict(r) for r in _db().execute(
+            f"""SELECT package_id, order_number, line_id, quantity, ty_status FROM ty_lines
+                WHERE COALESCE(channel,'ty')='ty' AND package_id IS NOT NULL AND package_id<>''
+                  AND package_id IN (SELECT package_id FROM ty_lines WHERE ty_status='Created' AND COALESCE(channel,'ty')='ty'
+                                     AND COALESCE(order_date,0) >= ?)
+                  AND package_id NOT IN (SELECT package_id FROM ty_back)
+                  AND COALESCE(ty_status,'') NOT IN ({','.join('?' * len(cs))})""", ((_now() - 14 * 86400) * 1000, *cs))]
+    pk = {}
+    for r in rows:
+        pk.setdefault(r["package_id"], []).append(r)
+    ok, errs = [], []
+    for pid_, live in list(pk.items())[:limit]:
+        if _auto_fail.get(pid_, 0) >= 3 or any(r["ty_status"] != "Created" for r in live) or any(not r["line_id"] for r in live):
+            continue
+        body = {"lines": [{"lineId": int(r["line_id"]) if str(r["line_id"]).isdigit() else r["line_id"], "quantity": r["quantity"]} for r in live],
+                "params": {}, "status": "Picking"}
+        if ok or errs:
+            time.sleep(0.25)
+        try:
+            _request(f"/integration/order/sellers/{{sid}}/shipment-packages/{pid_}", None, method="PUT", body=body)
+        except TrendyolError as e:
+            _auto_fail[pid_] = _auto_fail.get(pid_, 0) + 1
+            errs.append({"package_id": pid_, "order_number": live[0]["order_number"], "error": str(e)})
+            continue
+        with _lock:
+            _db().execute("INSERT OR REPLACE INTO ty_back(package_id, at, auto) VALUES(?,?,1)", (pid_, _now()))
+            _db().commit()
+        ok.append(pid_)
+    if errs:
+        print("Trendyol kendiliğinden işleme alma:", errs[0]["error"])
+    return {"accepted": len(ok), "errors": errs}
+
+
 def back_to_new(package_ids):
     """Yanlışlıkla Hazırlanıyor'a çekilen siparişleri burada Yeni'ye geri alır. Trendyol / Hepsiburada'daki durum değişmez,
     stoktan düşülen adet geri eklenmez (sipariş yine hazırlanacak). Yalnız Hazırlanıyor'daki siparişler alınır."""
@@ -1617,14 +1689,28 @@ def back_ids(package_ids):
 
 
 def back_done(package_ids):
-    """Geri alınmış sipariş yeniden hazırlandı: işaret kalkar, bugün paketlenenlere girer. Pazaryerine istek gitmez."""
+    """Geri alınmış ya da Trendyol'da kendiliğinden İşleme alınmış sipariş hazırlandı: işaret kalkar, bugün
+    paketlenenlere girer. Kendiliğinden alınmışsa stok şimdi düşer. Pazaryerine istek gitmez."""
     t = _now()
+    stats = {"deducted": 0, "restocked": 0}
     with _lock:
-        for pid_ in package_ids:
-            _db().execute("DELETE FROM ty_back WHERE package_id=?", (str(pid_),))
-            _db().execute("UPDATE ty_lines SET packed_at=? WHERE package_id=?", (t, str(pid_)))
+        restock = _get("ty_restock_cancel", "1") == "1"
+        codes = _code_map()
+        for pid_ in [str(x) for x in package_ids]:
+            auto = _is_auto(pid_)
+            _db().execute("DELETE FROM ty_back WHERE package_id=?", (pid_,))
+            if not auto:
+                _db().execute("UPDATE ty_lines SET packed_at=? WHERE package_id=?", (t, pid_))
+                continue
+            cs = sorted(CANCEL_STATES)
+            for r in _db().execute(f"SELECT * FROM ty_lines WHERE package_id=? AND COALESCE(ty_status,'') NOT IN ({','.join('?' * len(cs))})",
+                                   (pid_, *cs)).fetchall():
+                _db().execute("UPDATE ty_lines SET ty_status='Picking', packed_at=?, updated_at=? WHERE line_key=?", (t, t, r["line_key"]))
+                row = _db().execute("SELECT * FROM ty_lines WHERE line_key=?", (r["line_key"],)).fetchone()
+                eff = row["product_id"] or codes.get((row["barcode"] or "").strip().lower())
+                _advance(row, "Picking", eff, restock, stats, _since(), row["order_number"], row["product_name"])
         _db().commit()
-    return {"done": [str(x) for x in package_ids], "errors": [], "deducted": 0}
+    return {"done": [str(x) for x in package_ids], "errors": [], "deducted": stats["deducted"]}
 
 
 def _back_lines():
@@ -1635,12 +1721,12 @@ def _back_lines():
             "SELECT id, name || COALESCE(' — ' || NULLIF(variant_label,''), '') name FROM products")}
         rows = [dict(r) for r in _db().execute(
             f"""SELECT t.* FROM ty_lines t JOIN ty_back b ON b.package_id=t.package_id
-                WHERE t.ty_status IN ({','.join('?' * len(ORDER_TABS['picking']))}) AND t.state NOT IN ('cancelled','restocked')""",
-            tuple(ORDER_TABS["picking"]))]
+                WHERE t.ty_status IN ({','.join('?' * (len(ORDER_TABS['picking']) + 1))}) AND t.state NOT IN ('cancelled','restocked')""",
+            (*ORDER_TABS["picking"], "Created"))]
     return [{"line_key": r["line_key"], "order_number": r["order_number"], "package_id": r["package_id"], "order_date": r["order_date"],
              "barcode": r["barcode"], "merchant_sku": r.get("merchant_sku"), "product_name": r["product_name"], "quantity": r["quantity"],
              "ty_status": r["ty_status"], "product_id": r["product_id"] or _match(codes, {"barcode": r["barcode"], "merchantSku": r.get("merchant_sku")}),
-             "matched_name": names.get(r["product_id"]), "known_state": r["state"], "deadline": r["deadline"],
+             "matched_name": names.get(r["product_id"]), "known_state": r["state"], "known_ded": r["ded_qty"], "deadline": r["deadline"],
              "channel": r.get("channel") or "ty", "back": True} for r in rows]
 
 

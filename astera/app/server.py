@@ -405,9 +405,27 @@ def migrate():
     tcols = _columns("ty_lines")
     for col, typ in (("unit_price", "REAL"), ("pkg_total", "REAL"), ("customer", "TEXT"), ("city", "TEXT"),
                      ("deadline", "INTEGER"), ("line_id", "TEXT"), ("cargo_no", "TEXT"), ("cargo_provider", "TEXT"),
-                     ("cargo_link", "TEXT"), ("label_at", "INTEGER"), ("commission", "REAL"), ("district", "TEXT"), ("discounts", "TEXT"), ("customer_id", "TEXT"), ("shipped_at", "INTEGER")):
+                     ("cargo_link", "TEXT"), ("label_at", "INTEGER"), ("commission", "REAL"), ("district", "TEXT"), ("discounts", "TEXT"), ("customer_id", "TEXT"), ("shipped_at", "INTEGER"), ("ded_qty", "INTEGER")):
         if col not in tcols:
             c.execute(f"ALTER TABLE ty_lines ADD COLUMN {col} {typ}")
+    if "auto" not in _columns("ty_back"):   # Trendyol'da kendiliğinden İşleme alınan (burada hâlâ Yeni) paketler
+        c.execute("ALTER TABLE ty_back ADD COLUMN auto INTEGER DEFAULT 0")
+    if "ded_qty" not in tcols:
+        # Stok yetmezken düşülen satırlar: gerçekte stoktan çıkan adet (stok sıfırın altına inmez). Hâlâ açık olan
+        # (kargoya verilmemiş) satırlar için stok kaydındaki "sistemde yoktu" adediyle geriye dönük hesaplanır;
+        # yoksa Hazırla listesi olmayan ürünü "raftan" sayıyordu.
+        open_rows = c.execute("""SELECT line_key, order_number, product_id, quantity FROM ty_lines WHERE state='deducted' AND product_id IS NOT NULL
+                                 AND COALESCE(ty_status,'') IN ('Created','Awaiting','Picking','Invoiced','ReadyToShip','Repack','UnPacked')
+                                 ORDER BY order_number, line_key""").fetchall()
+        short = {}
+        for r in open_rows:
+            k = (r["order_number"], r["product_id"])
+            if k not in short:
+                short[k] = c.execute("SELECT COALESCE(SUM(shortfall),0) FROM stock_log WHERE reason='trendyol' AND ref=? AND product_id=? AND delta<=0",
+                                     k).fetchone()[0] or 0
+            miss = min(short[k], r["quantity"] or 0)
+            short[k] -= miss
+            c.execute("UPDATE ty_lines SET ded_qty=? WHERE line_key=?", ((r["quantity"] or 0) - miss, r["line_key"]))
     ocols = _columns("custom_orders")
     for col, typ in (("order_date", "TEXT"), ("print_minutes", "INTEGER"), ("printer", "TEXT")):
         if col not in ocols:
