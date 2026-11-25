@@ -7,7 +7,11 @@ import datetime
 import re
 import time
 
-CATS = ("dukkan", "alis", "mus", "mak", "ofis", "diger")
+CATS = ("dukkan", "alis", "mus", "mak", "ofis", "diger")   # hazır kategoriler (yeniden adlandırılabilir, renkleri değişebilir)
+DEFAULT_CATS = [("dukkan", "Dükkan", "🛠️", "#FFE58A"), ("alis", "Alışveriş", "🛒", "#B9E6FF"), ("mus", "Müşteri", "👤", "#FFC9DD"),
+                ("mak", "Makine", "🖨️", "#C9F2D4"), ("ofis", "Ofis", "💼", "#E3D7FF"), ("diger", "Diğer", "📌", "#FFD8B5")]
+FRAMES = ("tape", "pin", "curl", "torn", "pola", "lined", "neon", "stamp")
+HEX = re.compile(r"#[0-9a-fA-F]{6}")
 LINKS = ("ty", "co", "p", "")
 _db = None
 
@@ -22,6 +26,15 @@ def migrate(c):
         id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, cat TEXT DEFAULT 'diger', due TEXT,
         rep TEXT, link_kind TEXT, link_id TEXT, link_label TEXT, done_at INTEGER, last_done INTEGER,
         created_at INTEGER, updated_at INTEGER)""")
+    cols = {r[1] for r in c.execute("PRAGMA table_info(todos)")}
+    for col in ("color", "frame"):   # notun kendi rengi ve çerçevesi (boşsa kategorinin rengi / varsayılan çerçeve)
+        if col not in cols:
+            c.execute(f"ALTER TABLE todos ADD COLUMN {col} TEXT")
+    c.execute("""CREATE TABLE IF NOT EXISTS todo_cats (key TEXT PRIMARY KEY, label TEXT NOT NULL, emoji TEXT, color TEXT,
+                 sort INTEGER DEFAULT 0, builtin INTEGER DEFAULT 0)""")
+    if not c.execute("SELECT 1 FROM todo_cats LIMIT 1").fetchone():
+        for i, (k, l, e, col) in enumerate(DEFAULT_CATS):
+            c.execute("INSERT INTO todo_cats(key, label, emoji, color, sort, builtin) VALUES(?,?,?,?,?,1)", (k, l, e, col, i))
 
 
 def _now():
@@ -36,7 +49,13 @@ def _clean(b, partial=False):
             raise ValueError("Yapılacak iş boş olamaz")
         out["text"] = t
     if "cat" in b or not partial:
-        out["cat"] = b.get("cat") if b.get("cat") in CATS else "diger"
+        out["cat"] = b.get("cat") if b.get("cat") in _cat_keys() else "diger"
+    if "color" in b:
+        c = str(b.get("color") or "")
+        out["color"] = c if HEX.fullmatch(c) else None
+    if "frame" in b:
+        f = str(b.get("frame") or "")
+        out["frame"] = f if f in FRAMES else None
     if "due" in b or not partial:
         d = str(b.get("due") or "").strip()
         if d and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
@@ -51,6 +70,45 @@ def _clean(b, partial=False):
         out["link_id"] = str(b.get("link_id") or "")[:40] or None
         out["link_label"] = str(b.get("link_label") or "")[:80] or None
     return out
+
+
+def _cat_keys():
+    return {r[0] for r in _db().execute("SELECT key FROM todo_cats")}
+
+
+def cats():
+    return [dict(r) for r in _db().execute("SELECT key, label, emoji, color, builtin FROM todo_cats ORDER BY sort, rowid")]
+
+
+def save_cat(b):
+    """Kategori ekle / düzenle. Hazır kategoriler yeniden adlandırılabilir, emojisi ve rengi değişebilir."""
+    label = re.sub(r"\s+", " ", str(b.get("label") or "")).strip()[:24]
+    if not label:
+        raise ValueError("Kategori adı boş olamaz")
+    emoji = str(b.get("emoji") or "").strip()[:8] or "🏷️"
+    color = str(b.get("color") or "")
+    color = color if HEX.fullmatch(color) else "#FFE58A"
+    key = str(b.get("key") or "")
+    if key:
+        if key not in _cat_keys():
+            raise LookupError("Kategori bulunamadı")
+        _db().execute("UPDATE todo_cats SET label=?, emoji=?, color=? WHERE key=?", (label, emoji, color, key))
+    else:
+        if any(r["label"].casefold() == label.casefold() for r in cats()):
+            raise ValueError("Bu adla bir kategori zaten var")
+        key = "c" + str(_now())[-7:] + str(len(cats()))
+        srt = (_db().execute("SELECT MAX(sort) FROM todo_cats").fetchone()[0] or 0) + 1
+        _db().execute("INSERT INTO todo_cats(key, label, emoji, color, sort, builtin) VALUES(?,?,?,?,?,0)", (key, label, emoji, color, srt))
+    return {"key": key, "cats": cats()}
+
+
+def delete_cat(key):
+    """Kategoriyi siler; içindeki işler "Diğer"e geçer. "Diğer" silinemez."""
+    if key == "diger":
+        raise ValueError("“Diğer” kategorisi silinemez")
+    _db().execute("UPDATE todos SET cat='diger' WHERE cat=?", (key,))
+    _db().execute("DELETE FROM todo_cats WHERE key=?", (key,))
+    return {"cats": cats()}
 
 
 def _next_due(rep, base):

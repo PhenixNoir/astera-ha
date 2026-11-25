@@ -408,6 +408,10 @@ def migrate():
                      ("cargo_link", "TEXT"), ("label_at", "INTEGER"), ("commission", "REAL"), ("district", "TEXT"), ("discounts", "TEXT"), ("customer_id", "TEXT"), ("shipped_at", "INTEGER"), ("ded_qty", "INTEGER")):
         if col not in tcols:
             c.execute(f"ALTER TABLE ty_lines ADD COLUMN {col} {typ}")
+    if "delivery" not in _columns("ty_products"):   # Trendyol'daki termin (sevkiyat süresi, gün)
+        c.execute("ALTER TABLE ty_products ADD COLUMN delivery INTEGER")
+    c.execute("""CREATE TABLE IF NOT EXISTS tm_profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, color TEXT,
+                 items TEXT, created_at INTEGER, updated_at INTEGER, applied_at INTEGER)""")
     if "auto" not in _columns("ty_back"):   # Trendyol'da kendiliğinden İşleme alınan (burada hâlâ Yeni) paketler
         c.execute("ALTER TABLE ty_back ADD COLUMN auto INTEGER DEFAULT 0")
     if "ded_qty" not in tcols:
@@ -3027,6 +3031,41 @@ def api_todo_upd(req, tid):
         raise ApiError(str(e), 404)
 
 
+@route("GET", "/api/todo-meta")
+def api_todo_meta(req):
+    return {"cats": isler.cats(), "frame": get_setting("td_frame", "tape") or "tape"}
+
+
+@route("PUT", "/api/todo-meta")
+def api_todo_meta_put(req):
+    f = str(req.json().get("frame") or "tape")
+    if f not in isler.FRAMES:
+        raise ApiError("Geçersiz çerçeve")
+    set_setting("td_frame", f)
+    db().commit()
+    return {"frame": f}
+
+
+@route("POST", "/api/todo-cats")
+def api_todo_cat_save(req):
+    try:
+        r = isler.save_cat(req.json())
+    except (ValueError, LookupError) as e:
+        raise ApiError(str(e))
+    db().commit()
+    return r
+
+
+@route("DELETE", "/api/todo-cats/{key}")
+def api_todo_cat_del(req, key):
+    try:
+        r = isler.delete_cat(key)
+    except ValueError as e:
+        raise ApiError(str(e))
+    db().commit()
+    return r
+
+
 @route("DELETE", "/api/todos/{tid}")
 def api_todo_del(req, tid):
     return isler.delete(int(tid))
@@ -4244,6 +4283,114 @@ def api_buybox_check(req):
         notify.tick(force=True)
         db().commit()
         return {**buybox_payload(), "result": res}
+
+
+# ---------------------------------------------------------------- termin profilleri
+# Profil: ürün → gün. Uygulanınca profildeki ürünlerin Trendyol'daki bütün barkodlarına (varyantlar) o termin gönderilir.
+
+def _tm_products():
+    """Trendyol'da karşılığı olan ürünler: id → {ty barkodları, Trendyol'daki termin(ler)}."""
+    ty = {r["barcode"].lower(): r for r in db().execute("SELECT barcode, delivery, title, on_sale, archived FROM ty_products WHERE barcode<>''")}
+    out = {}
+    for r in db().execute("SELECT id, barcodes FROM products WHERE COALESCE(archived,0)=0"):
+        bcs = [ty[c]["barcode"] for c in split_codes(r["barcodes"]) if c in ty]
+        if bcs:
+            ds = sorted({ty[b.lower()]["delivery"] for b in bcs if ty[b.lower()]["delivery"] is not None})
+            out[r["id"]] = {"barcodes": bcs, "delivery": ds}
+    return out
+
+
+def _tm_row(r):
+    d = dict(r)
+    try:
+        d["items"] = {int(k): int(v) for k, v in json.loads(r["items"] or "{}").items()}
+    except (ValueError, TypeError):
+        d["items"] = {}
+    return d
+
+
+@route("GET", "/api/termin")
+def api_termin(req):
+    tp = _tm_products()
+    profs = [_tm_row(r) for r in db().execute("SELECT * FROM tm_profiles ORDER BY id")]
+    for p in profs:
+        p["items"] = {k: v for k, v in p["items"].items() if k in tp}   # silinmiş / Trendyol'da olmayan ürünler düşer
+        p["changes"] = sum(1 for k, v in p["items"].items() if tp[k]["delivery"] != [v])
+    return {"profiles": profs, "products": {str(k): v for k, v in tp.items()}, "active": int(get_setting("tm_active", "0") or 0),
+            "write": trendyol.write_enabled(), "products_sync": int(get_setting("ty_products_sync", "0") or 0)}
+
+
+@route("POST", "/api/termin/profiles")
+def api_termin_save(req):
+    b = req.json()
+    name = str(b.get("name") or "").strip()[:40]
+    if not name:
+        raise ApiError("Profil adı boş olamaz")
+    items = {}
+    for k, v in (b.get("items") or {}).items():
+        try:
+            d = int(v)
+        except (TypeError, ValueError):
+            raise ApiError("Gün sayısı tam sayı olmalı")
+        if not 0 <= d <= 30:
+            raise ApiError("Termin 0–30 gün arasında olmalı")
+        items[str(int(k))] = d
+    color = str(b.get("color") or "")[:16] or None
+    if b.get("id"):
+        db().execute("UPDATE tm_profiles SET name=?, color=?, items=?, updated_at=? WHERE id=?",
+                     (name, color, json.dumps(items), now(), int(b["id"])))
+        pid = int(b["id"])
+    else:
+        pid = db().execute("INSERT INTO tm_profiles(name, color, items, created_at, updated_at) VALUES(?,?,?,?,?)",
+                           (name, color, json.dumps(items), now(), now())).lastrowid
+    db().commit()
+    return _tm_row(db().execute("SELECT * FROM tm_profiles WHERE id=?", (pid,)).fetchone())
+
+
+@route("DELETE", "/api/termin/profiles/{tid}")
+def api_termin_delete(req, tid):
+    db().execute("DELETE FROM tm_profiles WHERE id=?", (int(tid),))
+    if int(get_setting("tm_active", "0") or 0) == int(tid):
+        set_setting("tm_active", "0")
+    db().commit()
+    return {"ok": True}
+
+
+@route("POST", "/api/termin/profiles/{tid}/apply", lock=False)
+def api_termin_apply(req, tid):
+    """Profildeki ürünlerin terminlerini Trendyol'a gönderir. Yalnız değişenler gönderilir (all=true ise hepsi)."""
+    b = req.json()
+    with DB_LOCK:
+        r = db().execute("SELECT * FROM tm_profiles WHERE id=?", (int(tid),)).fetchone()
+        if not r:
+            raise ApiError("Profil bulunamadı", 404)
+        prof, tp = _tm_row(r), _tm_products()
+        names = {x["id"]: x["name"] for x in db().execute("SELECT id, name FROM products")}
+        cur = {x["barcode"]: x["delivery"] for x in db().execute("SELECT barcode, delivery FROM ty_products")}
+    pairs, owner = [], {}
+    for pid, days in prof["items"].items():
+        for bc in (tp.get(pid) or {}).get("barcodes", []):
+            if b.get("all") or cur.get(bc) != days:
+                pairs.append((bc, days))
+                owner[bc] = pid
+    if not pairs:
+        with DB_LOCK:
+            set_setting("tm_active", str(prof["id"]))
+            db().execute("UPDATE tm_profiles SET applied_at=? WHERE id=?", (now(), prof["id"]))
+            db().commit()
+        return {"sent": 0, "ok": [], "failed": [], "pending": 0, "products": 0}
+    try:
+        res = trendyol.set_delivery_bulk(pairs)
+    except trendyol.TrendyolError as e:
+        raise ApiError(str(e), 502)
+    with DB_LOCK:
+        if res["ok"] or not res["failed"]:   # kısmen reddedilse de profil uygulanmış sayılır; reddedilenler ayrıca listelenir
+            set_setting("tm_active", str(prof["id"]))
+        db().execute("UPDATE tm_profiles SET applied_at=? WHERE id=?", (now(), prof["id"]))
+        db().commit()
+    res["failed"] = [dict(f, product=names.get(owner.get(f["barcode"]))) for f in res["failed"]]
+    res["products"] = len({owner[b] for b in res["ok"]})
+    return res
 
 
 @route("GET", "/api/trendyol/products")

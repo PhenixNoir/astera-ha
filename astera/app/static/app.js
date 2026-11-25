@@ -176,6 +176,7 @@ const NAV = [
   { r: 'yorumlar', label: 'Yorumlar', icon: 'star', title: 'Trendyol yorumları' },
   { r: 'satis', label: 'Satış', icon: 'cart', title: 'Satış ve Trendyol' },
   { r: 'buybox', label: 'Buybox', icon: 'crown', title: 'Buybox' },
+  { r: 'termin', label: 'Terminler', icon: 'clock', title: 'Termin profilleri' },
   { r: 'filament', label: 'Filamentler', icon: 'spool', title: 'Filamentler' },
   { r: 'istatistik', label: 'İstatistik', icon: 'chart', title: 'İstatistik' },
   { r: 'kar', label: 'Kâr', icon: 'coin', title: 'Kâr hesabı' },
@@ -189,7 +190,7 @@ const NAV_GROUPS = [
   { k: 'pano', label: 'Pano', icon: 'home', tabs: [''] },
   { k: 'siparis', label: 'Siparişler', icon: 'clip', tabs: ['siparisler?ty', 'siparisler?custom', 'hazirla', 'iadeler', 'sorular', 'yorumlar', 'musteriler'] },
   { k: 'uretim', label: 'Üretim', icon: 'layers', tabs: ['baskilar', 'plan', 'makineler', 'filament', 'ambalaj'] },
-  { k: 'urun', label: 'Ürünler', icon: 'box', tabs: ['urunler', 'satis', 'buybox'] },
+  { k: 'urun', label: 'Ürünler', icon: 'box', tabs: ['urunler', 'satis', 'buybox', 'termin'] },
   { k: 'para', label: 'Para', icon: 'coin', tabs: ['kar', 'finans', 'istatistik'] },
 ];
 const NAV_SRC = { ty: ['Trendyol', 'cart', 'ty'], custom: ['Özel siparişler', 'clip', 'custom'] };
@@ -6920,12 +6921,14 @@ function todoCtxItems(t) {
     { icon: '📆', label: 'Haftaya ertele', run: () => upd({ due: tdAdd(7) }, 'Haftaya ertelendi') },
     t.due ? { icon: '🗓️', label: 'Tarihi kaldır', run: () => upd({ due: '' }) } : null,
     { icon: '🏷️', label: 'Kategori', hint: TD_CATS[t.cat]?.[0], sub: Object.entries(TD_CATS).map(([k, [l, ic]]) => ({ icon: ic, label: l, on: t.cat === k, run: () => upd({ cat: k }) })) },
+    { icon: '🎨', label: 'Renk', hint: t.color ? '' : 'kategorinin', sub: [{ label: 'Kategorinin rengi', on: !t.color, run: () => upd({ color: '' }) }, ...TD_SW.map((c) => ({ icon: `<i class="td-dot" style="--c:${c}"></i>`, label: c, on: t.color === c, run: () => upd({ color: c }) }))] },
+    { icon: '🖼️', label: 'Çerçeve', hint: (TD_FRAMES.find(([k]) => k === tdFrame(t)) || [])[1], sub: TD_FRAMES.map(([k, l]) => ({ label: l, on: tdFrame(t) === k, run: () => upd({ frame: k }) })) },
     { icon: '🔁', label: 'Tekrar', hint: tdRepLabel(t.rep) || 'yok', sub: [['', 'Tekrarlamaz'], ['daily', 'Her gün'], [`weekly:${wd}`, `Her ${TD_DAYS[wd]}`], [`monthly:${dm}`, `Her ayın ${dm}'i`]].map(([k, l]) => ({ label: l, on: (t.rep || '') === k, run: () => upd({ rep: k }) })) },
     t.link_kind ? { icon: '🔗', label: 'Bağlı kaydı aç', run: () => tdOpenLink(t.id) } : null,
     { icon: icon('edit'), label: 'Düzenle', run: () => openTodoEdit(t.id) },
     '-',
     { icon: '🗑', label: 'Sil', danger: true, run: async () => { try { await api('DELETE', `/api/todos/${t.id}`); S.todos = S.todos.filter((x) => x.id !== t.id); fillTodo();
-      toast('İş silindi', { action: 'Geri al', onAction: async () => { const r = await api('POST', '/api/todos', { text: t.text, cat: t.cat, due: t.due, rep: t.rep, link_kind: t.link_kind, link_id: t.link_id, link_label: t.link_label }); S.todos.unshift(r); fillTodo(); } }); } catch (e) { fail(e); } } },
+      toast('İş silindi', { action: 'Geri al', onAction: async () => { const r = await api('POST', '/api/todos', { text: t.text, cat: t.cat, due: t.due, rep: t.rep, color: t.color, frame: t.frame, link_kind: t.link_kind, link_id: t.link_id, link_label: t.link_label }); S.todos.unshift(r); fillTodo(); } }); } catch (e) { fail(e); } } },
   ] };
 }
 function packCtxItems(it) {
@@ -7384,7 +7387,21 @@ async function cuNoteInto(target, q) {
 const TD_CATS = { dukkan: ['Dükkan', '🛠️', '#FFE58A'], alis: ['Alışveriş', '🛒', '#B9E6FF'], mus: ['Müşteri', '👤', '#FFC9DD'], mak: ['Makine', '🖨️', '#C9F2D4'], ofis: ['Ofis', '💼', '#E3D7FF'], diger: ['Diğer', '📌', '#FFD8B5'] };
 const TD_DAYS = ['pazartesi', 'salı', 'çarşamba', 'perşembe', 'cuma', 'cumartesi', 'pazar'];
 const TD_MON = ['ocak', 'şubat', 'mart', 'nisan', 'mayıs', 'haziran', 'temmuz', 'ağustos', 'eylül', 'ekim', 'kasım', 'aralık'];
-async function loadTodos() { try { S.todos = await api('GET', '/api/todos'); } catch { S.todos = S.todos || []; } }
+// kategoriler sunucuda (todo_cats); TD_CATS aynı nesne kalır, içi yenilenir → her yer (hızlı yazım, filtre, sağ tık) özel kategorileri de görür
+const TD_FRAMES = [['tape', 'Bantlı'], ['pin', 'Raptiyeli'], ['curl', 'Kıvrık köşe'], ['torn', 'Yırtık kâğıt'], ['pola', 'Polaroid'], ['lined', 'Defter'], ['neon', 'Neon'], ['stamp', 'Damgalı']];
+const TD_SW = ['#FFE58A', '#FFD8B5', '#FFC9DD', '#FFB3A7', '#E3D7FF', '#B9E6FF', '#C9F2D4', '#9EE6B8', '#E8DCC4', '#F2F2F2'];
+// koyu renk seçilirse yazı açık olsun (neon zaten koyu zeminli)
+const tdDark = (c) => { const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(c || ''); return !!m && (0.299 * parseInt(m[1], 16) + 0.587 * parseInt(m[2], 16) + 0.114 * parseInt(m[3], 16)) < 140; };
+function tdSetCats(list) {
+  if (!Array.isArray(list) || !list.length) return;
+  Object.keys(TD_CATS).forEach((k) => delete TD_CATS[k]);
+  list.forEach((c) => { TD_CATS[c.key] = [c.label, c.emoji || '🏷️', c.color || '#FFE58A', !!c.builtin]; });
+  if (!TD_CATS.diger) TD_CATS.diger = ['Diğer', '📌', '#FFD8B5', true];
+}
+async function loadTodoMeta() { try { const m = await api('GET', '/api/todo-meta'); tdSetCats(m.cats); S.tdFrame = m.frame || 'tape'; S.tdMetaAt = Date.now(); } catch { /* hazır kategorilerle devam */ } }
+async function loadTodos() { try { [S.todos] = await Promise.all([api('GET', '/api/todos'), S.tdMetaAt ? null : loadTodoMeta()]); } catch { S.todos = S.todos || []; } }
+const tdFrame = (t) => (TD_FRAMES.some(([k]) => k === t.frame) ? t.frame : S.tdFrame || 'tape');
+const tdColor = (t) => t.color || (TD_CATS[t.cat] || TD_CATS.diger)[2];
 const tdDate = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const tdAdd = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return tdDate(d); };
 // Hızlı yazım: "#alışveriş", "bugün/yarın/cuma", "25 kasım", "her pazartesi", "her ayın 1'i" tarih ve kategoriye çevrilir
@@ -7425,8 +7442,8 @@ function tdDue(d) {
 }
 const tdRot = (id) => (((id * 37) % 9) - 4) * 0.55;
 function tdNote(t, i) {
-  const [cl, ic, col] = TD_CATS[t.cat] || TD_CATS.diger, du = tdDue(t.due), rp = tdRepLabel(t.rep), done = !!t.done_at;
-  return `<article class="sticky${done ? ' done' : ''}${S.tdFresh === t.id ? ' drop' : ''}" data-td="${t.id}" style="--c:${col};--r:${tdRot(t.id)}deg;--i:${Math.min(i, 14)}" tabindex="0">
+  const [cl, ic] = TD_CATS[t.cat] || TD_CATS.diger, col = tdColor(t), du = tdDue(t.due), rp = tdRepLabel(t.rep), done = !!t.done_at;
+  return `<article class="sticky fr-${tdFrame(t)}${tdDark(col) ? ' dk' : ''}${done ? ' done' : ''}${S.tdFresh === t.id ? ' drop' : ''}" data-td="${t.id}" style="--c:${col};--r:${tdRot(t.id)}deg;--i:${Math.min(i, 14)}" tabindex="0">
     <button type="button" class="td-ck" data-act="td-done" data-id="${t.id}" aria-label="${done ? 'Geri al' : 'Yapıldı'}" title="${done ? 'Geri al' : 'Yapıldı'}"></button>
     <b>${esc(t.text)}</b>
     <small>${ic} ${cl}${du.t ? ` · <span class="td-due ${du.cls}">${du.t}</span>` : ''}${rp ? ` · 🔁 ${rp}` : ''}</small>
@@ -7489,26 +7506,42 @@ async function tdToggle(id, el) {
     if (done && FX() && !(S.todos || []).some((x) => !x.done_at)) confetti();
   } catch (e) { fail(e); fillTodo(); }
 }
-// iş düzenle / bir kayda bağlı yeni iş (sipariş, özel sipariş, ürün)
+// iş düzenle / bir kayda bağlı yeni iş (sipariş, özel sipariş, ürün) — sekmeli: İş · Görünüm · Kategoriler, üstte canlı not
 function openTodoEdit(id, preset = {}) {
   const t = id ? { ...(S.todos || []).find((x) => x.id === id) } : { text: '', cat: preset.cat || 'diger', due: '', rep: '', ...preset };
-  let cat = t.cat || 'diger', rep = t.rep || '';
+  let cat = TD_CATS[t.cat] ? t.cat : 'diger', rep = t.rep || '', color = t.color || '', frame = TD_FRAMES.some(([k]) => k === t.frame) ? t.frame : '', tab = 'is', catsDirty = false;
   const repOpts = [['', 'Tekrarlamaz'], ['daily', 'Her gün'], ...TD_DAYS.map((d, i) => [`weekly:${i}`, `Her ${d}`]), ...[1, 5, 10, 15, 20, 25, 28].map((n) => [`monthly:${n}`, `Her ayın ${n}'i`])];
   if (rep && !repOpts.some(([k]) => k === rep)) repOpts.push([rep, tdRepLabel(rep)]);
-  // başka bir pencere (ürün, özel sipariş) açıksa onu kapatmadan üstünde aç
   const overModal = !!$('#modal-root').children.length;
   let ovl = null;
-  const html = `<div class="modal-h"><h2>${id ? 'Yapılacak iş' : 'Yeni yapılacak'}</h2><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
-    <div class="modal-b td-ed">
-      <div class="td-ed-note" id="tde-note" style="--c:${TD_CATS[cat][2]}"><textarea id="tde-t" rows="2" maxlength="200" placeholder="Ne yapılacak?">${esc(t.text || '')}</textarea></div>
-      <div class="field"><span>Kategori</span><div class="td-cats" id="tde-cat">${Object.entries(TD_CATS).map(([k, [l, ic, c]]) => `<button type="button" data-v="${k}" style="--c:${c}" class="${cat === k ? 'on' : ''}">${ic} ${l}</button>`).join('')}</div></div>
+  const fr = () => frame || S.tdFrame || 'tape', col = () => color || TD_CATS[cat][2];
+  const catChips = () => Object.entries(TD_CATS).map(([k, [l, ic, c]]) => `<button type="button" data-v="${k}" style="--c:${c}" class="${cat === k ? 'on' : ''}">${ic} ${esc(l)}</button>`).join('');
+  const swatches = (cur, attr, auto) => `${auto ? `<button type="button" class="tde-s auto${!cur ? ' on' : ''}" data-${attr}="" title="${auto}" aria-label="${auto}">OTO</button>` : ''}${TD_SW.map((c) => `<button type="button" class="tde-s${cur === c ? ' on' : ''}" style="--c:${c}" data-${attr}="${c}" aria-label="${c}"></button>`).join('')}
+    <label class="tde-s pick${cur && !TD_SW.includes(cur) ? ' on' : ''}" title="Başka renk" style="${cur && !TD_SW.includes(cur) ? `--c:${cur}` : ''}">＋<input type="color" data-${attr}-pick value="${/^#[0-9a-f]{6}$/i.test(cur) ? cur : '#ffe58a'}"></label>`;
+  const metaLine = () => { const [l, ic] = TD_CATS[cat], d = tdDue($('#tde-d')?.value ?? t.due), r = tdRepLabel($('#tde-r')?.value ?? rep); return `${ic} ${esc(l)}${d.t ? ` · ${d.t}` : ''}${r ? ` · 🔁 ${r}` : ''}`; };
+  const tabIs = () => `<div class="field"><span>Kategori</span><div class="td-cats" id="tde-cat">${catChips()}<button type="button" class="new" data-tde-tab="cats">＋ Yeni</button></div></div>
       <div class="row"><label class="field"><span>Tarih</span><input class="input" type="date" id="tde-d" value="${esc(t.due || '')}"></label>
         <label class="field"><span>Tekrar</span><select class="input" id="tde-r">${repOpts.map(([k, l]) => `<option value="${k}"${rep === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label></div>
       <div class="termin-quick">${[[0, 'Bugün'], [1, 'Yarın'], [7, '1 hafta sonra']].map(([n, l]) => `<button type="button" class="chip" data-tde-d="${n}">${l}</button>`).join('')}<button type="button" class="chip" data-tde-d="">Tarihsiz</button></div>
-      ${t.link_kind ? `<div class="td-ed-link">🔗 Bağlı: <b>${esc(t.link_label || '')}</b></div>` : ''}
+      ${t.link_kind ? `<div class="td-ed-link">🔗 Bağlı: <b>${esc(t.link_label || '')}</b></div>` : ''}`;
+  const tabLook = () => `<div class="field"><span>Renk</span><div class="tde-sw" id="tde-col">${swatches(color, 'col', 'Kategorinin rengi')}</div></div>
+      <div class="field"><span>Çerçeve</span><div class="tde-frs" id="tde-fr">${TD_FRAMES.map(([k, l], i) => `<button type="button" data-fr="${k}" class="${fr() === k ? 'on' : ''}" style="--i:${i}"><span class="tde-mini"><i class="sticky fr-${k}" style="--c:${col()}"></i></span>${l}${(S.tdFrame || 'tape') === k ? '<em>varsayılan</em>' : ''}</button>`).join('')}</div></div>
+      <label class="tde-def"><input type="checkbox" id="tde-def"> Bu çerçeveyi yeni notlar için varsayılan yap</label>`;
+  const catRow = (k, [l, ic, c, bi]) => `<div class="tde-cr" data-k="${k}"><input class="tde-em" maxlength="4" value="${esc(ic)}" aria-label="Emoji"><input class="input tde-cl" maxlength="24" value="${esc(l)}" aria-label="Kategori adı">
+      <label class="tde-s pick on" style="--c:${c}" title="Renk"><input type="color" class="tde-cc" value="${c}"></label>
+      ${bi ? `<span class="tde-bi" title="Hazır kategori: adı ve rengi değişir, silinmez">hazır</span>` : `<button type="button" class="icon-btn tde-cdel" title="Sil (işleri Diğer'e geçer)" aria-label="Sil">${icon('trash')}</button>`}</div>`;
+  const tabCats = () => `<div class="tde-cats" id="tde-cats">${Object.entries(TD_CATS).map(([k, v]) => catRow(k, v)).join('')}</div>
+      <div class="tde-cr new"><input class="tde-em" id="tde-nem" maxlength="4" value="🏷️" aria-label="Emoji"><input class="input" id="tde-nl" maxlength="24" placeholder="Yeni kategori adı (ör. Ürün çekimi)">
+        <label class="tde-s pick on" id="tde-nsw" style="--c:#9EE6B8" title="Renk"><input type="color" id="tde-nc" value="#9ee6b8"></label><button type="button" class="btn btn-primary" id="tde-nadd">Ekle</button></div>
+      <p class="tde-hint">Değişiklik hemen kaydedilir. Hızlı yazımda <b>#ad</b> yazınca bu kategoriler de seçilir. Silinen kategorinin işleri <b>Diğer</b>’e geçer.</p>`;
+  const html = `<div class="modal-h"><h2>${id ? 'Yapılacak iş' : 'Yeni yapılacak'}</h2><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+    <div class="modal-b td-ed">
+      <div class="tde-stage"><div class="sticky tde-pv fr-${fr()}${tdDark(col()) ? ' dk' : ''}" id="tde-note" style="--c:${col()}"><textarea id="tde-t" rows="2" maxlength="200" placeholder="Ne yapılacak?">${esc(t.text || '')}</textarea><small id="tde-meta">${metaLine()}</small></div></div>
+      <div class="tde-tabs" role="tablist">${[['is', 'İş'], ['look', 'Görünüm'], ['cats', 'Kategoriler']].map(([k, l]) => `<button type="button" role="tab" data-tde-tab="${k}" class="${tab === k ? 'on' : ''}">${l}</button>`).join('')}<i class="tde-ink"></i></div>
+      <div class="tde-pane" id="tde-pane"></div>
     </div>
     <div class="modal-f">${id ? `<button class="btn btn-ghost" id="tde-del">${icon('trash')} Sil</button>` : ''}<div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-primary" id="tde-ok">${id ? 'Kaydet' : 'Ekle'}</button></div></div>`;
-  const close = () => { if (ovl) { ovl.classList.add('closing'); setTimeout(() => ovl.remove(), 180); document.removeEventListener('keydown', esc2, true); } else closeModal(); };
+  const close = () => { if (catsDirty) fillTodo(); if (ovl) { ovl.classList.add('closing'); setTimeout(() => ovl.remove(), 180); document.removeEventListener('keydown', esc2, true); } else closeModal(); };
   const esc2 = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
   if (overModal) {
     ovl = document.createElement('div'); ovl.className = 'td-ovl';
@@ -7516,19 +7549,77 @@ function openTodoEdit(id, preset = {}) {
     document.body.appendChild(ovl);
     ovl.addEventListener('click', (e) => { if (e.target === ovl || e.target.closest('[data-act="close"]')) { e.stopPropagation(); close(); } });
     document.addEventListener('keydown', esc2, true);
-  } else openModal(html, 'td-modal');
-  $('#tde-cat').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; cat = b.dataset.v; $$('#tde-cat button').forEach((x) => x.classList.toggle('on', x === b)); $('#tde-note').style.setProperty('--c', TD_CATS[cat][2]); };
-  $$('[data-tde-d]').forEach((b) => (b.onclick = () => { $('#tde-d').value = b.dataset.tdeD === '' ? '' : tdAdd(+b.dataset.tdeD); }));
-  $('#tde-t').focus();
-  $('#tde-t').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#tde-ok').click(); } };
-  $('#tde-del')?.addEventListener('click', async () => { try { await api('DELETE', `/api/todos/${id}`); S.todos = S.todos.filter((x) => x.id !== id); close(); toast('İş silindi'); fillTodo(); } catch (e) { fail(e); } });
-  $('#tde-ok').onclick = async () => {
-    const body = { text: $('#tde-t').value, cat, due: $('#tde-d').value, rep: $('#tde-r').value };
+  } else openModal(html, 'td-modal', () => { if (catsDirty) fillTodo(); });
+  const root = ovl || $('#modal-root'), Q = (sel) => root.querySelector(sel), QQ = (sel) => [...root.querySelectorAll(sel)];
+  // tarih/tekrar alanları sekme değişince de değerini korusun
+  const keep = () => { if (Q('#tde-d')) t.due = Q('#tde-d').value; if (Q('#tde-r')) rep = Q('#tde-r').value; };
+  const refresh = () => {
+    const n = Q('#tde-note'); n.className = `sticky tde-pv fr-${fr()}${tdDark(col()) ? ' dk' : ''}`; n.style.setProperty('--c', col());
+    Q('#tde-meta').innerHTML = metaLine();
+    QQ('#tde-fr i').forEach((i) => i.style.setProperty('--c', col()));
+  };
+  const bump = () => { const n = Q('#tde-note'); if (REDUCED()) return; n.classList.remove('bump'); void n.offsetWidth; n.classList.add('bump'); };
+  const ink = () => { const on = Q('.tde-tabs button.on'), k = Q('.tde-ink'); if (on && k) { k.style.width = on.offsetWidth + 'px'; k.style.transform = `translateX(${on.offsetLeft - 4}px)`; } };
+  const draw = () => {
+    const pane = Q('#tde-pane');
+    pane.innerHTML = tab === 'is' ? tabIs() : tab === 'look' ? tabLook() : tabCats();
+    pane.classList.remove('in'); void pane.offsetWidth; pane.classList.add('in');
+    QQ('.tde-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tdeTab === tab)); ink();
+    bindPane();
+  };
+  const saveCat = async (row) => {
+    const body = { key: row.dataset.k, emoji: row.querySelector('.tde-em').value, label: row.querySelector('.tde-cl').value, color: row.querySelector('.tde-cc').value };
+    try { const r = await api('POST', '/api/todo-cats', body); tdSetCats(r.cats); catsDirty = true; refresh(); row.classList.remove('ok'); void row.offsetWidth; row.classList.add('ok'); } catch (e) { fail(e); }
+  };
+  function bindPane() {
+    if (tab === 'is') {
+      Q('#tde-cat').onclick = (e) => { const b = e.target.closest('button[data-v]'); if (!b) return; cat = b.dataset.v; QQ('#tde-cat button').forEach((x) => x.classList.toggle('on', x === b)); refresh(); bump(); };
+      QQ('[data-tde-d]').forEach((b) => (b.onclick = () => { Q('#tde-d').value = b.dataset.tdeD === '' ? '' : tdAdd(+b.dataset.tdeD); keep(); refresh(); }));
+      Q('#tde-d').onchange = Q('#tde-r').onchange = () => { keep(); refresh(); };
+    } else if (tab === 'look') {
+      const setCol = (c) => { color = c; QQ('#tde-col .tde-s').forEach((x) => x.classList.toggle('on', x.dataset.col === c)); const pk = Q('#tde-col .pick'); const custom = c && !TD_SW.includes(c); pk.classList.toggle('on', custom); pk.style.setProperty('--c', custom ? c : ''); refresh(); bump(); };
+      Q('#tde-col').onclick = (e) => { const b = e.target.closest('button[data-col]'); if (b) setCol(b.dataset.col); };
+      Q('[data-col-pick]').oninput = (e) => setCol(e.target.value.toUpperCase());
+      Q('#tde-fr').onclick = (e) => { const b = e.target.closest('button[data-fr]'); if (!b) return; frame = b.dataset.fr; QQ('#tde-fr button').forEach((x) => x.classList.toggle('on', x === b)); refresh(); bump(); };
+    } else {
+      QQ('#tde-cats .tde-cr').forEach((row) => {
+        let tm; const later = () => { clearTimeout(tm); tm = setTimeout(() => saveCat(row), 500); };
+        row.querySelector('.tde-cl').oninput = later; row.querySelector('.tde-em').oninput = later;
+        row.querySelector('.tde-cc').oninput = (e) => { row.querySelector('.pick').style.setProperty('--c', e.target.value); later(); };
+        row.querySelector('.tde-cdel')?.addEventListener('click', async () => {
+          const k = row.dataset.k, n = (S.todos || []).filter((x) => x.cat === k && !x.done_at).length;
+          if (n && !row.classList.contains('sure')) { row.classList.add('sure'); toast(`Bu kategoride ${n} iş var; silersen “Diğer”e geçer. Emin isen tekrar bas.`); return; }
+          try {
+            const r = await api('DELETE', `/api/todo-cats/${encodeURIComponent(k)}`);
+            (S.todos || []).forEach((x) => { if (x.cat === k) x.cat = 'diger'; }); if (cat === k) cat = 'diger'; if (S.tdF === k) S.tdF = '';
+            if (!REDUCED()) { row.classList.add('gone'); await new Promise((res) => setTimeout(res, 260)); }
+            tdSetCats(r.cats); catsDirty = true; refresh(); draw(); toast('Kategori silindi');
+          } catch (e) { fail(e); }
+        });
+      });
+      Q('#tde-nc').oninput = (e) => Q('#tde-nsw').style.setProperty('--c', e.target.value);
+      const add = async () => {
+        const label = Q('#tde-nl').value.trim(); if (!label) { Q('#tde-nl').focus(); return; }
+        try { const r = await api('POST', '/api/todo-cats', { label, emoji: Q('#tde-nem').value, color: Q('#tde-nc').value }); tdSetCats(r.cats); catsDirty = true; cat = r.key; refresh(); draw(); bump(); toast(`“${label}” eklendi`); Q(`.tde-cr[data-k="${r.key}"]`)?.classList.add('fresh'); } catch (e) { fail(e); }
+      };
+      Q('#tde-nadd').onclick = add; Q('#tde-nl').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
+    }
+  }
+  root.querySelector('.tde-tabs').parentElement.addEventListener('click', (e) => { const b = e.target.closest('[data-tde-tab]'); if (!b) return; keep(); tab = b.dataset.tdeTab; draw(); });
+  draw();
+  requestAnimationFrame(ink);
+  Q('#tde-t').focus();
+  Q('#tde-t').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); Q('#tde-ok').click(); } };
+  Q('#tde-del')?.addEventListener('click', async () => { try { await api('DELETE', `/api/todos/${id}`); S.todos = S.todos.filter((x) => x.id !== id); catsDirty = false; close(); toast('İş silindi'); fillTodo(); } catch (e) { fail(e); } });
+  Q('#tde-ok').onclick = async () => {
+    keep();
+    const body = { text: Q('#tde-t').value, cat, due: t.due || '', rep, color, frame };
     if (!id && preset.link_kind) Object.assign(body, { link_kind: preset.link_kind, link_id: preset.link_id, link_label: preset.link_label });
     try {
+      if (Q('#tde-def')?.checked && frame) { await api('PUT', '/api/todo-meta', { frame }); S.tdFrame = frame; body.frame = ''; }
       const r = id ? await api('PUT', `/api/todos/${id}`, body) : await api('POST', '/api/todos', body);
       if (!S.todos) await loadTodos(); else if (id) Object.assign(S.todos.find((x) => x.id === id), r); else { S.todos.unshift(r); S.tdFresh = r.id; }
-      close(); toast(id ? 'Kaydedildi' : 'Yapılacaklara eklendi'); fillTodo();
+      catsDirty = false; close(); toast(id ? 'Kaydedildi' : 'Yapılacaklara eklendi'); fillTodo();
     } catch (e) { fail(e); }
   };
 }
@@ -10750,5 +10841,138 @@ Object.assign(ACTIONS, {
         else { await loadTyOrders(); render(); if (DRW.kind) drwRefresh(); }
       }
     } catch (e) { fail(e); }
+  },
+});
+
+// ================================================================== termin profilleri (A: kartlar + altta düzenleyici)
+// Profil = ürün → gün. "Uygula" profildeki ürünlerin Trendyol terminini (sevkiyat süresi) günceller; yalnız değişenler gider.
+const TM_COLORS = ['#3ccf7e', '#ff7a45', '#6ea0ff', '#E3B008', '#c77dff', '#ff5d8f', '#2ec4b6', '#8d99ae'];
+const tmColor = (p, i) => p.color || TM_COLORS[i % TM_COLORS.length];
+const tmCur = (pid) => S.tm?.products?.[pid]?.delivery || [];
+const tmCurTxt = (pid) => { const d = tmCur(pid); return !d.length ? 'bilinmiyor' : d.length === 1 ? `${d[0]} gün` : `${d[0]}–${d[d.length - 1]} gün`; };
+function tmDist(items) {
+  const m = {}; Object.values(items).forEach((d) => { m[d] = (m[d] || 0) + 1; });
+  return Object.entries(m).sort((a, b) => a[0] - b[0]);
+}
+function tmCard(p, i) {
+  const n = Object.keys(p.items).length, on = S.tm.active === p.id;
+  return `<article class="tm-card${on ? ' on' : ''}${S.tmEdit?.id === p.id ? ' edit' : ''}" style="--c:${tmColor(p, i)};--i:${i}">
+    <h3>${esc(p.name)}${on ? '<span class="tm-now">ŞU AN</span>' : ''}</h3>
+    <small class="muted">${n} ürün${p.applied_at ? ` · son uygulama ${fmtWhen(p.applied_at)}` : ''}</small>
+    <div class="tm-days">${tmDist(p.items).map(([d, c]) => `<span>${d} gün · ${c}</span>`).join('') || '<span class="muted">ürün yok</span>'}</div>
+    <div class="tm-chg ${p.changes ? '' : 'ok'}">${p.changes ? `Uygularsan <b>${p.changes}</b> ürünün termini değişir` : '✓ Trendyol\'daki terminlerle aynı'}</div>
+    <div class="tm-btns"><button class="btn btn-sm" data-act="tm-edit" data-id="${p.id}">${icon('edit')} Düzenle</button>
+      <button class="btn btn-sm btn-primary" data-act="tm-apply" data-id="${p.id}" ${!S.tm.write || !n ? 'disabled' : ''}>Uygula</button></div></article>`;
+}
+function tmEditorHTML() {
+  const e = S.tmEdit; if (!e) return '';
+  const q = mpNorm(e.q || ''), ids = Object.keys(S.tm.products).map(Number);
+  let rows = ids.map((id) => productById(id)).filter(Boolean);
+  if (e.show === 'in') rows = rows.filter((p) => e.items[p.id] != null);
+  if (q) rows = rows.filter((p) => mpNorm(`${p.name} ${p.category || ''} ${p.barcodes || ''}`).includes(q));
+  rows.sort((a, b) => (e.items[b.id] != null) - (e.items[a.id] != null) || a.name.localeCompare(b.name, 'tr'));
+  const nIn = Object.keys(e.items).length, nSel = e.sel.size;
+  return `<section class="panel tm-ed" id="tm-ed" style="--c:${e.color}">
+    <div class="tm-edh"><input class="input tm-name" id="tm-name" value="${esc(e.name)}" placeholder="Profil adı (ör. Normal, Yoğun)" maxlength="40" aria-label="Profil adı">
+      <span class="tm-sw">${TM_COLORS.map((c) => `<button type="button" class="${c === e.color ? 'on' : ''}" style="--c:${c}" data-act="tm-color" data-c="${c}" aria-label="Renk"></button>`).join('')}</span>
+      <span class="muted tm-cnt">${nIn} ürün profilde${nSel ? ` · <b>${nSel} seçili</b>` : ''}</span></div>
+    <div class="tm-bar">
+      <div class="mp-q tm-q"><span>${icon('search')}</span><input type="search" id="tm-q" value="${esc(e.q || '')}" placeholder="Ürün ara…" autocomplete="off"></div>
+      <div class="seg tm-show"><button class="${e.show !== 'in' ? 'on' : ''}" data-act="tm-show" data-v="all">Tümü · ${ids.length}</button><button class="${e.show === 'in' ? 'on' : ''}" data-act="tm-show" data-v="in">Profildekiler · ${nIn}</button></div>
+      <div class="tm-bulk"><button class="btn btn-sm" data-act="tm-selall">${nSel && nSel === rows.length ? 'Seçimi kaldır' : 'Görünenleri seç'}</button>
+        <span>Seçilenlere</span>${tmStep('bulk', e.bulk)}<button class="btn btn-sm btn-primary" data-act="tm-bulk" ${nSel ? '' : 'disabled'}>Ver</button>
+        <button class="btn btn-sm" data-act="tm-out" ${nSel ? '' : 'disabled'}>Profilden çıkar</button></div></div>
+    <div class="tm-list">${rows.length ? rows.map((p, i) => {
+      const d = e.items[p.id], cur = tmCur(p.id), ch = d != null && !(cur.length === 1 && cur[0] === d);
+      return `<div class="tm-row${d != null ? ' in' : ''}${e.sel.has(p.id) ? ' sel' : ''}" style="--i:${Math.min(i, 14)}" data-tm="${p.id}">
+        <label class="tm-cb"><input type="checkbox" data-act="tm-sel" data-id="${p.id}" ${e.sel.has(p.id) ? 'checked' : ''} aria-label="Seç"></label>
+        <span class="mp-im${p.thumbnail ? '' : ' none'}" style="${thumbStyle(p.thumbnail)}"></span>
+        <span class="mp-g"><b>${esc(p.name)}</b><small>${[p.category, `Trendyol'da şu an ${tmCurTxt(p.id)}`].filter(Boolean).map(esc).join(' · ')}</small></span>
+        ${d != null ? `${tmStep(p.id, d)}<span class="tm-diff${ch ? '' : ' same'}">${ch ? `${cur.length ? cur.join('/') : '?'} → ${d}` : 'aynı'}</span>`
+          : `<button class="btn btn-sm" data-act="tm-add" data-id="${p.id}">${icon('plus')} Ekle</button><span class="tm-diff same">profilde değil</span>`}</div>`;
+    }).join('') : '<div class="mp-empty">Ürün bulunamadı</div>'}</div>
+    <div class="tm-f">${e.id ? `<button class="btn btn-ghost" data-act="tm-del">${icon('trash')} Profili sil</button>` : ''}
+      <div class="right"><button class="btn" data-act="tm-cancel">Vazgeç</button><button class="btn btn-primary" data-act="tm-save">Kaydet</button></div></div></section>`;
+}
+const tmStep = (k, d) => `<span class="tm-step"><button type="button" data-act="tm-d" data-k="${k}" data-d="-1" aria-label="Azalt">−</button><b>${d} gün</b><button type="button" data-act="tm-d" data-k="${k}" data-d="1" aria-label="Artır">+</button></span>`;
+function tmDraw() {
+  const ed = $('#tm-ed'); if (!ed) return render();
+  const q = document.activeElement?.id === 'tm-q', pos = q ? $('#tm-q').selectionStart : null, sc = ed.querySelector('.tm-list')?.scrollTop || 0;
+  const nm = $('#tm-name')?.value; if (nm != null) S.tmEdit.name = nm;
+  ed.outerHTML = tmEditorHTML(); tmBind();
+  const l = $('#tm-ed .tm-list'); if (l) l.scrollTop = sc;
+  if (q) { const i = $('#tm-q'); i.focus(); i.setSelectionRange(pos, pos); }
+}
+function tmBind() {
+  const q = $('#tm-q'); if (q) q.oninput = () => { S.tmEdit.q = q.value; clearTimeout(S.tmT); S.tmT = setTimeout(tmDraw, 120); };
+  const n = $('#tm-name'); if (n) n.oninput = () => { S.tmEdit.name = n.value; };
+}
+PAGES.termin = {
+  async load() { await Promise.all([api('GET', '/api/termin').then((d) => { S.tm = d; }), S.products.length ? null : loadProducts()]); },
+  html() {
+    const d = S.tm || { profiles: [], products: {} }, np = Object.keys(d.products).length;
+    return `<div class="tm-head"><div><p class="muted">Profilde hangi ürünün kaç gün termin alacağı yazılı. <b>Uygula</b> deyince yalnız o profildeki ürünlerin Trendyol terminleri değişir.</p></div>
+      <button class="btn" data-act="tm-sync">${icon('refresh')} Trendyol'daki terminleri yenile</button></div>
+      ${!d.write ? `<div class="notice bad">Trendyol'a değişiklik gönderme kapalı; profilleri hazırlayabilirsin ama uygulamak için açman gerek: <a href="#/satis">Satış → Trendyol ayarları</a> → “Trendyol'a değişiklik gönder”.</div>` : ''}
+      ${!np ? `<div class="notice">Trendyol'da eşleşen ürün bulunamadı. Ürün eşitlemesi yapınca (yukarıdaki düğme) ürünler burada görünür.</div>` : ''}
+      <div class="tm-cards">${d.profiles.map(tmCard).join('')}<button class="tm-card tm-new" data-act="tm-new">＋ Yeni profil</button></div>
+      ${tmEditorHTML()}`;
+  },
+  after() { tmBind(); },
+};
+Object.assign(ACTIONS, {
+  'tm-new': () => { S.tmEdit = { id: null, name: '', color: TM_COLORS[(S.tm.profiles.length) % TM_COLORS.length], items: {}, sel: new Set(), q: '', show: 'all', bulk: 1 }; render().then(() => { $('#tm-ed')?.scrollIntoView({ behavior: REDUCED() ? 'auto' : 'smooth', block: 'start' }); $('#tm-name')?.focus(); }); },
+  'tm-edit': (el) => { const i = S.tm.profiles.findIndex((x) => x.id === +el.dataset.id), p = S.tm.profiles[i]; S.tmEdit = { id: p.id, name: p.name, color: tmColor(p, i), items: { ...p.items }, sel: new Set(), q: '', show: 'in', bulk: 1 }; render().then(() => $('#tm-ed')?.scrollIntoView({ behavior: REDUCED() ? 'auto' : 'smooth', block: 'start' })); },
+  'tm-cancel': () => { S.tmEdit = null; render(); },
+  'tm-color': (el) => { S.tmEdit.color = el.dataset.c; tmDraw(); },
+  'tm-show': (el) => { S.tmEdit.show = el.dataset.v; tmDraw(); },
+  'tm-sel': (el) => { const id = +el.dataset.id; S.tmEdit.sel.has(id) ? S.tmEdit.sel.delete(id) : S.tmEdit.sel.add(id); tmDraw(); },
+  'tm-selall': () => { const e = S.tmEdit, vis = $$('#tm-ed .tm-row').map((r) => +r.dataset.tm); if (e.sel.size && e.sel.size === vis.length) e.sel.clear(); else vis.forEach((x) => e.sel.add(x)); tmDraw(); },
+  'tm-d': (el) => { const e = S.tmEdit, k = el.dataset.k, dd = +el.dataset.d;
+    if (k === 'bulk') e.bulk = Math.max(0, Math.min(30, e.bulk + dd)); else e.items[+k] = Math.max(0, Math.min(30, e.items[+k] + dd)); tmDraw(); },
+  'tm-add': (el) => { S.tmEdit.items[+el.dataset.id] = tmCur(+el.dataset.id)[0] ?? S.tmEdit.bulk; tmDraw(); },
+  'tm-bulk': () => { const e = S.tmEdit; e.sel.forEach((id) => { e.items[id] = e.bulk; }); toast(`${e.sel.size} ürüne ${e.bulk} gün verildi`); e.sel.clear(); tmDraw(); },
+  'tm-out': () => { const e = S.tmEdit; e.sel.forEach((id) => { delete e.items[id]; }); e.sel.clear(); tmDraw(); },
+  'tm-save': async () => {
+    const e = S.tmEdit; e.name = ($('#tm-name')?.value || '').trim();
+    if (!e.name) { $('#tm-name')?.focus(); return toast('Profile bir ad ver', { bad: true }); }
+    try { await api('POST', '/api/termin/profiles', { id: e.id, name: e.name, color: e.color, items: e.items });
+      island('ok', `<b>${esc(e.name)}</b> kaydedildi · ${Object.keys(e.items).length} ürün`, { ms: 1600 }); S.tmEdit = null; await PAGES.termin.load(); render();
+    } catch (er) { fail(er); }
+  },
+  'tm-del': () => {
+    const e = S.tmEdit;
+    openModal(`<div class="modal-h"><h2>Profili sil</h2><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+      <div class="modal-b"><p style="margin:0"><b>${esc(e.name)}</b> profili silinecek. Trendyol'daki terminler değişmez.</p></div>
+      <div class="modal-f"><div class="right"><button class="btn" data-act="close">Vazgeç</button><button class="btn btn-danger" id="tmd-go">Sil</button></div></div>`, 'narrow');
+    $('#tmd-go').onclick = async () => { try { await api('DELETE', `/api/termin/profiles/${e.id}`); closeModal(); S.tmEdit = null; await PAGES.termin.load(); render(); } catch (er) { fail(er); } };
+  },
+  'tm-sync': async (el) => { el.disabled = true; try { await api('POST', '/api/trendyol/products/sync'); await PAGES.termin.load(); render(); toast("Trendyol'daki terminler güncellendi"); } catch (e) { el.disabled = false; fail(e); } },
+  'tm-apply': (el) => {
+    const i = S.tm.profiles.findIndex((x) => x.id === +el.dataset.id), p = S.tm.profiles[i];
+    const groups = {}; let same = 0;
+    for (const [pid, d] of Object.entries(p.items)) {
+      const cur = tmCur(+pid); if (cur.length === 1 && cur[0] === d) { same++; continue; }
+      const k = `${cur.length ? cur.join('/') : '?'} → ${d} gün`; (groups[k] = groups[k] || []).push(productById(+pid)?.name || `#${pid}`);
+    }
+    const n = Object.values(groups).reduce((a, x) => a + x.length, 0);
+    openModal(`<div class="modal-h"><h2>“${esc(p.name)}” uygulansın mı?</h2><button class="icon-btn" data-act="close" aria-label="Kapat" style="margin-left:auto">${icon('x')}</button></div>
+      <div class="modal-b tm-ap" style="--c:${tmColor(p, i)}">${n ? `<p style="margin:0">Trendyol'da <b>${n} ürünün</b> termini değişecek${same ? ` (${same} ürün zaten aynı, gönderilmez)` : ''}:</p>
+        ${Object.entries(groups).map(([k, names]) => `<details class="tm-grp"><summary><b>${k}</b> · ${names.length} ürün</summary><p>${names.map(esc).join(', ')}</p></details>`).join('')}
+        <p class="muted" style="margin:0;font-size:13px">Varyantı olan ürünlerin bütün varyantları aynı termini alır. Sonuç birkaç saniyede gelir.</p>`
+        : `<p style="margin:0">Bu profildeki ${same} ürünün Trendyol terminleri zaten aynı; gönderilecek değişiklik yok.</p>`}
+        <div id="tm-res"></div></div>
+      <div class="modal-f"><div class="right"><button class="btn" data-act="close">${n ? 'Vazgeç' : 'Kapat'}</button>${n ? `<button class="btn btn-primary" id="tma-go">Trendyol'a gönder</button>` : `<button class="btn btn-primary" id="tma-go">Şu anki profil yap</button>`}</div></div>`, 'narrow');
+    $('#tma-go').onclick = async () => {
+      const b = $('#tma-go'); b.disabled = true; b.textContent = 'Gönderiliyor…';
+      try {
+        const r = await api('POST', `/api/termin/profiles/${p.id}/apply`, {});
+        await PAGES.termin.load(); render();
+        if (!r.failed.length && !r.pending) { closeModal(); island('ok', `<b>${esc(p.name)}</b> uygulandı · ${r.products} ürünün termini değişti`, { ms: 2200 }); return; }
+        $('#tm-res').innerHTML = `<div class="tm-out"><p><b>${r.products}</b> ürün güncellendi.${r.pending ? ` ${r.pending} barkodun sonucu henüz gelmedi; birazdan “Trendyol'daki terminleri yenile” ile kontrol et.` : ''}</p>
+          ${r.failed.length ? `<p class="bad"><b>${r.failed.length}</b> barkodu Trendyol reddetti:</p><ul>${r.failed.map((f) => `<li><b>${esc(f.product || f.barcode)}</b> <span class="mono">${esc(f.barcode)}</span> — ${esc(f.reason)}</li>`).join('')}</ul>` : ''}</div>`;
+        b.remove();
+      } catch (e) { b.disabled = false; b.textContent = "Trendyol'a gönder"; fail(e); }
+    };
   },
 });

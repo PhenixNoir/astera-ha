@@ -1,5 +1,10 @@
 # Sürüm notları
 
+## 1.16.0
+- Termin profilleri (Ürünler → Terminler): "Normal", "Yoğun" gibi adlı profillere ürün ürün kargoya veriliş süresi yazılır; "Uygula" deyince değişecekler gruplu gösterilir, onaylanınca yalnız süresi farklı olan barkodlar Trendyol'a gönderilir. Kabul edilmeyenler nedeniyle listelenir, tekrar uygulamada yalnız onlar gider.
+- Yapılacaklar: düzenleme penceresi sekmeli (İş / Görünüm / Kategoriler), üstte notun canlı hâli. Not başına renk (ya da kategorinin rengi), 8 çerçeve (bantlı, raptiyeli, kıvrık köşe, yırtık kâğıt, polaroid, defter, neon, damgalı) ve varsayılan çerçeve.
+- Kendi kategorilerini ekle / sil; hazır kategorilerin adı, emojisi, rengi değiştirilebilir. Hızlı yazımdaki #kategori bunlarda da çalışır. Nota sağ tıkta Renk ve Çerçeve.
+
 ## 1.15.1
 - Yeni Trendyol siparişleri Trendyol'da kendiliğinden "İşleme alındı" yapılır (müşteri hazırlandığını hemen görür). Panelde sipariş Yeni'de kalır ("TY'de işleme alındı" etiketiyle), stok düşmez; "Hazırlanıyor'a çek" deyince burada Hazırlanıyor'a geçer ve stok o an düşer. Ayarlar → Trendyol'dan kapatılabilir.
 - Stok yetmezken Hazırlanıyor'a çekilen siparişte olmayan ürün Hazırla listesinde "raftan" sayılıyordu; artık yalnız gerçekten stoktan düşen adet sayılır, iptalde de yalnız o kadarı geri eklenir. Açık siparişler güncellemede düzeltilir.

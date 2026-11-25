@@ -1468,6 +1468,63 @@ def product_detail(barcode):
     }
 
 
+def _int(v):
+    try:
+        return int(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+# ---------------------------------------------------------------- termin (sevkiyat süresi) toplu güncelleme
+def set_delivery_bulk(pairs):
+    """pairs: [(barcode, gün)]. 1000'erlik parçalar halinde gönderilir; her parçanın sonucu beklenir.
+    {sent, ok: [barcode], failed: [{barcode, reason}], pending}"""
+    _need_write()
+    ok, failed, pending = [], [], 0
+    for k in range(0, len(pairs), 1000):
+        part = pairs[k:k + 1000]
+        body = {"items": [{"barcode": b, "deliveryOptions": {"deliveryDuration": int(d)}} for b, d in part]}
+        d = _sf(lambda h: _request("/integration/product/sellers/{sid}/products/delivery-info-bulk-update", None, method="POST",
+                                   body=body, extra_headers=h))
+        res = _batch_all(d.get("batchRequestId"), len(part))
+        if res["done"] is False:
+            pending += len(part)
+        for b, dd in part:
+            st = res["items"].get(str(b))
+            if st and st[0] == "FAILED":
+                failed.append({"barcode": b, "reason": st[1] or "Trendyol reddetti"})
+            elif res["done"] is False and not st:
+                continue   # sonucu henüz yok: bekliyor
+            else:
+                ok.append(b)
+        with _lock:
+            for b, dd in part:
+                if b in ok:
+                    _db().execute("UPDATE ty_products SET delivery=? WHERE barcode=?", (int(dd), b))
+            _db().commit()
+    return {"sent": len(pairs), "ok": ok, "failed": failed, "pending": pending}
+
+
+def _batch_all(bid, n, tries=15):
+    """Toplu isteğin bütün kalemlerinin sonucu. {done: bool, items: {barcode: (SUCCESS|FAILED, neden)}}"""
+    out = {"done": False, "items": {}}
+    for _ in range(tries):
+        time.sleep(2)
+        try:
+            d = _request(f"/integration/product/sellers/{{sid}}/products/batch-requests/{bid}", None)
+        except TrendyolError:
+            continue
+        for it in d.get("items") or []:
+            b = str(((it.get("requestItem") or {}).get("barcode")) or it.get("barcode") or "")
+            st = str(it.get("status") or "").upper()
+            if b and st in ("SUCCESS", "FAILED", "FAILURE", "ERROR"):
+                out["items"][b] = ("SUCCESS" if st == "SUCCESS" else "FAILED", "; ".join(map(str, it.get("failureReasons") or [])))
+        if str(d.get("status") or "").upper() == "COMPLETED" or len(out["items"]) >= n:
+            out["done"] = True
+            break
+    return out
+
+
 def _batch_wait(bid, tries=6):
     res = {"batch": bid, "status": "PENDING", "reasons": []}
     for _ in range(tries):
@@ -1796,7 +1853,8 @@ def _norm_v2(item):
                     "sale_price": _f(price.get("salePrice")), "list_price": _f(price.get("listPrice")),
                     "commission": _f(v.get("commission")), "images": imgs, "category": cat,
                     "color": _attr(v.get("attributes"), "renk", "color") or color, "url": v.get("productUrl"),
-                    "on_sale": 1 if v.get("onSale", True) else 0, "archived": 1 if v.get("archived") else 0})
+                    "on_sale": 1 if v.get("onSale", True) else 0, "archived": 1 if v.get("archived") else 0,
+                    "delivery": _int((v.get("deliveryOption") or v.get("deliveryOptions") or {}).get("deliveryDuration"))})
     return out
 
 
@@ -1806,7 +1864,8 @@ def _norm_v1(item):
              "list_price": _f(item.get("listPrice")), "commission": None,
              "images": [i.get("url") for i in item.get("images") or [] if i.get("url")], "category": item.get("categoryName"),
              "color": item.get("color") or _attr(item.get("attributes"), "renk", "color"), "url": item.get("productUrl"),
-             "on_sale": 1 if item.get("onSale", True) else 0, "archived": 1 if item.get("archived") else 0}]
+             "on_sale": 1 if item.get("onSale", True) else 0, "archived": 1 if item.get("archived") else 0,
+             "delivery": _int(item.get("deliveryDuration") or (item.get("deliveryOption") or {}).get("deliveryDuration"))}]
 
 
 def fetch_products():
@@ -1865,9 +1924,10 @@ def sync_products():
         _db().execute("DELETE FROM ty_products")
         for x in items:
             _db().execute("""INSERT OR REPLACE INTO ty_products(barcode,stock_code,content_id,main_id,title,sale_price,list_price,commission,
-                             images,category,color,url,on_sale,archived,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                             images,category,color,url,on_sale,archived,updated_at,delivery) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                           (x["barcode"], x["stock_code"], x["content_id"], x["main_id"], x["title"], x["sale_price"], x["list_price"],
-                           x["commission"], json.dumps(x["images"]), x["category"], x["color"], x["url"], x["on_sale"], x["archived"], t))
+                           x["commission"], json.dumps(x["images"]), x["category"], x["color"], x["url"], x["on_sale"], x["archived"], t,
+                           x.get("delivery")))
         _set("ty_products_sync", t)
         _set("ty_products_error", "")
         _db().commit()
