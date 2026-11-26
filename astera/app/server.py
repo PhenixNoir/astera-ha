@@ -434,7 +434,8 @@ def migrate():
             short[k] -= miss
             c.execute("UPDATE ty_lines SET ded_qty=? WHERE line_key=?", ((r["quantity"] or 0) - miss, r["line_key"]))
     ocols = _columns("custom_orders")
-    for col, typ in (("order_date", "TEXT"), ("print_minutes", "INTEGER"), ("printer", "TEXT")):
+    # printed_adj: basılan adede elle yapılan düzeltme (baskı kaydı olmadan basılan / yanlış sayılan)
+    for col, typ in (("order_date", "TEXT"), ("print_minutes", "INTEGER"), ("printer", "TEXT"), ("printed_adj", "INTEGER DEFAULT 0")):
         if col not in ocols:
             c.execute(f"ALTER TABLE custom_orders ADD COLUMN {col} {typ}")
             if col == "order_date":
@@ -2445,8 +2446,9 @@ def _clean_color(v):
     return v if re.fullmatch(r"#[0-9a-fA-F]{6}", v) else None
 
 
-def clean_items(items, old=None):
-    """İstemciden gelen kalem listesini doğrular. Basılan sayılar sunucudakinden alınır (istemci değiştiremez)."""
+def clean_items(items, old=None, delta=None):
+    """İstemciden gelen kalem listesini doğrular. Basılan sayılar sunucudakinden alınır; yalnız kullanıcı bir kalemin
+    basılan adedini elle düzelttiyse (printed_edit) o kullanılır ve fark `delta` listesine eklenir."""
     if not isinstance(items, list):
         return []
     prev = {}
@@ -2464,16 +2466,29 @@ def clean_items(items, old=None):
             if not isinstance(p, dict):
                 continue
             pid = re.sub(r"[^\w-]", "", str(p.get("id") or ""))[:16] or uuid.uuid4().hex[:8]
-            parts.append({"id": pid, "name": (p.get("name") or "").strip()[:60] or "Parça", "qty": _inum(p.get("qty"), 1, 999, True) or 1,
+            pq = _inum(p.get("qty"), 1, 999, True) or 1
+            parts.append({"id": pid, "name": (p.get("name") or "").strip()[:60] or "Parça", "qty": pq,
                           "grams": _inum(p.get("grams"), 0, 99999), "color_hex": _clean_color(p.get("color_hex")),
-                          "color_name": (p.get("color_name") or "").strip()[:40] or None, "printed": prev.get(pid, 0),
+                          "color_name": (p.get("color_name") or "").strip()[:40] or None,
+                          "printed": _edited(p, pid, (_inum(k.get("qty"), 1, 9999, True) or 1) * pq, prev, delta),
                           "ptype": p.get("ptype") if p.get("ptype") in ("FDM", "SLA") else None})
         out.append({"id": kid, "name": (k.get("name") or "").strip()[:80] or "Kalem", "qty": _inum(k.get("qty"), 1, 9999, True) or 1,
                     "grams": _inum(k.get("grams"), 0, 99999), "price": _inum(k.get("price"), 0, 1e7),
                     "color_hex": _clean_color(k.get("color_hex")), "color_name": (k.get("color_name") or "").strip()[:40] or None,
-                    "printed": prev.get(kid, 0), "parts": parts,
+                    "printed": prev.get(kid, 0) if parts else _edited(k, kid, _inum(k.get("qty"), 1, 9999, True) or 1, prev, delta),
+                    "parts": parts, "product_id": _inum(k.get("product_id"), 1, 10**9, True),   # ürün listesinden seçildiyse
                     "ptype": k.get("ptype") if k.get("ptype") in ("FDM", "SLA") else None})
     return out
+
+
+def _edited(t, tid, need, prev, delta):
+    old = prev.get(tid, 0)
+    if t.get("printed_edit") is None:
+        return old
+    v = _inum(t.get("printed_edit"), 0, need, True) or 0
+    if delta is not None:
+        delta.append(v - min(old, need))
+    return v
 
 
 def item_leaves(items):
@@ -2550,7 +2565,8 @@ def decorate_order(d):
 ORDER_STATUSES = ("new", "printing", "ready", "delivered", "cancelled")
 ORDER_SELECT = """SELECT o.*, j.id AS active_job_id, j.started_at AS job_started_at, j.ends_at AS job_ends_at,
                          j.printer AS job_printer,
-                         (SELECT COALESCE(SUM(good_quantity),0) FROM print_jobs WHERE order_id=o.id AND status IN ('success','partial')) AS printed,
+                         (SELECT COALESCE(SUM(good_quantity),0) FROM print_jobs WHERE order_id=o.id AND status IN ('success','partial'))
+                           + COALESCE(o.printed_adj,0) AS printed,
                          (SELECT COALESCE(SUM(quantity),0) FROM print_jobs WHERE order_id=o.id AND status='printing') AS in_print,
                          (SELECT COUNT(*) FROM print_jobs WHERE order_id=o.id AND status='printing') AS active_jobs
                   FROM custom_orders o
@@ -2558,16 +2574,20 @@ ORDER_SELECT = """SELECT o.*, j.id AS active_job_id, j.started_at AS job_started
                                                   ORDER BY ends_at LIMIT 1)"""
 
 
-def order_after_job(oid):
+def order_after_job(oid, manual=False):
     """Özel siparişin durumu baskılarına göre: baskıda olan varsa Baskıda; basılan toplam sipariş adedine
-    ulaştıysa Hazır; yoksa (kısmen basıldı ya da başarısız) Yeni. Elle Hazır/Teslim yapılmışsa dokunmaz."""
-    o = db().execute("SELECT quantity FROM custom_orders WHERE id=?", (oid,)).fetchone()
+    ulaştıysa Hazır; yoksa (kısmen basıldı ya da başarısız) Yeni. Elle Hazır/Teslim yapılmışsa dokunmaz.
+    manual: basılan adet elle düzeltildi; düşürüldüyse Hazır'dan Yeni'ye de döner."""
+    o = db().execute("SELECT quantity, status, COALESCE(printed_adj,0) adj FROM custom_orders WHERE id=?", (oid,)).fetchone()
     if not o:
         return
     r = db().execute("""SELECT COALESCE(SUM(CASE WHEN status IN ('success','partial') THEN good_quantity END),0) done,
                                COALESCE(SUM(status='printing'),0) busy FROM print_jobs WHERE order_id=?""", (oid,)).fetchone()
-    st = "printing" if r["busy"] else ("ready" if r["done"] >= max(1, o["quantity"] or 1) else "new")
-    db().execute("UPDATE custom_orders SET status=?, updated_at=? WHERE id=? AND status IN ('new','printing')", (st, now(), oid))
+    st = "printing" if r["busy"] else ("ready" if r["done"] + o["adj"] >= max(1, o["quantity"] or 1) else "new")
+    ok = ("new", "printing", "ready") if manual else ("new", "printing")
+    if st == o["status"] or o["status"] not in ok:
+        return
+    db().execute("UPDATE custom_orders SET status=?, updated_at=? WHERE id=?", (st, now(), oid))
     asama.sync(oid)
 
 
@@ -2613,8 +2633,11 @@ def apply_items(data, old_items=None, total_grams=None):
     """Kalemler varsa siparişin adet, gram (adet başı ortalama) ve (ayrı fiyat açıksa) fiyatını kalemlerden hesaplar."""
     if "items" not in data:
         return data
-    items = clean_items(data["items"], old_items)
+    delta = []
+    items = clean_items(data["items"], old_items, delta)
     data["items"] = json.dumps(items, ensure_ascii=False) if items else None
+    if any(delta):
+        data["_pdelta"] = sum(delta)
     if items:
         lv = item_leaves(items)
         units = sum(n for _, n, _, _, _ in lv)
@@ -3107,6 +3130,9 @@ def api_order_create(req):
     if not (b.get("first_name") or "").strip():
         raise ApiError("Müşteri adı boş olamaz")
     data = apply_items(clean_order(b), None, b.get("total_grams"))
+    if data.get("_pdelta"):
+        data["printed_adj"] = data["_pdelta"]
+    data.pop("_pdelta", None)
     data["status"] = "new" if data.get("status") in (None, "printing") else data["status"]
     m = asama.stage_map()
     stage = b.get("stage") if b.get("stage") in m else asama.target_for(asama.flow(), data["status"], None)
@@ -3128,6 +3154,9 @@ def api_order_update(req, oid):
     b = req.json()
     cur = order_row(oid)
     data = apply_items(clean_order(b), cur["items"], b.get("total_grams"))
+    pdelta = data.pop("_pdelta", 0)
+    if pdelta:
+        db().execute("UPDATE custom_orders SET printed_adj=COALESCE(printed_adj,0)+? WHERE id=?", (pdelta, oid))
     m = asama.stage_map()
     stage = b.get("stage") if b.get("stage") in m and b.get("stage") != cur.get("stage") else None
     if stage:   # aşama seçildi: durum aşamanın türü olur; üretim türündeki elle aşama (boyama vs.) baskısız da olabilir
@@ -3153,6 +3182,8 @@ def api_order_update(req, oid):
         asama.move(oid, stage, b.get("stage_note"))
     elif new_status:
         asama.sync(oid, b.get("stage_note"))
+    elif pdelta:
+        order_after_job(oid, manual=True)   # elle düzeltilen basılan adede göre Yeni ↔ Hazır
     asama.apply_rules()
     return order_row(oid)
 
@@ -4820,12 +4851,19 @@ def api_update_check(req):
 
 @route("POST", "/api/update/apply", lock=False)
 def api_update_apply(req):
-    if not updater.enabled():
+    if not updater.enabled() and not updater.ha_mode():
         raise ApiError("Home Assistant'ta güncelleme Home Assistant'tan yapılır")
     try:
         yedek.make("guncelleme")   # ne olur ne olmaz: veritabanının yedeği
     except Exception as e:  # noqa
         print("Güncelleme öncesi yedek alınamadı:", e)
+    if updater.ha_mode():
+        try:
+            return updater.ha_apply()
+        except ValueError as e:
+            raise ApiError(str(e))
+        except Exception as e:  # noqa
+            raise ApiError(f"Home Assistant güncellemeyi başlatamadı: {e}. Ayarlar → Eklentiler → Astera'dan güncelleyebilirsiniz.", 502)
     try:
         res = updater.apply()
     except ValueError as e:
@@ -4839,7 +4877,8 @@ def api_update_apply(req):
 def _update_notice(info):
     with DB_LOCK:
         notify._upsert(f"update:{info['latest']}", "report", "info", f"Astera {info['latest']} hazır",
-                       "Ayarlar → Genel → Uygulama'dan tek tuşla güncelleyebilirsiniz.", {"t": "go", "href": "#/ayarlar"})
+                       "Ayarlar → Genel → Uygulama'dan tek tuşla güncelleyebilirsiniz." + (" Home Assistant'a da hemen bildirildi." if updater.ha_mode() else ""),
+                       {"t": "go", "href": "#/ayarlar"})
         db().commit()
 
 

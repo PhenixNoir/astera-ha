@@ -1,5 +1,10 @@
 # Sürüm notları
 
+## 1.16.3
+- Home Assistant güncellemesi: Astera 15 dakikada bir GitHub'daki sürüme bakar, yeni sürüm görünce Home Assistant'a eklenti deposunu hemen yeniletir (artık 10-15 dk "son sürüm" eski görünmez). Ayarlar → Genel → Uygulama'dan Home Assistant'ta da tek tuşla güncellenebilir; "Kontrol et" depoyu anında yeniletir. Bunun için eklentiye eklenti yönetimi yetkisi verildi (hassio_role: manager).
+- Özel sipariş: kalemin basılan adedi elle değiştirilebilir (ilerleme çubuğuna tıkla: − / +, Sıfırla, Hepsi basıldı). Hepsi basılınca sipariş Hazır'a geçer, düşürülürse Yeni'ye döner.
+- Özel sipariş: kalem adı yazarken ürün listesinden küçük resimli öneri; seçince ad, baskı türü ve gram üründen gelir.
+
 ## 1.16.2
 - Hazırla: ürünün altındaki sipariş satırlarında stokta olanlar yeşil "stokta var" (birden fazla adetse "2 stokta var"), bir kısmı varsa yeşil "1 rafta" + kırmızı "1 rafta yok".
 

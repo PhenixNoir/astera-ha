@@ -3,7 +3,9 @@
 Yeni sürüm GitHub'daki Home Assistant eklenti deposundan (PhenixNoir/astera-ha) gelir; HA eklentisi de
 aynı dosyaları kullanır. Güncelleme yalnızca program dosyalarını değiştirir: `data` klasörüne (veritabanı,
 görseller, yedekler) asla dokunulmaz. Değişen eski dosyalar data/eski_surum/<sürüm>/ altına saklanır.
-Home Assistant'ta güncellemeyi Home Assistant yapar; orada bu modül kapalıdır.
+Home Assistant'ta dosyaları Home Assistant değiştirir. Ama Supervisor eklenti deposunu kendi saatinde (bazen
+dakikalar sonra) yeniler; o zamana kadar "Güncelle" düğmesi eski sürümü gösterir. Bu yüzden HA'da bu modül
+GitHub'daki sürüme bakar, yeni sürüm görünce Supervisor'a depoyu hemen yenilettirir ve istenirse güncellemeyi başlatır.
 """
 import io
 import json
@@ -14,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -69,15 +72,58 @@ def _notes(changelog, current, latest):
     return out[:12]
 
 
+def ha_mode():
+    return bool(os.environ.get("ATOLYE_HA") and os.environ.get("SUPERVISOR_TOKEN"))
+
+
+def _sv(method, path, body=None, timeout=30):
+    """Supervisor API (eklentinin kendi anahtarıyla; config.yaml'da hassio_api + hassio_role: manager)."""
+    data = json.dumps(body).encode() if body is not None else (b"{}" if method == "POST" else None)
+    req = urllib.request.Request((os.environ.get("ATOLYE_SV_BASE") or "http://supervisor") + path, data=data, method=method,
+                                 headers={"Authorization": f"Bearer {os.environ.get('SUPERVISOR_TOKEN', '')}", "Content-Type": "application/json"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(req, timeout=timeout) as r:
+            raw = r.read()
+    except urllib.error.HTTPError as e:
+        try:
+            msg = json.loads(e.read() or b"{}").get("message")
+        except Exception:
+            msg = None
+        raise RuntimeError(msg or f"Supervisor {e.code}")
+    d = json.loads(raw or b"{}")
+    if isinstance(d, dict) and d.get("result") == "error":
+        raise RuntimeError(d.get("message") or "Supervisor hatası")
+    return d.get("data", d) if isinstance(d, dict) else d
+
+
+_ha = {"reload_at": 0}
+
+
+def _ha_store(latest, force_reload=False):
+    """Supervisor'ın gördüğü son sürüm. GitHub'da daha yenisi varsa depoyu hemen yeniletir (en sık 2 dk'da bir)."""
+    info = _sv("GET", "/addons/self/info")
+    seen = info.get("version_latest") or info.get("version")
+    if (force_reload or (latest and _vtuple(latest) > _vtuple(seen))) and time.time() - _ha["reload_at"] > 120:
+        _ha["reload_at"] = time.time()
+        try:
+            _sv("POST", "/store/reload", timeout=120)
+        except RuntimeError:
+            _sv("POST", "/addons/reload", timeout=120)   # eski Supervisor
+        info = _sv("GET", "/addons/self/info")
+        seen = info.get("version_latest") or info.get("version")
+    return info, seen
+
+
 def check(force=False):
-    if not enabled():
+    if not enabled() and not ha_mode():
         return {"enabled": False, "current": _get_version()}
     with _lock:
         if not force and _cache["res"] and time.time() - _cache["at"] < 3600:
             return {**_cache["res"], **_state}
     current = _get_version() or "0"
     try:
-        latest = _fetch(RAW + "app/VERSION", 100).decode("utf-8").strip()
+        latest = _fetch(RAW + f"app/VERSION?t={int(time.time())}", 100).decode("utf-8").strip()
         if not re.fullmatch(r"\d+(\.\d+){1,3}", latest):
             raise ValueError("Sürüm bilgisi okunamadı")
         notes = []
@@ -88,6 +134,14 @@ def check(force=False):
                 pass
         res = {"enabled": True, "current": current, "latest": latest, "available": _vtuple(latest) > _vtuple(current),
                "notes": notes, "checked_at": int(time.time()), "check_error": None}
+        if ha_mode():
+            res.update(enabled=False, ha=True)
+            if res["available"]:
+                try:
+                    _, seen = _ha_store(latest)
+                    res["store_latest"] = seen
+                except Exception as e:  # noqa — yetki yoksa (eski kurulum) yine de sürümü gösteririz
+                    res["store_error"] = str(e)[:160]
     except Exception as e:  # noqa
         res = {"enabled": True, "current": current, "latest": None, "available": False, "notes": [],
                "checked_at": int(time.time()), "check_error": f"Güncelleme sunucusuna ulaşılamadı ({type(e).__name__})"}
@@ -104,6 +158,30 @@ def _safe_rel(name):
     if any(p in ("", ".", "..") for p in parts) or parts[0] in ("data", "__pycache__") or ":" in rel:
         return None
     return "/".join(parts)
+
+
+def ha_apply():
+    """Supervisor'a depoyu yeniletip bu eklentiyi güncellettirir. Güncelleme eklentiyi durdurup yeniden başlatır."""
+    info = check(force=True)
+    if not info.get("available"):
+        raise ValueError(info.get("check_error") or "Zaten en son sürüm kullanılıyor")
+    ad, seen = _ha_store(info["latest"], force_reload=True)
+    if _vtuple(seen) <= _vtuple(info["current"]):
+        raise ValueError("Home Assistant yeni sürümü henüz görmüyor; bir dakika sonra tekrar deneyin")
+    slug = ad.get("slug") or "self"
+
+    def go():
+        time.sleep(0.8)   # cevap tarayıcıya ulaşsın
+        try:
+            try:
+                _sv("POST", f"/store/addons/{slug}/update", {"background": True}, timeout=60)
+            except RuntimeError:
+                _sv("POST", f"/store/addons/{slug}/update", None, timeout=1800)
+        except Exception as e:  # noqa
+            _state["error"] = f"Güncelleme başlatılamadı: {e}"
+            print("HA güncellemesi başlatılamadı:", e, flush=True)
+    threading.Thread(target=go, daemon=True).start()
+    return {"version": info["latest"], "ha": True}
 
 
 def apply():
@@ -191,9 +269,10 @@ def restart(delay=1.5):
 
 
 def start_checker(on_new=None):
-    """Arka planda 6 saatte bir yeni sürüm var mı bak."""
-    if not enabled():
+    """Arka planda yeni sürüm var mı bak: bilgisayarda 6 saatte, HA'da 15 dakikada bir (depoyu da hemen yeniletir)."""
+    if not enabled() and not ha_mode():
         return
+    every = 900 if ha_mode() else 6 * 3600
 
     def loop():
         time.sleep(60)
@@ -206,5 +285,5 @@ def start_checker(on_new=None):
                     on_new(r)
             except Exception:
                 pass
-            time.sleep(6 * 3600)
+            time.sleep(every)
     threading.Thread(target=loop, daemon=True, name="updater").start()

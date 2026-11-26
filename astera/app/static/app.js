@@ -3699,10 +3699,22 @@ function oeColorSel(t, path) {
   const opts = [...new Map((S.spools || []).filter((x) => x.color_hex).map((x) => [x.color_hex.toLowerCase(), x])).values()];
   return `<span class="oe-col"><span class="dot" style="background:${esc(t.color_hex || 'transparent')}"></span><select class="input" data-oe="color" data-path="${path}"><option value="">Renk —</option>${opts.map((x) => `<option value="${esc(x.color_hex)}|${esc(x.color_name || colorName(x.color_hex) || '')}"${(t.color_hex || '').toLowerCase() === x.color_hex.toLowerCase() ? ' selected' : ''}>${esc(x.color_name || colorName(x.color_hex) || x.color_hex)}${x.brand ? ` · ${esc(x.brand)}` : ''}</option>`).join('')}</select></span>`;
 }
-function oeProg(done, ip, need) {
+// path verilirse tıklanınca basılan adet elle düzeltilebilir (baskı kaydı olmadan basılan, yanlış sayılan…)
+function oeProg(done, ip, need, path) {
   if (!need) return '';
-  const d = Math.min(need, done || 0), p = Math.min(need - d, ip || 0);
-  return `<div class="oe-prog" title="Basılan ${d}/${need}${p ? ` · ${p} baskıda` : ''}"><div class="opart-bar"><i class="d" style="width:${d / need * 100}%"></i><i class="p" style="width:${p / need * 100}%"></i></div><small>${d}/${need}${p ? ` · ${p} baskıda` : ''}</small></div>`;
+  const d = Math.min(need, done || 0), p = Math.min(need - d, ip || 0), ed = path != null && OE.pe === String(path);
+  const inner = `<div class="opart-bar"><i class="d" style="width:${d / need * 100}%"></i><i class="p" style="width:${p / need * 100}%"></i></div><small>${d}/${need}${p ? ` · ${p} baskıda` : ''}${path != null ? ` <span class="oe-pen">${icon('edit')}</span>` : ''}</small>`;
+  if (path == null) return `<div class="oe-prog" title="Basılan ${d}/${need}${p ? ` · ${p} baskıda` : ''}">${inner}</div>`;
+  return `<div class="oe-prog${ed ? ' ed' : ''}"><button type="button" class="oe-pbtn" data-oe="pe" data-path="${path}" title="Basılan ${d}/${need} — değiştirmek için tıkla">${inner}</button>
+    ${ed ? `<div class="oe-pe" role="dialog" aria-label="Basılan adet"><b>Basılan adet</b>
+      <div class="oe-pe-st"><button type="button" class="icon-btn" data-oe="pe-d" data-v="-1" data-path="${path}" aria-label="Azalt">−</button><input class="input" type="number" min="0" max="${need}" value="${d}" data-oe="pe-v" data-path="${path}" aria-label="Basılan"><span>/ ${need}</span><button type="button" class="icon-btn" data-oe="pe-d" data-v="1" data-path="${path}" aria-label="Artır">+</button></div>
+      <div class="oe-pe-q"><button type="button" class="chip" data-oe="pe-set" data-v="0" data-path="${path}">Sıfırla</button><button type="button" class="chip" data-oe="pe-set" data-v="${need}" data-path="${path}">Hepsi basıldı</button><button type="button" class="btn btn-sm btn-primary" data-oe="pe-ok">Tamam</button></div>
+      <small class="muted">Kaydet'e basınca işlenir. Hepsi basılınca sipariş Hazır'a geçer.</small></div>` : ''}</div>`;
+}
+function oeSetPrinted(path, v) {
+  const t = oeAt(path), [i, j] = String(path).split('.').map(Number), k = OE.items[i];
+  const need = j == null || Number.isNaN(j) ? k.qty : k.qty * t.qty;
+  t.printed = Math.max(0, Math.min(need, Math.round(+v || 0))); t.printed_edit = t.printed;
 }
 function oeRender() {
   const box = $('#oe-list'); if (!box || !OE) return;
@@ -3719,13 +3731,13 @@ function oeRender() {
       <div class="oe-ih">
         <input type="checkbox" class="oe-cb" data-oe="sel-k" data-path="${i}" ${leafSel ? 'checked' : ''} aria-label="Baskı için seç">
         ${parts ? `<button type="button" class="oe-chev" data-oe="toggle" data-path="${i}" aria-label="Parçaları aç/kapat">${icon(open ? 'chevron-down' : 'chevron-right')}</button>` : '<span></span>'}
-        <div class="oe-nm"><input class="input" data-oe="name" data-path="${i}" value="${esc(k.name)}" placeholder="Kalem adı, ör. Kaptan">${kp && !open ? `<small class="muted">${k.parts.map((p) => esc(p.name) + (p.qty > 1 ? ` ×${p.qty}` : '')).join(', ')}</small>` : ''}</div>
+        <div class="oe-nm${k.product_id && productById(k.product_id) ? ' has-p' : ''}">${k.product_id && productById(k.product_id) ? `<span class="oe-nth" style="${thumbStyle(productById(k.product_id).thumbnail)}" title="Ürün listesinden: ${esc(productById(k.product_id).name)}"></span>` : ''}<input class="input" data-oe="name" data-path="${i}" value="${esc(k.name)}" placeholder="Kalem adı ya da ürün ara, ör. Sakura" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false">${kp && !open ? `<small class="muted">${k.parts.map((p) => esc(p.name) + (p.qty > 1 ? ` ×${p.qty}` : '')).join(', ')}</small>` : ''}</div>
         <span class="oe-ty" role="group" aria-label="Baskı türü">${['FDM', 'SLA'].map((t) => `<button type="button" class="${(k.ptype || OE.print_type) === t ? 'on' : ''} t-${t}" data-oe="ptype" data-path="${i}" data-v="${t}" aria-pressed="${(k.ptype || OE.print_type) === t}">${t}</button>`).join('')}</span>
         <label class="oe-n"><input class="input" type="number" min="1" data-oe="qty" data-path="${i}" value="${k.qty}"><span>adet</span></label>
         ${parts ? `<span class="oe-pc">${kp ? `${need} parça` : '<span class="faint">parça yok</span>'}</span>` : ''}
         ${priced ? (kp ? `<span class="oe-g">${kGrams ? fmtGram(kGrams) : '—'}</span>` : `<label class="oe-n"><input class="input" type="number" min="0" step="0.1" data-oe="grams" data-path="${i}" value="${k.grams ?? ''}" placeholder="0"><span>g</span></label>`) : ''}
         ${priced ? `<label class="oe-n oe-pr"><input class="input" type="number" min="0" step="0.01" data-oe="price" data-path="${i}" value="${k.price ?? ''}" placeholder="0"><span>₺</span></label>` : ''}
-        ${oeProg(done, ip, need)}
+        ${kp ? oeProg(done, ip, need) : oeProg(done, ip, need, i)}
         ${color && !kp ? oeColorSel(k, i) : color ? '<span></span>' : ''}
         <span class="oe-acts"><button type="button" class="icon-btn" data-oe="dup" data-path="${i}" title="Çoğalt">${icon('copy')}</button><button type="button" class="icon-btn" data-oe="rm" data-path="${i}" title="Sil">${icon('x')}</button></span>
       </div>
@@ -3734,7 +3746,7 @@ function oeRender() {
           <input class="input" data-oe="pname" data-path="${i}.${j}" value="${esc(p.name)}" placeholder="Parça adı, ör. Kol">
           <label class="oe-n"><input class="input" type="number" min="1" data-oe="pqty" data-path="${i}.${j}" value="${p.qty}"><span>× kalem</span></label>
           ${priced ? `<label class="oe-n"><input class="input" type="number" min="0" step="0.1" data-oe="pgrams" data-path="${i}.${j}" value="${p.grams ?? ''}" placeholder="0"><span>g</span></label>` : ''}
-          ${oeProg(p.printed, p.in_print, k.qty * p.qty)}
+          ${oeProg(p.printed, p.in_print, k.qty * p.qty, `${i}.${j}`)}
           ${color ? oeColorSel(p, `${i}.${j}`) : ''}
           <button type="button" class="icon-btn" data-oe="prm" data-path="${i}.${j}" title="Parçayı sil">${icon('x')}</button></div>`).join('')}
         <button type="button" class="linkish oe-add" data-oe="padd" data-path="${i}">${icon('plus')} Parça ekle</button></div>` : ''}
@@ -3758,14 +3770,62 @@ function oeRender() {
 }
 function oeAt(path) { const [i, j] = String(path).split('.').map(Number); const k = OE.items[i]; return j == null || Number.isNaN(j) ? k : k.parts[j]; }
 function oeSync() { /* girişler anında OE'ye yazılıyor; bu yalnızca yer tutucu */ }
+// kalem adı yazılırken ürün listesinden öneri (küçük resimle); seçilince ad, baskı türü ve gram üründen gelir
+const oePName = (p) => (p ? `${p.name}${p.variant_label ? ` · ${p.variant_label}` : ''}` : '');
+function oeSugClose(inp) { inp?.closest('.oe-nm')?.querySelector('.oe-sug')?.remove(); inp?.setAttribute('aria-expanded', 'false'); }
+function oeSug(inp) {
+  if (!S.products) { if (!oeSug.ld) { oeSug.ld = true; loadProducts().then(() => oeSug(inp)).catch(() => {}); } return; }
+  const box = inp.closest('.oe-nm'), q = mpNorm(inp.value.trim()), words = q.split(/\s+/).filter(Boolean);
+  let list = [];
+  if (q.length >= 2) {
+    list = (S.products || []).filter((p) => !p.archived).map((p) => {
+      const hay = mpNorm(`${p.name} ${p.variant_label || ''} ${p.ty_title || ''} ${p.category || ''}`);
+      if (!words.every((w) => hay.includes(w))) return null;
+      const n = mpNorm(p.name);
+      return { p, sc: (n.startsWith(q) ? 0 : n.includes(q) ? 1 : 2) + (p.stock > 0 ? 0 : 0.5) };
+    }).filter(Boolean).sort((a, b) => a.sc - b.sc || a.p.name.localeCompare(b.p.name, 'tr')).slice(0, 7).map((x) => x.p);
+  }
+  let el = box.querySelector('.oe-sug');
+  if (!list.length) { oeSugClose(inp); return; }
+  if (!el) { el = document.createElement('div'); el.className = 'oe-sug'; el.setAttribute('role', 'listbox'); box.appendChild(el); }
+  const hl = (txt) => { let h = esc(txt); words.forEach((w) => { const i = mpNorm(txt).indexOf(w); if (i >= 0 && w.length > 1) h = esc(txt.slice(0, i)) + '<mark>' + esc(txt.slice(i, i + w.length)) + '</mark>' + esc(txt.slice(i + w.length)); }); return h; };
+  el.innerHTML = list.map((p, n) => `<button type="button" role="option" class="oe-so${n === 0 ? ' on' : ''}" data-pid="${p.id}" style="--i:${n}">
+      <span class="oe-sth${p.thumbnail ? '' : ' none'}" style="${thumbStyle(p.thumbnail)}"></span>
+      <span class="oe-snm"><b>${hl(p.name)}</b>${p.variant_label ? `<small>${esc(p.variant_label)}</small>` : ''}</span>
+      <span class="oe-sme">${p.print_type ? `<i class="t-${esc(p.print_type)}">${esc(p.print_type)}</i>` : ''}${p.grams ? `<small>${fmtGram(p.grams)}</small>` : ''}<small class="${p.stock > 0 ? 'ok' : 'no'}">${p.stock > 0 ? `stok ${p.stock}` : 'stok yok'}</small></span></button>`).join('')
+    + '<small class="oe-shint">↑↓ seç · Enter ekle · Esc kapat</small>';
+  inp.setAttribute('aria-expanded', 'true');
+  el.onpointerdown = (e) => { const b = e.target.closest('.oe-so'); if (!b) return; e.preventDefault(); oePick(inp, +b.dataset.pid); };
+}
+function oePick(inp, pid) {
+  const p = productById(pid), it = oeAt(inp.dataset.path); if (!p || !it) return;
+  it.name = oePName(p); it.product_id = p.id;
+  if (p.print_type === 'FDM' || p.print_type === 'SLA') it.ptype = p.print_type;
+  if (p.grams && it.grams == null) it.grams = p.grams;
+  oeSugClose(inp); oeRender(); orderCostHint();
+  const nx = $(`[data-oe="qty"][data-path="${inp.dataset.path}"]`); nx?.focus(); nx?.select();
+  const nm = $(`[data-oe="name"][data-path="${inp.dataset.path}"]`)?.closest('.oe-nm'); if (nm && !REDUCED()) { nm.classList.add('picked'); setTimeout(() => nm.classList.remove('picked'), 700); }
+}
 function oeBind() {
   const box = $('#oe-list');
+  box.addEventListener('keydown', (e) => {
+    if (e.target.dataset?.oe !== 'name') return;
+    const sg = e.target.closest('.oe-nm').querySelector('.oe-sug'); if (!sg) return;
+    const opts = [...sg.querySelectorAll('.oe-so')], cur = opts.findIndex((o) => o.classList.contains('on'));
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const n = (cur + (e.key === 'ArrowDown' ? 1 : -1) + opts.length) % opts.length; opts.forEach((o, k) => o.classList.toggle('on', k === n)); opts[n].scrollIntoView({ block: 'nearest' }); }
+    else if (e.key === 'Enter' && cur >= 0) { e.preventDefault(); e.stopPropagation(); oePick(e.target, +opts[cur].dataset.pid); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); oeSugClose(e.target); }
+  }, true);
+  box.addEventListener('focusout', (e) => { if (e.target.dataset?.oe === 'name') setTimeout(() => { if (document.activeElement !== e.target) oeSugClose(e.target); }, 120); });
+  box.addEventListener('keydown', (e) => { if (e.target.dataset?.oe === 'pe-v' && (e.key === 'Enter' || e.key === 'Escape')) { e.preventDefault(); e.stopPropagation(); OE.pe = null; oeRender(); } });
+  if (!oeBind.once) { oeBind.once = true; document.addEventListener('pointerdown', (e) => { if (OE?.pe != null && !e.target.closest('.oe-prog.ed') && $('#oe-list')) { OE.pe = null; oeRender(); } }, true); }
   box.addEventListener('input', (e) => {
     const t = e.target, a = t.dataset.oe; if (!a) return;
     const it = oeAt(t.dataset.path), num = (v, min) => (v === '' ? null : Math.max(min, +v || 0));
-    if (a === 'name' || a === 'pname') it.name = t.value;
+    if (a === 'name' || a === 'pname') { it.name = t.value; if (a === 'name') { if (it.product_id && t.value.trim() !== oePName(productById(it.product_id))) { delete it.product_id; t.closest('.oe-nm').classList.remove('has-p'); t.closest('.oe-nm').querySelector('.oe-nth')?.remove(); } oeSug(t); } }
     else if (a === 'qty' || a === 'pqty') { it.qty = Math.max(1, parseInt(t.value) || 1); clearTimeout(OE.rt); OE.rt = setTimeout(() => { const f = document.activeElement?.dataset?.path; const fa = document.activeElement?.dataset?.oe; oeRender(); if (f) $(`[data-oe="${fa}"][data-path="${f}"]`)?.focus(); }, 600); }
     else if (a === 'grams' || a === 'pgrams') { it.grams = num(t.value, 0); orderCostHint(); }
+    else if (a === 'pe-v') { oeSetPrinted(t.dataset.path, t.value); const pr = t.closest('.oe-prog'), b = pr.querySelector('.oe-pbtn'), [i, j] = t.dataset.path.split('.').map(Number); const k = OE.items[i], need = Number.isNaN(j) || j == null ? k.qty : k.qty * k.parts[j].qty, d = oeAt(t.dataset.path).printed; b.querySelector('.d').style.width = d / need * 100 + '%'; b.querySelector('small').firstChild.textContent = `${d}/${need} `; }
     else if (a === 'price') { it.price = num(t.value, 0); const pr = $('#o-price'); pr.value = Math.round(OE.items.reduce((s2, k) => s2 + (+k.price || 0) * k.qty, 0) * 100) / 100 || ''; orderCostHint(); }
   });
   box.addEventListener('change', (e) => {
@@ -3777,9 +3837,12 @@ function oeBind() {
   box.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-oe]'); if (!b) return;
     const a = b.dataset.oe, i = +String(b.dataset.path).split('.')[0];
+    if (a === 'pe') { OE.pe = OE.pe === b.dataset.path ? null : b.dataset.path; oeRender(); $('.oe-pe input')?.select(); return; }
+    if (a === 'pe-d' || a === 'pe-set') { const t = oeAt(b.dataset.path); oeSetPrinted(b.dataset.path, a === 'pe-set' ? +b.dataset.v : (t.printed || 0) + +b.dataset.v); oeRender(); return; }
+    if (a === 'pe-ok') { OE.pe = null; oeRender(); return; }
     if (a === 'add') { const k = { id: oeId(), name: '', qty: 1, grams: null, price: null, parts: [], printed: 0 }; if (OE.item_opts.parts) { k.parts = [{ id: oeId(), name: '', qty: 1, grams: null, printed: 0 }]; OE.open.add(k.id); } OE.items.push(k); oeRender(); $(`[data-oe="name"][data-path="${OE.items.length - 1}"]`)?.focus(); }
     else if (a === 'toggle') { const k = OE.items[i]; OE.open.has(k.id) ? OE.open.delete(k.id) : OE.open.add(k.id); oeRender(); }
-    else if (a === 'dup') { const c = structuredClone(OE.items[i]); c.id = oeId(); c.printed = 0; c.in_print = 0; c.name = c.name ? `${c.name} (kopya)` : ''; (c.parts || []).forEach((p) => { p.id = oeId(); p.printed = 0; p.in_print = 0; }); OE.items.splice(i + 1, 0, c); oeRender(); $(`[data-oe="name"][data-path="${i + 1}"]`)?.select(); }
+    else if (a === 'dup') { const c = structuredClone(OE.items[i]); c.id = oeId(); c.printed = 0; c.in_print = 0; delete c.printed_edit; c.name = c.name ? `${c.name} (kopya)` : ''; (c.parts || []).forEach((p) => { p.id = oeId(); p.printed = 0; p.in_print = 0; delete p.printed_edit; }); OE.items.splice(i + 1, 0, c); oeRender(); $(`[data-oe="name"][data-path="${i + 1}"]`)?.select(); }
     else if (a === 'rm') { const k = OE.items[i]; if (((k.printed || 0) + (k.parts || []).reduce((s2, p) => s2 + (p.printed || 0), 0)) && !confirm(`"${k.name}" kaleminin basılmış parçaları var. Yine de silinsin mi?`)) return; OE.items.splice(i, 1); oeRender(); }
     else if (a === 'ptype') { OE.items[i].ptype = b.dataset.v; OE.fresh = false; oeRender(); }
     else if (a === 'padd') { OE.items[i].parts.push({ id: oeId(), name: '', qty: 1, grams: null, printed: 0 }); oeRender(); $(`[data-oe="pname"][data-path="${i}.${OE.items[i].parts.length - 1}"]`)?.focus(); }
@@ -8220,8 +8283,8 @@ const APK_URL = 'https://github.com/PhenixNoir/astera-ha/releases/latest';
 // Kendi bilgisayarında çalışan Astera için güncelleme kutusu (Home Assistant'ta güncellemeyi HA yapar)
 function updHTML() {
   const u = S.upd; if (!u) return '';
-  if (!u.enabled) return `<div class="upd"><span class="upd-ic">${icon('check')}</span><div><b>Sürüm ${esc(u.current || '?')}</b><small class="muted">Güncellemeler Home Assistant → Ayarlar → Eklentiler'den yapılır.</small></div></div>`;
-  if (u.available) return `<div class="upd new"><span class="upd-ic">${icon('download')}</span><div class="upd-tx"><b>Yeni sürüm hazır: ${esc(u.latest)}</b><small class="muted">Şu an ${esc(u.current || '?')} kullanılıyor. Verileriniz (ürünler, siparişler, ayarlar) korunur; güncellemeden önce otomatik yedek alınır.</small>
+  if (!u.enabled && !u.ha) return `<div class="upd"><span class="upd-ic">${icon('check')}</span><div><b>Sürüm ${esc(u.current || '?')}</b><small class="muted">Güncellemeler Home Assistant → Ayarlar → Eklentiler'den yapılır.</small></div></div>`;
+  if (u.available) return `<div class="upd new"><span class="upd-ic">${icon('download')}</span><div class="upd-tx"><b>Yeni sürüm hazır: ${esc(u.latest)}</b><small class="muted">Şu an ${esc(u.current || '?')} kullanılıyor. Verileriniz (ürünler, siparişler, ayarlar) korunur; güncellemeden önce otomatik yedek alınır.${u.ha ? ` Güncellemeyi Home Assistant yapar (1-3 dk).${u.store_error ? ` <b>Home Assistant'a bağlanılamadı (${esc(u.store_error)})</b>; Ayarlar → Eklentiler → Astera'dan güncelleyin.` : ''}` : ''}</small>
       ${u.notes?.length ? `<details class="upd-notes"><summary>Neler değişti?</summary>${u.notes.map((n) => `<h4>${esc(n.version)}</h4><ul>${n.items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`).join('')}</details>` : ''}</div>
     <button class="btn btn-primary" data-act="upd-apply" ${u.busy ? 'disabled' : ''}>${icon('download')} Güncelle</button></div>`;
   return `<div class="upd"><span class="upd-ic">${icon('check')}</span><div class="upd-tx"><b>Sürüm ${esc(u.current || '?')}${u.check_error ? '' : ' · güncel'}</b><small class="muted">${u.check_error ? esc(u.check_error) : `Son kontrol ${fmtWhen(u.checked_at)}`}</small></div>
@@ -9135,17 +9198,18 @@ const ACTIONS = {
   'open-wizard': () => openWizard(),
   'upd-check': async (el) => { el.disabled = true; try { S.upd = await api('GET', '/api/update?force=1'); render(); if (!S.upd.available && !S.upd.check_error) toast('En son sürümü kullanıyorsunuz'); } catch (e) { fail(e); el.disabled = false; } },
   'upd-apply': async (el) => {
-    const u = S.upd; if (!confirm(`Astera ${u.current} → ${u.latest} sürümüne güncellenecek.\n\nÖnce veritabanının yedeği alınır, sonra program yeniden başlar (birkaç saniye). Verileriniz korunur. Devam edilsin mi?`)) return;
+    const u = S.upd; if (!confirm(`Astera ${u.current} → ${u.latest} sürümüne güncellenecek.\n\nÖnce veritabanının yedeği alınır, sonra ${u.ha ? 'Home Assistant eklentiyi günceller ve yeniden başlatır (1-3 dakika)' : 'program yeniden başlar (birkaç saniye)'}. Verileriniz korunur. Devam edilsin mi?`)) return;
     el.disabled = true;
     const ov = document.createElement('div'); ov.className = 'upd-ov'; ov.innerHTML = `<div><span class="spin"></span><b>Güncelleniyor…</b><small>Yeni sürüm indiriliyor, ardından program yeniden başlayacak.</small></div>`; document.body.appendChild(ov);
     try {
       const r = await api('POST', '/api/update/apply');
-      ov.querySelector('b').textContent = `${r.version} yüklendi, yeniden başlatılıyor…`;
+      ov.querySelector('b').textContent = r.ha ? `Home Assistant ${r.version} sürümünü kuruyor…` : `${r.version} yüklendi, yeniden başlatılıyor…`;
+      if (r.ha) ov.querySelector('small').textContent = 'Eklenti birazdan durup yeni sürümle açılacak; bu sayfa kendiliğinden yenilenir.';
       const t0 = Date.now();
       await new Promise((res) => setTimeout(res, 2500));
       for (;;) {
         try { const v = await (await fetch('/api/version', { cache: 'no-store' })).json(); if (v.version === r.version) break; } catch { /* yeniden başlıyor */ }
-        if (Date.now() - t0 > 60000) { ov.querySelector('small').textContent = 'Program kendiliğinden açılmadıysa Baslat.bat ile açın, sonra bu sayfayı yenileyin.'; return; }
+        if (Date.now() - t0 > (r.ha ? 360000 : 60000)) { ov.querySelector('small').textContent = r.ha ? 'Uzun sürdü: Home Assistant → Ayarlar → Eklentiler → Astera sayfasından durumu kontrol edin, sonra bu sayfayı yenileyin.' : 'Program kendiliğinden açılmadıysa Baslat.bat ile açın, sonra bu sayfayı yenileyin.'; return; }
         await new Promise((res) => setTimeout(res, 1000));
       }
       location.reload();
