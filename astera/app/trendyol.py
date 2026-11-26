@@ -1158,6 +1158,7 @@ def orders(month=None, start=None, end=None):
         g["lines"].append({"line_key": r["line_key"], "product_id": r["product_id"], "name": r["matched_name"] or r["product_name"] or r["barcode"],
                            "ty_name": r["product_name"], "barcode": r["barcode"], "thumbnail": r["thumbnail"], "quantity": r["quantity"],
                            "unit_price": r["unit_price"], "state": r["state"], "status": r["ty_status"], "line_id": r["line_id"],
+                           "ded": r["ded_qty"] if r["state"] == "deducted" else None,
                            "commission": r["commission"], "usual_commission": r["usual_commission"]})
     out, counts = [], {t: 0 for t in ORDER_TABS}
     hist = customer_history()

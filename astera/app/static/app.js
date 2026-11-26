@@ -9,8 +9,48 @@ const icon = (n) => `<svg><use href="#i-${n}"/></svg>`;
 const trLower = (s) => String(s || '').toLocaleLowerCase('tr');
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
+// ---------- Canlı güncelleme: sunucu bir şey değişince haber verir (/api/events), panel yalnız o bölümü yeniler
+const LIVE = { es: null, ok: false, mut: 0, full: 0, wait: {}, act: 0 };
+function liveStart() {
+  if (LIVE.es || typeof EventSource === 'undefined' || document.hidden) return;
+  const es = new EventSource('/api/events'); LIVE.es = es;
+  es.addEventListener('hello', () => { const was = LIVE.ok; LIVE.ok = true; if (!was && LIVE.full) poll(true); });
+  es.addEventListener('change', (e) => { let d; try { d = JSON.parse(e.data); } catch { return; } liveApply(d.kinds || []); });
+  es.onerror = () => { LIVE.ok = false; };   // tarayıcı kendisi yeniden bağlanır; o arada 10 sn yoklama devrede
+}
+function liveStop() { LIVE.es?.close(); LIVE.es = null; LIVE.ok = false; }
+// sekme arka plandayken bağlantıyı kapat (tarayıcının aynı adrese açık bağlantı sınırı dolmasın), dönünce hemen tazele
+document.addEventListener('visibilitychange', () => { if (document.hidden) liveStop(); else { liveStart(); poll(true); } });
+['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach((ev) => addEventListener(ev, () => { LIVE.act = Date.now(); }, { passive: true, capture: true }));
+// kullanıcı bir şeyle uğraşırken (pencere açık, yazıyor, az önce dokundu) sayfa altından değişmesin: boşa çıkınca uygula
+function liveIdle() {
+  const a = document.activeElement;
+  return !$('#modal-root')?.children.length && !$('.td-ovl') && !$('.ctx[role=menu]') && !(a && a.matches?.('input, textarea, select, [contenteditable]')) && Date.now() - LIVE.act > 2500 && !String(getSelection?.() || '');
+}
+function liveSoft(key, fn) {
+  clearTimeout(LIVE.wait[key]);
+  const go = () => { if (!liveIdle()) { LIVE.wait[key] = setTimeout(go, 2500); return; } delete LIVE.wait[key]; Promise.resolve(fn()).catch(() => {}); };
+  LIVE.wait[key] = setTimeout(go, 250);
+}
+function keepScroll(fn) { return async () => { const y = scrollY, k = typeof fitAnchors === 'function' ? fitAnchors() : []; await fn(); scrollTo(0, y); if (k.length) fitRestore(k); }; }
+function liveApply(kinds) {
+  const has = (k) => kinds.includes(k), r = route(), mine = Date.now() - LIVE.mut < 3000;
+  if (has('notifs') || has('jobs')) poll(true);
+  if (has('orders') || (has('products') && !mine)) { S.pickAt = 0; NO.at = 0; }
+  if (mine) return;
+  if (has('orders') || has('products')) {
+    if (r === 'siparisler' && (S.oSrc || 'ty') === 'ty') liveSoft('tyo', keepScroll(async () => { await Promise.all([loadTyOrders(), has('products') ? loadProducts() : null]); tyoRedraw(); if (DRW.kind) drwRefresh(); }));
+    else if (r === 'hazirla') liveSoft('pick', async () => { const [d] = await Promise.all([api('GET', '/api/trendyol/pick-list'), loadProducts()]); S.pick = d; S.pickAt = Date.now(); if (route() === 'hazirla') fillPick(); });
+    else if (r === '' && has('orders')) liveSoft('dash', () => dashNewLoad(true));
+    else if (has('products') && ['urunler', 'satis', 'termin'].includes(r)) liveSoft('prod', keepScroll(async () => { await loadProducts(); if (route() === r) await render(); }));
+  }
+  if (has('custom') && r === 'siparisler' && S.oSrc === 'custom') liveSoft('co', keepScroll(async () => { await loadOrders(); if (route() === r) await render(); }));
+  if (has('todos') && r === '') liveSoft('td', async () => { S.tdMetaAt = 0; await loadTodos(); fillTodo(); });
+}
+
 async function api(method, path, body, rawBody) {
   const opt = { method, headers: {} };
+  if (method !== 'GET') LIVE.mut = Date.now();   // kendi değişikliğimizin canlı haberi sayfayı ikinci kez çizdirmesin
   if (rawBody) { opt.body = rawBody; opt.headers['Content-Type'] = 'application/octet-stream'; }
   else if (body !== undefined) { opt.body = JSON.stringify(body); opt.headers['Content-Type'] = 'application/json'; }
   let res;
@@ -276,7 +316,30 @@ function ordSeen() {
 function ordNewCounts() {
   const on = S.notif?.orders_new || {}, seen = ordSeen(), out = {};
   for (const k of ['ty', 'hb']) out[k] = seen ? (on[k] || []).filter((id) => !seen.has(k + ':' + id)).length : 0;
+  appBadge((out.ty || 0) + (out.hb || 0));
   return out;
+}
+// ---------- Bilgisayara uygulama olarak kurulum (kendi penceresi, görev çubuğu simgesi, simgede yeni sipariş sayısı)
+let PWA_EVT = null;
+const isApp = () => matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: window-controls-overlay)').matches || matchMedia('(display-mode: minimal-ui)').matches;
+addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); PWA_EVT = e; const c = $('#pwa-card'); if (c) c.outerHTML = pwaHTML(); });
+addEventListener('appinstalled', () => { PWA_EVT = null; toast('Astera bilgisayara kuruldu: Başlat menüsünden ve görev çubuğundan açabilirsin'); const c = $('#pwa-card'); if (c) c.outerHTML = pwaHTML(); });
+function appBadge(n) {
+  if (!isApp() || !navigator.setAppBadge) return;
+  try { (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {}); } catch { /* desteklenmiyor */ }
+}
+function pwaHTML() {
+  const edge = /Edg\//.test(navigator.userAgent), app = isApp();
+  const body = app ? `<p style="margin:0"><span class="tag tag-ok">${icon('check')} Uygulama penceresinde açık</span></p>
+      <p class="muted" style="margin:0;font-size:13.5px">Görev çubuğuna sabitlemek için simgeye sağ tıklayıp <b>Görev çubuğuna sabitle</b>. Windows açılınca kendiliğinden başlasın istersen ${edge ? '<b>edge://apps</b>' : '<b>chrome://apps</b>'} sayfasında Astera'ya sağ tıkla → <b>Oturum açıldığında başlat</b>.</p>`
+    : PWA_EVT ? `<p class="muted" style="margin:0;font-size:13.5px">Astera kendi penceresinde, adres çubuğu ve sekmeler olmadan açılır; Başlat menüsüne ve görev çubuğuna eklenir.</p>
+      <div><button class="btn btn-primary" data-act="pwa-install">${icon('download')} Bilgisayara kur</button></div>`
+    : `<p class="muted" style="margin:0;font-size:13.5px">Astera kendi penceresinde, adres çubuğu ve sekmeler olmadan açılır; Başlat menüsüne ve görev çubuğuna eklenir.${window.isSecureContext ? '' : ' Adres <b>http://</b> ile açıldığı için tarayıcı kur düğmesini kendisi göstermiyor; şöyle kurulur:'}</p>
+      <ol class="pwa-steps">${edge
+        ? `<li>Sağ üstteki <b>⋯</b> menüsü → <b>Uygulamalar</b> → <b>Bu siteyi uygulama olarak yükle</b></li><li>Ad olarak <b>Astera</b> yaz, <b>Yükle</b>.</li>`
+        : `<li>Sağ üstteki <b>⋮</b> menüsü → <b>Yayınla, kaydet ve paylaş</b> → <b>Kısayol oluştur…</b></li><li>Ad olarak <b>Astera</b> yaz, <b>Pencere olarak aç</b> kutusunu işaretle, <b>Oluştur</b>.</li>`}
+        <li>Masaüstündeki / Başlat menüsündeki Astera simgesinden aç; istersen görev çubuğuna sabitle.</li></ol>`;
+  return `<section class="panel" id="pwa-card"><div class="panel-h"><h2>Uygulama olarak kur</h2></div><div class="panel-b" style="display:grid;gap:10px">${body}</div></section>`;
 }
 function ordMarkSeen() {
   const on = S.notif?.orders_new; if (!on) return;
@@ -4935,16 +4998,21 @@ function tyAlloc() {
   const left = {}, pleft = {}, ahead = {}, map = {};
   const news = pk.filter((p) => p.tab === 'new').sort((a, b) => (a.order_date || 0) - (b.order_date || 0) || String(a.order_number).localeCompare(String(b.order_number)));
   for (const p of news) {
-    const need = {};
-    p.lines.filter((l) => !TY_CANCEL.has(l.status) && l.product_id && l.state !== 'deducted').forEach((l) => { need[l.product_id] = (need[l.product_id] || 0) + l.quantity; });
+    // Yeni'ye geri alınmış siparişte stok zaten düşülmüştü: gerçekten düşülen adet (ded) bu siparişe ayrılmış sayılır,
+    // stok yetmediği için düşülemeyen kısım raftan / baskıdan aranır, o da yoksa eksik görünür
+    const need = {}, res = {};
+    p.lines.filter((l) => !TY_CANCEL.has(l.status) && l.product_id).forEach((l) => {
+      need[l.product_id] = (need[l.product_id] || 0) + l.quantity;
+      if (l.state === 'deducted') res[l.product_id] = (res[l.product_id] || 0) + Math.min(l.quantity, l.ded == null ? l.quantity : l.ded);
+    });
     const by = {};
     for (const [pid, n] of Object.entries(need)) {
       const pr = productById(+pid); if (!pr) continue;
       if (!(pid in left)) { left[pid] = Math.max(0, pr.stock || 0); pleft[pid] = Math.max(0, pr.in_production || 0); ahead[pid] = 0; }
-      // önce raf, raf bitince baskıdakiler (bitince rafa gelecek), o da yetmezse eksik
-      const got = Math.min(left[pid], n), gp = Math.min(pleft[pid], n - got);
-      by[pid] = { need: n, have: got, print: gp, miss: n - got - gp, shelf: Math.max(0, pr.stock || 0), inprint: Math.max(0, pr.in_production || 0), ahead: ahead[pid] };
-      left[pid] -= got; pleft[pid] -= gp; ahead[pid] += n;
+      // önce ayrılmış adet, sonra raf, raf bitince baskıdakiler (bitince rafa gelecek), o da yetmezse eksik
+      const rs = res[pid] || 0, want = n - rs, got = Math.min(left[pid], want), gp = Math.min(pleft[pid], want - got);
+      by[pid] = { need: n, have: rs + got, res: rs, print: gp, miss: want - got - gp, shelf: Math.max(0, pr.stock || 0), inprint: Math.max(0, pr.in_production || 0), ahead: ahead[pid] };
+      left[pid] -= got; pleft[pid] -= gp; ahead[pid] += want;
     }
     map[p.package_id] = by;
   }
@@ -5199,9 +5267,10 @@ function tyoBody(p) {
     const st = pr ? pr.stock : null, out = !!ms?.miss, part = out && ms.have > 0;
     const used = ms ? Math.min(ms.ahead, ms.shelf + ms.inprint) : 0;
     const queue = ms && (ms.miss || ms.print) && ms.ahead > 0 && used > 0 ? ` <small class="oc-q-note">önceki siparişler ${used} adet alıyor</small>` : '';
-    const parts2 = (x) => [x.have ? `rafta ${x.have}` : 'rafta yok', x.print ? `${x.print} baskıda` : ''].filter(Boolean).join(' · ');
+    const parts2 = (x) => [x.res ? `${x.res} ayrıldı` : '', x.have - (x.res || 0) ? `rafta ${x.have - (x.res || 0)}` : x.res ? '' : 'rafta yok', x.print ? `${x.print} baskıda` : ''].filter(Boolean).join(' · ');
     const shelf = !pr ? '' : ms?.miss ? `<span class="oc-out${ms.have || ms.print ? ' part' : ''}">${icon('alert')} ${ms.have || ms.print ? `${parts2(ms)} · <b>${ms.miss} eksik</b>` : `${ms.ahead > 0 && (ms.shelf || ms.inprint) ? 'Sıra gelince yetmiyor' : 'Rafta yok'} · ${ms.need} lazım`}</span>${queue}`
       : ms?.print ? `<span class="oc-print">${icon('layers')} ${ms.have ? `rafta ${ms.have} + ` : 'Rafta yok · '}${ms.print} baskıda</span>${queue}`
+      : ms?.res && ms.res >= ms.need ? `<span class="oc-shelf" title="Hazırlanıyor'a çekildiğinde stoktan düşülmüştü; bu sipariş için ayrılmış sayılır">${icon('check')} stoktan ayrıldı${st > 0 ? ` · rafta <b>${st}</b> daha` : ''}</span>`
       : st <= 0 && p.tab === 'new' && !cancel ? `<span class="oc-out">${icon('alert')} Rafta yok</span>` : `<span class="oc-shelf">rafta <b>${st}</b>${ms && !l.state?.startsWith('deduct') ? ` <span class="oc-after">→ bu siparişten sonra <b>${Math.max(0, ms.shelf - ms.ahead - ms.need)}</b></span>` : ''}</span>`;
     const pmiss = pr?.parts?.length && out ? Math.max(0, (pr.parts_total || 0) - (pr.parts_ready || 0)) : 0;
     const parts = pmiss ? `<span class="oc-parts" title="Sonraki set için elde ${pr.parts_ready}/${pr.parts_total} parça">${pmiss}/${pr.parts_total} parça eksik</span>` : '';
@@ -8272,6 +8341,7 @@ PAGES.ayarlar = {
         </div>
         ${updHTML()}
       </div></section>
+      ${pwaHTML()}
       <section class="panel"><div class="panel-h"><h2>Bildirimler</h2></div><div class="panel-b" style="display:grid;gap:12px">
         <p class="muted" style="margin:0">Baskı süresi dolduğunda uygulama açık olan her ekranda sonucu sorar ve sesli uyarı verir. Sistem bildirimi için tarayıcı izni gerekir.</p>
         ${!secure ? `<div class="notice">${icon('bell')}<div>Bu cihazda adres <b>http://</b> ile açıldığı için tarayıcı sistem bildirimi göstermiyor. Uygulama açık olduğu sürece ekranda sorar ve ses çalar. Ana bilgisayarda <b>http://localhost:${location.port || 80}</b> adresinden açarsanız Windows bildirimi de gelir.</div></div>`
@@ -10156,10 +10226,13 @@ function renderPBar() {
     info: o.prep ? 'hazırlanıyor' : o.s === 'run' ? `${o.pct != null ? `%${o.pct}` : 'baskıda'}${o.rem ? `<span class="pb-rem"> · ${fmtDur(o.rem)}</span>` : ''}` : PB_LABEL[o.s],
     tip: [o.name, o.s === 'run' ? 'baskıda' : PB_LABEL[o.s], o.file, o.note, o.temps ? heatText(o.temps) : '', o.s === 'err' && !o.ack && o.nid ? 'tıklayınca yanıp sönmeyi durdurur' : ''].filter(Boolean).join(' · ') })));
 }
-async function poll() {
-  loadNotifs();
+async function poll(force) {
+  // canlı bağlantı açıkken bildirim / baskı listesi değişince sunucu haber verir; yine de dakikada bir tam yoklama
+  const full = force || !LIVE.ok || Date.now() - (LIVE.full || 0) > 60000;
+  if (full) { LIVE.full = Date.now(); loadNotifs(); }
   try {
     if ((S.settings?.printers || []).some(hasLink)) loadBambu();
+    if (!full) return;
     await loadJobs();
     // Bambu bitiş saati her raporda birkaç saniye kayar; sayfayı sadece anlamlı değişimde (5 dk) yeniden çiz
     const sig = S.jobs.map((j) => `${j.id}:${j.status}:${j.bambu_state || ''}:${Math.round(j.ends_at / 300)}`).join(',');
@@ -10171,6 +10244,7 @@ async function poll() {
   } catch { /* sunucu geçici olarak erişilemez */ }
 }
 setInterval(poll, 10000);
+liveStart();
 setInterval(() => { if (!$('#modal-root').children.length && route() === '' && document.visibilityState === 'visible') render(); }, 60000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { syncTime(); poll(); } });
 
@@ -10824,6 +10898,7 @@ function openMatchPicker(d) {
   });
 }
 Object.assign(ACTIONS, {
+  'pwa-install': async () => { if (!PWA_EVT) return; const e = PWA_EVT; PWA_EVT = null; try { await e.prompt(); await e.userChoice; } catch { /* */ } const c = $('#pwa-card'); if (c) c.outerHTML = pwaHTML(); },
   'mp-open': async (el) => {
     const d = {}; for (const [k, v] of Object.entries(el.dataset)) if (k.startsWith('mp') && k !== 'mpKind') d[k.slice(2).toLowerCase()] = v;
     const kind = el.dataset.mpKind, pid = await openMatchPicker(d); if (!pid) return;

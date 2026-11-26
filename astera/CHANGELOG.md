@@ -1,5 +1,11 @@
 # Sürüm notları
 
+## 1.16.1
+- Panel çok daha hızlı açılır: dosyalar sıkıştırılarak gönderilir ve tarayıcıda saklanır (yalnız yeni sürümde bir kez iner); büyük listeler de sıkıştırılır.
+- Canlı güncelleme: yeni sipariş, stok, bildirim, baskı ve yapılacaklar değişince açık paneller hemen yenilenir (10 sn bekleme yok). Siz bir şeyle uğraşırken sayfa altından değişmez; kaydırma yeri korunur.
+- Ayarlar → Genel → "Uygulama olarak kur": Astera kendi penceresinde açılır, Başlat menüsüne / görev çubuğuna eklenir; simgede sağ tıkla Siparişler, Hazırla, Ürünler, Makineler kısayolları.
+- Yeni'ye geri alınan siparişlerde stok durumu doğru görünür: Hazırlanıyor'a çekilirken gerçekten düşülen adet bu siparişe ayrılmış sayılır, düşülemeyen kısım için satırda "eksik / hepsi eksik" çıkar.
+
 ## 1.16.0
 - Termin profilleri (Ürünler → Terminler): "Normal", "Yoğun" gibi adlı profillere ürün ürün kargoya veriliş süresi yazılır; "Uygula" deyince değişecekler gruplu gösterilir, onaylanınca yalnız süresi farklı olan barkodlar Trendyol'a gönderilir. Kabul edilmeyenler nedeniyle listelenir, tekrar uygulamada yalnız onlar gider.
 - Yapılacaklar: düzenleme penceresi sekmeli (İş / Görünüm / Kategoriler), üstte notun canlı hâli. Not başına renk (ya da kategorinin rengi), 8 çerçeve (bantlı, raptiyeli, kıvrık köşe, yırtık kâğıt, polaroid, defter, neon, damgalı) ve varsayılan çerçeve.

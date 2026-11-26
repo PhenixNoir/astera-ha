@@ -5194,3 +5194,4 @@ button.cu-ev:hover { background: var(--sheet-2); }
 .sticky.dk:not(.fr-neon) small { color: rgba(246,243,236,.75); }
 .sticky.dk:not(.fr-neon) .td-ck { border-color: rgba(246,243,236,.55); background: rgba(255,255,255,.1); }
 .sticky.dk:not(.fr-neon) .td-lnk { background: rgba(255,255,255,.16); color: #F6F3EC; }
+.pwa-steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 13.5px; color: var(--ink-2); line-height: 1.5; }

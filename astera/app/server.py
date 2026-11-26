@@ -8,6 +8,8 @@ Sadece Python standart kütüphanesi ile çalışır (Python 3.9+). Ek kurulum g
 """
 import argparse
 import base64
+import gzip
+import hashlib
 import io
 import json
 import math
@@ -57,6 +59,7 @@ import kargo
 import gunler
 import hepsiburada
 import push
+import canli
 import auth
 import updater
 import diag
@@ -449,6 +452,7 @@ def init_db():
         asama.migrate(db())
         asama.normalize_all()
         isler.init(db)
+        canli.init(db, DB_LOCK)
         isler.migrate(db())
         kisiler.init(db)
         kisiler.migrate(db())
@@ -4923,6 +4927,46 @@ class Req:
             raise ApiError("Geçersiz istek gövdesi")
 
 
+GZ_TYPES = {"application/json", "application/javascript", "text/html", "text/css", "text/plain", "text/javascript",
+            "image/svg+xml", "application/manifest+json", "text/csv", "application/xml", "text/xml"}
+_STATIC_CACHE = {}   # dosya → (mtime, boyut, sürüm, ham, sıkıştırılmış): her açılışta diskten okuyup yeniden sıkıştırmasın
+
+
+def _asset_ver():
+    """app.js + app.css değişince değişen kısa sürüm; index.html'deki adreslere ?v= olarak eklenir."""
+    parts = []
+    for n in ("app.js", "app.css"):
+        try:
+            st = os.stat(os.path.join(STATIC_DIR, n))
+            parts.append(f"{st.st_mtime_ns}:{st.st_size}")
+        except OSError:
+            parts.append("-")
+    return hashlib.sha1("|".join(parts).encode()).hexdigest()[:10]
+
+
+def _static_bytes(fp, st, is_index, want_gz):
+    if "/uploads/" in fp:   # görseller zaten sıkıştırılmış, bellekte tutulmaz
+        with open(fp, "rb") as f:
+            return f.read(), None
+    ver = _asset_ver() if is_index else ""
+    hit = _STATIC_CACHE.get(fp)
+    if not hit or hit[:3] != (st.st_mtime_ns, st.st_size, ver):
+        with open(fp, "rb") as f:
+            raw = f.read()
+        if is_index:
+            raw = raw.replace(b'/static/app.js"', f'/static/app.js?v={ver}"'.encode()).replace(b'/static/app.css"', f'/static/app.css?v={ver}"'.encode())
+        hit = (st.st_mtime_ns, st.st_size, ver, raw, None)
+        if len(_STATIC_CACHE) > 400:
+            _STATIC_CACHE.clear()
+        _STATIC_CACHE[fp] = hit
+    if not want_gz or len(hit[3]) < 1400:
+        return hit[3], None
+    if hit[4] is None:
+        hit = hit[:4] + (gzip.compress(hit[3], 6),)
+        _STATIC_CACHE[fp] = hit
+    return hit[3], hit[4]
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "Astera/1.0"
     protocol_version = "HTTP/1.1"
@@ -4930,16 +4974,27 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # sessiz
 
-    def _send(self, status, body, ctype="application/json; charset=utf-8", extra=None):
+    def _gz_ok(self, ctype):
+        return "gzip" in (self.headers.get("Accept-Encoding") or "") and ctype.split(";")[0] in GZ_TYPES
+
+    def _send(self, status, body, ctype="application/json; charset=utf-8", extra=None, gz=None):
         if isinstance(body, (dict, list)):
             body = json.dumps(body, ensure_ascii=False).encode("utf-8")
         elif isinstance(body, str):
             body = body.encode("utf-8")
+        extra = dict(extra or {})
+        # metin cevapları sıkıştırılır (sipariş listesi gibi büyük JSON'lar ~10 kat küçülür); hazır sıkıştırılmış gelebilir
+        if gz is None and len(body) > 1400 and self._gz_ok(ctype) and "Content-Disposition" not in extra:
+            gz = gzip.compress(body, 5)
+        if gz is not None:
+            body = gz
+            extra["Content-Encoding"] = "gzip"
+            extra["Vary"] = "Accept-Encoding"
         try:
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            for k, v in (extra or {}).items():
+            for k, v in extra.items():
                 self.send_header(k, v)
             self.end_headers()
             if self.command != "HEAD":
@@ -5038,12 +5093,26 @@ class Handler(BaseHTTPRequestHandler):
             ctype = "application/javascript"
         if ctype.startswith("text/") or ctype in ("application/javascript",):
             ctype += "; charset=utf-8"
-        with open(fp, "rb") as f:
-            data = f.read()
-        cache = "public, max-age=31536000, immutable" if "/uploads/" in fp else "no-cache"
+        st = os.stat(fp)
+        is_index = fp == os.path.join(STATIC_DIR, "index.html")
+        # sürümlü adres (?v=…, index.html'e yazılır) hiç değişmez: tarayıcı bir daha sormaz. Gerisi ETag ile "değişmedi" (304) alır.
+        forever = "/uploads/" in fp or ("v=" in u.query and fp.startswith(STATIC_DIR))
+        cache = "public, max-age=31536000, immutable" if forever else "no-cache"
         if auth.is_remote(self.headers):   # Cloudflare herkese açık önbelleğe almasın (şifreyi atlatırdı)
-            cache = "private, max-age=31536000, immutable" if "/uploads/" in fp else "private, no-cache"
-        self._send(200, data, ctype, {"Cache-Control": cache})
+            cache = cache.replace("public", "private") if forever else "private, no-cache"
+        tag = f'"{st.st_mtime_ns:x}-{st.st_size:x}' + (f'-{_asset_ver()}"' if is_index else '"')
+        if (self.headers.get("If-None-Match") or "") == tag:
+            try:
+                self.send_response(304)
+                self.send_header("ETag", tag)
+                self.send_header("Cache-Control", cache)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            except (ConnectionError, TimeoutError):
+                self.close_connection = True
+            return
+        data, gz = _static_bytes(fp, st, is_index, self._gz_ok(ctype))
+        self._send(200, data, ctype, {"Cache-Control": cache, "ETag": tag, "Vary": "Accept-Encoding"}, gz=gz)
 
     AUTH_OPEN = ("/giris", "/api/auth/login", "/api/auth/status")
 
@@ -5066,6 +5135,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if urlparse(self.path).path == "/giris":
             return self._send(200, auth.LOGIN_HTML, "text/html; charset=utf-8", {"Cache-Control": "no-store"})
+        if self.path.split("?")[0] == "/api/events":
+            return canli.stream(self)
         if self.path.startswith("/api/") and self.path.split("?")[0] not in ("/api/backup", "/api/backups/file", "/api/diag"):
             return self._api("GET")
         self._static()
