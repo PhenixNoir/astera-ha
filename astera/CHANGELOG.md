@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.16.2
+- Hazırla: ürünün altındaki sipariş satırlarında stokta olanlar yeşil "stokta var" (birden fazla adetse "2 stokta var"), bir kısmı varsa yeşil "1 rafta" + kırmızı "1 rafta yok".
+
 ## 1.16.1
 - Panel çok daha hızlı açılır: dosyalar sıkıştırılarak gönderilir ve tarayıcıda saklanır (yalnız yeni sürümde bir kez iner); büyük listeler de sıkıştırılır.
 - Canlı güncelleme: yeni sipariş, stok, bildirim, baskı ve yapılacaklar değişince açık paneller hemen yenilenir (10 sn bekleme yok). Siz bir şeyle uğraşırken sayfa altından değişmez; kaydırma yeri korunur.

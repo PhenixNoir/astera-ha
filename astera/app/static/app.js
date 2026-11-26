@@ -6714,7 +6714,7 @@ function pickListHTML() {
         </div>
       </summary>
       <div class="pick-orders">
-        ${i.orders.map((o) => `<div class="po urg-row-${o.urg}"><span>Sipariş <button type="button" class="po-link" data-act="po-open" data-no="${esc(o.order_number)}" title="Siparişler sayfasında aç">${esc(o.order_number)} ${icon('chevron-right')}</button>${o.missing && i.product_id ? ` <span class="tag tag-bad">${o.missing} rafta yok</span>` : ''}</span>
+        ${i.orders.map((o) => `<div class="po urg-row-${o.urg}"><span>Sipariş <button type="button" class="po-link" data-act="po-open" data-no="${esc(o.order_number)}" title="Siparişler sayfasında aç">${esc(o.order_number)} ${icon('chevron-right')}</button>${!i.product_id ? '' : !o.missing ? ` <span class="tag tag-ok">${o.quantity > 1 ? `${o.quantity} ` : ''}stokta var</span>` : `${o.missing < o.quantity ? ` <span class="tag tag-ok">${o.quantity - o.missing} rafta</span>` : ''} <span class="tag tag-bad">${o.missing} rafta yok</span>`}</span>
           <span class="faint">${o.dl ? `son ${fmtDl(o.dl)}` : fmtWhen(Math.floor(o.order_date / 1000))}</span>${dlChip(o.dl, o.need)}<b>×${o.quantity}</b></div>`).join('')}
         ${i.orders.some((o) => o.urg === 'nofit') ? `<p class="nofit-note">${icon('clock')} Eksik adetleri basmak yaklaşık ${fmtDur(Math.round(Math.max(...i.orders.map((o) => o.need)) / 60))} sürer; son teslime yetişmiyor.</p>` : ''}
         ${i.product_id ? '' : `<div class="pick-actions">${i.barcode ? `<div class="pick-match"><span class="muted">Bu, hangi ürününüz?</span>
