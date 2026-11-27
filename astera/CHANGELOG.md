@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.16.5
+- Home Assistant güncellemesi: depo yenilendikten sonra Home Assistant'ın "Güncelleme" penceresi de hemen tazelenir; yeni sürüm birkaç saniyede görünür ve "Güncelle" beklemeden basılabilir.
+
 ## 1.16.4
 - Hız: Siparişler sayfası boştayken işlemciyi %85 yerine ~%20 kullanır; arama harf başına 1 sn yerine ~0,1 sn; sekme değiştirme ve tik atma anında (liste baştan çizilmez). İstatistik, Müşteriler, Siparişler sayfaları 2-3 kat hızlı açılır.
 - Animasyonlar aynı görünür ama ekran kartında oynar; uzun listelerde ekran dışındaki satırlar çizilmez. 90 sn kimse dokunmazsa süs animasyonları durur, fare kıpırdayınca sürer.

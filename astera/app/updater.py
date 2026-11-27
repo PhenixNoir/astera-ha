@@ -112,7 +112,23 @@ def _ha_store(latest, force_reload=False):
             _sv("POST", "/addons/reload", timeout=120)   # eski Supervisor
         info = _sv("GET", "/addons/self/info")
         seen = info.get("version_latest") or info.get("version")
+    if _vtuple(seen) > _vtuple(info.get("version")) and time.time() - _ha.get("core_at", 0) > 240:
+        _ha["core_at"] = time.time()
+        _ha_core_refresh()
     return info, seen
+
+
+def _ha_core_refresh():
+    """Home Assistant'ın Güncellemeler ekranı Supervisor'dan ~5 dk'da bir okur; depo yenilense bile o ekran eski sürümü
+    gösterip "Güncelle"yi pasif bırakıyordu. Astera'nın güncelleme varlığını hemen tazeletir."""
+    try:
+        states = _sv("GET", "/core/api/states", timeout=20)
+        ids = [x["entity_id"] for x in states if isinstance(x, dict) and str(x.get("entity_id", "")).startswith("update.")
+               and "astera" in (str(x.get("entity_id")) + " " + str((x.get("attributes") or {}).get("title") or "")).lower()]
+        if ids:
+            _sv("POST", "/core/api/services/homeassistant/update_entity", {"entity_id": ids}, timeout=30)
+    except Exception as e:  # noqa — yalnız ekranı tazelemek için; olmazsa HA birkaç dakikada kendisi okur
+        print("HA güncelleme ekranı tazelenemedi:", e, flush=True)
 
 
 def check(force=False):
