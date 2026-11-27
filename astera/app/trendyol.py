@@ -568,7 +568,9 @@ def _process_line(pkg, line, codes, restock, since_ms, stats, key=None):
             _db().execute("UPDATE ty_lines SET packed_at=? WHERE line_key=?", ((pt // 1000) if pt else t, key))
         if row["quantity"] != qty and row["state"] in ("pending", "unmatched", "ignored"):
             _db().execute("UPDATE ty_lines SET quantity=? WHERE line_key=?", (qty, key))
-        _db().execute("UPDATE ty_lines SET ty_status=?, updated_at=? WHERE line_key=?", (status, t, key))
+        # yalnız durum değiştiyse yaz: her eşitlemede binlerce satırı boşuna güncellemek diski yoruyor ve açık panellere
+        # "siparişler değişti" haberi gidip listeyi baştan indirtiyordu
+        _db().execute("UPDATE ty_lines SET ty_status=?, updated_at=? WHERE line_key=? AND ty_status IS NOT ?", (status, t, key, status))
     _store_details(pkg, line, key)
     row = _db().execute("SELECT * FROM ty_lines WHERE line_key=?", (key,)).fetchone()
     eff_pid = pid if row["state"] in ("unmatched", "ignored") else (row["product_id"] or pid)
@@ -592,6 +594,7 @@ def rematch_code(code):
 
 
 def sync(manual=False):
+    _OPEN_CACHE["at"] = 0   # açık sipariş önbelleği tazelensin
     if not _sync_lock.acquire(blocking=False):
         return {"busy": True}
     try:
@@ -815,9 +818,17 @@ def _line_key(pkg, line):
     return str(line.get("id") or f"{pkg.get('id')}-{line.get('barcode')}")
 
 
+_OPEN_CACHE = {"at": 0, "pk": None}
+
+
 def _open_lines():
+    # Hazırla listesi pano, Hazırla sayfası ve baskı penceresinden art arda istenebilir: Trendyol'a 20 sn'de en fazla bir kez sorulur
     end = int(time.time() * 1000)
-    packages = fetch_packages(end - MAX_WINDOW_MS, end, OPEN_STATUSES)
+    if _OPEN_CACHE["pk"] is not None and time.time() - _OPEN_CACHE["at"] < 20:
+        packages = _OPEN_CACHE["pk"]
+    else:
+        packages = fetch_packages(end - MAX_WINDOW_MS, end, OPEN_STATUSES)
+        _OPEN_CACHE.update(at=time.time(), pk=packages)
     with _lock:
         codes = _code_map()
         names = {r["id"]: r["name"] for r in _db().execute(
@@ -1725,6 +1736,7 @@ def auto_accept(limit=40):
 def back_to_new(package_ids):
     """Yanlışlıkla Hazırlanıyor'a çekilen siparişleri burada Yeni'ye geri alır. Trendyol / Hepsiburada'daki durum değişmez,
     stoktan düşülen adet geri eklenmez (sipariş yine hazırlanacak). Yalnız Hazırlanıyor'daki siparişler alınır."""
+    _OPEN_CACHE["at"] = 0   # açık sipariş önbelleği tazelensin
     done, errors, t = [], [], _now()
     with _lock:
         for pid_ in [str(x) for x in package_ids]:
@@ -1749,6 +1761,7 @@ def back_ids(package_ids):
 def back_done(package_ids):
     """Geri alınmış ya da Trendyol'da kendiliğinden İşleme alınmış sipariş hazırlandı: işaret kalkar, bugün
     paketlenenlere girer. Kendiliğinden alınmışsa stok şimdi düşer. Pazaryerine istek gitmez."""
+    _OPEN_CACHE["at"] = 0   # açık sipariş önbelleği tazelensin
     t = _now()
     stats = {"deducted": 0, "restocked": 0}
     with _lock:
@@ -1790,6 +1803,7 @@ def _back_lines():
 
 def set_picking(package_ids):
     """Seçilen Yeni paketleri Trendyol'da Hazırlanıyor'a çeker; başarılı olanların stoğu hemen düşer."""
+    _OPEN_CACHE["at"] = 0   # açık sipariş önbelleği tazelensin
     done, errors = [], []
     restock = _get("ty_restock_cancel", "1") == "1"
     codes = _code_map()

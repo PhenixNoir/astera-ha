@@ -1,5 +1,12 @@
 # Sürüm notları
 
+## 1.16.4
+- Hız: Siparişler sayfası boştayken işlemciyi %85 yerine ~%20 kullanır; arama harf başına 1 sn yerine ~0,1 sn; sekme değiştirme ve tik atma anında (liste baştan çizilmez). İstatistik, Müşteriler, Siparişler sayfaları 2-3 kat hızlı açılır.
+- Animasyonlar aynı görünür ama ekran kartında oynar; uzun listelerde ekran dışındaki satırlar çizilmez. 90 sn kimse dokunmazsa süs animasyonları durur, fare kıpırdayınca sürer.
+- Home Assistant yükü azaldı: açılışta aynı veri tek kez istenir, pano dakikada bir her şeyi baştan istemez, panoyu açmak Trendyol eşitlemesi başlatmaz, Trendyol sipariş ve Hazırla listeleri kısa süreli önbellekte tutulur. Eşitleme artık değişmeyen sipariş satırlarını yeniden yazmaz (SD kart daha az yorulur). Sık aranan alanlara veritabanı dizini.
+- Pano arka planda tazelenirken bölümler baştan çizilmez; yalnız yeni gelen kayıtlar kayarak girer.
+- Bitmiş baskıya ürün seçince ürün penceresi doğrudan sonuç penceresine döner (arada kapanıp açılma ve titreme yok); "Kaydet" çift basılınca iki kayıt açılmaz.
+
 ## 1.16.3
 - Home Assistant güncellemesi: Astera 15 dakikada bir GitHub'daki sürüme bakar, yeni sürüm görünce Home Assistant'a eklenti deposunu hemen yeniletir (artık 10-15 dk "son sürüm" eski görünmez). Ayarlar → Genel → Uygulama'dan Home Assistant'ta da tek tuşla güncellenebilir; "Kontrol et" depoyu anında yeniletir. Bunun için eklentiye eklenti yönetimi yetkisi verildi (hassio_role: manager).
 - Özel sipariş: kalemin basılan adedi elle değiştirilebilir (ilerleme çubuğuna tıkla: − / +, Sıfırla, Hepsi basıldı). Hepsi basılınca sipariş Hazır'a geçer, düşürülürse Yeni'ye döner.

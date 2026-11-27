@@ -5248,3 +5248,57 @@ button.cu-ev:hover { background: var(--sheet-2); }
 .oe-shint { font-size: 11px; color: var(--ink-3); padding: 4px 8px 0; }
 @media (max-width: 620px) { .oe-sug { min-width: 0; } .oe-sme small:not(.ok):not(.no) { display: none; } .oe-shint { display: none; } }
 @media (prefers-reduced-motion: reduce) { .oe-sug, .oe-so, .oe-nth { animation: none; } }
+
+/* ================= Performans: görünüm aynı, iş yükü az =================
+   1) Uzun listelerde ekran dışındaki kartlar çizilmez (içlerindeki animasyonlar da durur).
+   2) Büyük kutularda gölge nabzı (her karede yeniden boyama) yerine hazır gölgeli bir katmanın saydamlığı oynar
+      (ekran kartında, ana iş parçacığını yormaz). */
+.tyo-row > .tyo { content-visibility: auto; contain-intrinsic-size: auto 84px; }
+.tyo-row > .tyo[open] { content-visibility: visible; }
+.pgrid > .pcard, .pcards > .pcard { content-visibility: auto; contain-intrinsic-size: auto 330px; }
+:root[data-route="istatistik"] #view .panel, :root[data-route="kar"] #view .panel, :root[data-route="musteriler"] #view .panel,
+:root[data-route="finans"] #view .panel, :root[data-route="baskilar"] #view .panel { content-visibility: auto; contain-intrinsic-size: auto 420px; }
+
+.tyo-row.heat-hot > .tyo, .tyo-row.short-some > .tyo, .tyo-row.short-all > .tyo { animation: none; }
+.tyo-row.heat-hot > .tyo::after, .tyo-row.short-some > .tyo::after, .tyo-row.short-all > .tyo::after {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none; z-index: 0; opacity: 0;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--g) 60%, transparent), 0 0 18px color-mix(in srgb, var(--g) 35%, transparent);
+  background: color-mix(in srgb, var(--g) var(--gt, 0%), transparent); animation: glow-op var(--gd, 1.6s) ease-in-out infinite; }
+.tyo-row.heat-hot > .tyo { --g: var(--heat); }
+.tyo-row.short-some > .tyo { --g: #E9A23B; --gt: 6%; --gd: 2.8s; position: relative; }
+.tyo-row.short-all > .tyo { --g: var(--bad); --gt: 8%; --gd: 1.5s; position: relative; }
+.tyo-row.short-some > .tyo[open]::after, .tyo-row.short-all > .tyo[open]::after { animation: none; opacity: 0; }
+@keyframes glow-op { 50% { opacity: 1; } }
+
+.job.due { animation: none; position: relative; }
+.job.due::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--pei) 35%, transparent); animation: glow-op 1.8s ease-in-out infinite; }
+
+.sticky.fr-neon { animation: td-in .5s cubic-bezier(.2,1.3,.4,1) both; animation-delay: calc(var(--i, 0) * 45ms); }
+.sticky.fr-neon::after { content: ""; position: absolute; inset: -2px; border-radius: inherit; pointer-events: none; width: auto; height: auto; background: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 30%, transparent), 0 0 28px color-mix(in srgb, var(--c) 82%, transparent); opacity: 0; animation: glow-op 2.8s ease-in-out infinite; }
+.sticky.tde-pv.fr-neon:not(.bump), .tde-mini .sticky.fr-neon { animation: none; }
+
+/* küçük nabız halkaları: gölge büyütmek yerine ölçek + saydamlık */
+.demo-dot, .hs::after { box-shadow: none; animation: dot-pulse 1.8s ease-in-out infinite; }
+@keyframes dot-pulse { 50% { transform: scale(.72); opacity: .55; } }
+.no-live i, .mk-live { animation: dot-beat 1.6s ease-in-out infinite; }
+@keyframes dot-beat { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .tyo-row > .tyo::after, .job.due::after, .sticky.fr-neon::after, .demo-dot, .hs::after { animation: none !important; } }
+:root[data-motion="calm"] .tyo-row > .tyo::after, :root[data-motion="off"] .tyo-row > .tyo::after { animation: none !important; }
+/* 90 sn kimse dokunmadıysa sürekli dönen süsler durur (fare kıpırdayınca devam) */
+:root.idle *, :root.idle *::before, :root.idle *::after { animation-play-state: paused !important; }
+/* sipariş görsellerindeki adet rozetlerinin süzülmesi: sabit kareli (ekran kartında oynar), her rozet kendi süresi/gecikmesiyle */
+.tyo-thumbs .tt .tt-qb { animation-name: fa1; }
+.tyo-thumbs .tt:nth-child(3n+2) .tt-qb { animation-name: fa2; }
+.tyo-thumbs .tt:nth-child(3n) .tt-qb { animation-name: fa3; }
+.tyo-thumbs .tt .tt-qb.gem { animation-name: fa1, gem-shift; }
+.tyo-thumbs .tt.out::after { animation-name: fb1; }
+.tyo-thumbs .tt:nth-child(2n).out::after { animation-name: fb2; }
+@keyframes fa1 { 0% { transform: translate(0, 0) rotate(0deg); } 35% { transform: translate(3px, -2px); } 70% { transform: translate(-2px, 2px) rotate(6deg); } 100% { transform: translate(1px, 1px) rotate(-3deg); } }
+@keyframes fa2 { 0% { transform: translate(0, 0) rotate(0deg); } 35% { transform: translate(-3px, -2px); } 70% { transform: translate(2px, 1px) rotate(-5deg); } 100% { transform: translate(-1px, 2px) rotate(3deg); } }
+@keyframes fa3 { 0% { transform: translate(0, 0) rotate(0deg); } 40% { transform: translate(2px, 3px) rotate(4deg); } 75% { transform: translate(-3px, -1px); } 100% { transform: translate(1px, -2px) rotate(-4deg); } }
+@keyframes fb1 { 0% { transform: translate(0, 0); } 40% { transform: translate(-3px, 2px); } 75% { transform: translate(3px, -2px); } 100% { transform: translate(-1px, -3px); } }
+@keyframes fb2 { 0% { transform: translate(0, 0); } 40% { transform: translate(2px, -3px); } 75% { transform: translate(-2px, 2px); } 100% { transform: translate(1px, 3px); } }
+.cu-list > .cu-row:not(.cu-head) { content-visibility: auto; contain-intrinsic-size: auto 58px; }
+:root[data-route="musteriler"] #view .panel { content-visibility: visible; }

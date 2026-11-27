@@ -443,6 +443,23 @@ def migrate():
     c.commit()
 
 
+# Sık aranan alanlara dizin: sipariş listesi tarih aralığıyla, paket / sipariş no ile, baskılar ürün / sipariş ile süzülür.
+# Veri büyüdükçe bu sorgular tüm tabloyu taramasın. Sütun yoksa (eski şema) o dizin atlanır.
+INDEXES = (("idx_tyl_date", "ty_lines(order_date)"), ("idx_tyl_pkg", "ty_lines(package_id)"), ("idx_tyl_ono", "ty_lines(order_number)"),
+           ("idx_tyl_packed", "ty_lines(packed_at)"), ("idx_tyl_pid", "ty_lines(product_id)"), ("idx_jobs_pid", "print_jobs(product_id)"),
+           ("idx_jobs_oid", "print_jobs(order_id)"), ("idx_jobs_fin", "print_jobs(finished_at)"), ("idx_notif_res", "notifications(resolved_at)"),
+           ("idx_co_status", "custom_orders(status)"))
+
+
+def _indexes():
+    for name, on in INDEXES:
+        try:
+            db().execute(f"CREATE INDEX IF NOT EXISTS {name} ON {on}")
+        except sqlite3.OperationalError:
+            pass
+    db().commit()
+
+
 def init_db():
     with DB_LOCK:
         db().executescript(SCHEMA)
@@ -454,6 +471,7 @@ def init_db():
         asama.normalize_all()
         isler.init(db)
         canli.init(db, DB_LOCK)
+        _indexes()
         isler.migrate(db())
         kisiler.init(db)
         kisiler.migrate(db())
@@ -4531,9 +4549,27 @@ def api_ty_import(req):
     return {"created": len(created), "images": res.get("images", 0)}
 
 
+_TYO_CACHE = {}
+
+
 @route("GET", "/api/trendyol/orders")
 def api_ty_orders(req):
     q = req.query
+    # Aynı aralık, veritabanında hiçbir şey değişmeden tekrar istenirse (pano + Siparişler + başka cihaz) hazır cevap döner.
+    # Bitiş "şimdi + 1 gün" gibi her istekte kayan bir değer olduğu için 10 dakikaya yuvarlanır.
+    rnd = lambda v: str(int(v) // 600000) if (v or "").isdigit() else (v or "")
+    key = (q.get("month") or "", rnd(q.get("from")), rnd(q.get("to")), db().total_changes, int(time.time() // 600))
+    hit = _TYO_CACHE.get(key[:3])
+    if hit and hit[0] == key:
+        return hit[1]
+    d = _ty_orders_build(q)
+    if len(_TYO_CACHE) > 6:
+        _TYO_CACHE.clear()
+    _TYO_CACHE[key[:3]] = (key, d)
+    return d
+
+
+def _ty_orders_build(q):
     d = trendyol.orders(q.get("month"), q.get("from"), q.get("to"))
     cg = finans.cargo_by_order([p["order_number"] for p in d["packages"]])
     for p in d["packages"]:

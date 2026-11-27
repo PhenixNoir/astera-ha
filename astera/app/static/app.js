@@ -21,7 +21,13 @@ function liveStart() {
 function liveStop() { LIVE.es?.close(); LIVE.es = null; LIVE.ok = false; }
 // sekme arka plandayken bağlantıyı kapat (tarayıcının aynı adrese açık bağlantı sınırı dolmasın), dönünce hemen tazele
 document.addEventListener('visibilitychange', () => { if (document.hidden) liveStop(); else { liveStart(); poll(true); } });
-['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach((ev) => addEventListener(ev, () => { LIVE.act = Date.now(); }, { passive: true, capture: true }));
+['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach((ev) => addEventListener(ev, () => { LIVE.act = Date.now(); wake(); }, { passive: true, capture: true }));
+// Kimse bakmıyorsa (90 sn hareketsiz) süs animasyonları duraklar: dükkânda gün boyu açık duran panel bilgisayarı yormasın.
+// Fare kıpırdayınca kaldıkları yerden sürer.
+let IDLE_AT = Date.now();
+function wake() { IDLE_AT = Date.now(); if (document.documentElement.classList.contains('idle')) document.documentElement.classList.remove('idle'); }
+addEventListener('pointermove', () => { if (Date.now() - IDLE_AT > 1000) wake(); }, { passive: true });
+setInterval(() => { if (Date.now() - IDLE_AT > 90000) document.documentElement.classList.add('idle'); }, 5000);
 // kullanıcı bir şeyle uğraşırken (pencere açık, yazıyor, az önce dokundu) sayfa altından değişmesin: boşa çıkınca uygula
 function liveIdle() {
   const a = document.activeElement;
@@ -35,22 +41,24 @@ function liveSoft(key, fn) {
 function keepScroll(fn) { return async () => { const y = scrollY, k = typeof fitAnchors === 'function' ? fitAnchors() : []; await fn(); scrollTo(0, y); if (k.length) fitRestore(k); }; }
 function liveApply(kinds) {
   const has = (k) => kinds.includes(k), r = route(), mine = Date.now() - LIVE.mut < 3000;
+  ldStale(...[['jobs', 'jobs'], ['products', 'products'], ['custom', 'orders'], ['orders', 'dash'], ['products', 'dash'], ['jobs', 'plan'], ['custom', 'plan'], ['products', 'plan'], ['jobs', 'dash'], ['jobs', 'dashx'], ['products', 'dashx'], ['products', 'issues'], ['orders', 'tyo']].filter(([k]) => has(k)).map(([, v]) => v));
   if (has('notifs') || has('jobs')) poll(true);
   if (has('orders') || (has('products') && !mine)) { S.pickAt = 0; NO.at = 0; }
   if (mine) return;
   if (has('orders') || has('products')) {
-    if (r === 'siparisler' && (S.oSrc || 'ty') === 'ty') liveSoft('tyo', keepScroll(async () => { await Promise.all([loadTyOrders(), has('products') ? loadProducts() : null]); tyoRedraw(); if (DRW.kind) drwRefresh(); }));
-    else if (r === 'hazirla') liveSoft('pick', async () => { const [d] = await Promise.all([api('GET', '/api/trendyol/pick-list'), loadProducts()]); S.pick = d; S.pickAt = Date.now(); if (route() === 'hazirla') fillPick(); });
-    else if (r === '' && has('orders')) liveSoft('dash', () => dashNewLoad(true));
-    else if (has('products') && ['urunler', 'satis', 'termin'].includes(r)) liveSoft('prod', keepScroll(async () => { await loadProducts(); if (route() === r) await render(); }));
+    if (r === 'siparisler' && (S.oSrc || 'ty') === 'ty') liveSoft('tyo', keepScroll(async () => { await Promise.all([loadTyOrders(), has('products') ? loadProducts() : null]); tyoRedraw(); calm($('#view'), '.is-new, .fresh'); if (DRW.kind) drwRefresh(); }));
+    else if (r === 'hazirla') liveSoft('pick', async () => { const [d] = await Promise.all([api('GET', '/api/trendyol/pick-list'), loadProducts()]); S.pick = d; S.pickAt = Date.now(); if (route() === 'hazirla') { fillPick(); calm($('#view')); } });
+    else if (r === '' && has('orders')) liveSoft('dash', async () => { await dashNewLoad(true); calm($('#no-body'), '.is-new, .fresh'); });
+    else if (has('products') && ['urunler', 'satis', 'termin'].includes(r)) liveSoft('prod', keepScroll(async () => { await loadProducts(); if (route() === r) await render({ quiet: true }); }));
   }
-  if (has('custom') && r === 'siparisler' && S.oSrc === 'custom') liveSoft('co', keepScroll(async () => { await loadOrders(); if (route() === r) await render(); }));
-  if (has('todos') && r === '') liveSoft('td', async () => { S.tdMetaAt = 0; await loadTodos(); fillTodo(); });
+  if (has('custom') && r === 'siparisler' && S.oSrc === 'custom') liveSoft('co', keepScroll(async () => { await loadOrders(); if (route() === r) await render({ quiet: true }); }));
+  if (r === '' && (has('products') || has('custom'))) liveSoft('pano', () => render({ quiet: true }));
+  if (has('todos') && r === '') liveSoft('td', async () => { S.tdMetaAt = 0; await loadTodos(); fillTodo(); calm($('#td-body'), '.drop'); });
 }
 
 async function api(method, path, body, rawBody) {
   const opt = { method, headers: {} };
-  if (method !== 'GET') LIVE.mut = Date.now();   // kendi değişikliğimizin canlı haberi sayfayı ikinci kez çizdirmesin
+  if (method !== 'GET') { LIVE.mut = Date.now(); ldStale(); }   // kendi değişikliğimiz: canlı haber sayfayı ikinci kez çizdirmesin, önbellek tazelensin
   if (rawBody) { opt.body = rawBody; opt.headers['Content-Type'] = 'application/octet-stream'; }
   else if (body !== undefined) { opt.body = JSON.stringify(body); opt.headers['Content-Type'] = 'application/json'; }
   let res;
@@ -512,12 +520,28 @@ function applyBrand() {
 }
 
 // ------------------------------------------------------------------ data loading
-async function loadProducts() { S.products = await api('GET', '/api/products'); }
-async function loadJobs() { S.jobs = await api('GET', '/api/jobs'); renderPBar(); }
-async function loadDash() { S.dash = await api('GET', '/api/dashboard'); }
-async function loadOrders() { const [o] = await Promise.all([api('GET', '/api/orders'), loadFlow()]); S.orders = o; }
+async function loadProducts() { return loadOnce('products', 5000, async () => { S.products = await api('GET', '/api/products'); }); }
+// Aynı veri kısa sürede birden çok yerden istenirse (açılış, pano, pencereler) tek istek gider; aynı anda gelen
+// istekler aynı cevabı bekler. Bir değişiklik yapılınca (POST/PUT/DELETE) ya da sunucu "değişti" deyince hepsi tazelenir.
+const LD = { at: {}, inf: {} };
+function loadOnce(key, ms, fn) {
+  if (LD.inf[key]) return LD.inf[key];
+  if (LD.at[key] && Date.now() - LD.at[key] < ms) return Promise.resolve();
+  const pr = Promise.resolve().then(fn).then((r) => { LD.at[key] = Date.now(); return r; }).finally(() => { if (LD.inf[key] === pr) delete LD.inf[key]; });
+  LD.inf[key] = pr; return pr;
+}
+function ldStale(...keys) { if (!keys.length) LD.at = {}; else keys.forEach((k) => { if (k === 'tyo') Object.keys(LD.at).forEach((x) => { if (x.startsWith('tyo:')) delete LD.at[x]; }); else delete LD.at[k]; }); }
+async function loadJobs() { await loadOnce('jobs', 3000, async () => { S.jobs = await api('GET', '/api/jobs'); }); renderPBar(); }
+async function loadDash() { return loadOnce('dash', 5000, async () => { S.dash = await api('GET', '/api/dashboard'); }); }
+async function loadOrders() { return loadOnce('orders', 5000, async () => { const [o] = await Promise.all([api('GET', '/api/orders'), loadFlow()]); S.orders = o; }); }
 async function loadSettings() { S.settings = await api('GET', '/api/settings'); applyBrand(); renderPBar(); }
-const productById = (id) => S.products.find((p) => p.id === id);
+// ürün listesi değişince (yeni dizi) bir kez dizinlenir; her çağrıda tüm listeyi taramaz
+let PBI = { list: null, map: null };
+const productById = (id) => {
+  const L = S.products; if (!L) return undefined;
+  if (PBI.list !== L || PBI.n !== L.length) { PBI = { list: L, n: L.length, map: new Map(L.map((p) => [p.id, p])) }; }
+  return PBI.map.get(typeof id === 'string' ? +id : id);
+};
 
 async function syncTime() {
   try { const t = await api('GET', '/api/time'); S.offset = t.now - Math.floor(Date.now() / 1000); } catch { /* ignore */ }
@@ -525,26 +549,50 @@ async function syncTime() {
 
 // ------------------------------------------------------------------ router
 const PAGES = {};
-async function render() {
+// Arka planda (zamanlayıcı, canlı güncelleme) yeniden çizerken giriş animasyonları baştan oynamasın:
+// yeni HTML'deki bitmesi gereken animasyonlar hemen son karesine alınır (sonsuz olanlar — nabız, ışıma — sürer).
+function calm(root, keep) {
+  if (!root?.getAnimations) return;
+  for (const a of root.getAnimations({ subtree: true })) {
+    try {
+      const t = a.effect?.target;
+      if (keep && t?.closest?.(keep)) continue;
+      if (a.effect?.getComputedTiming?.().iterations === Infinity) continue;
+      a.finish();
+    } catch { /* */ }
+  }
+}
+// sessiz çizimden hemen sonra sonradan dolan bölümler (yeni siparişler, yapılacaklar…) de animasyonsuz gelsin
+function calmFor(root, keep, ms) {
+  calm(root, keep);
+  if (!root || typeof MutationObserver === 'undefined') return;
+  const mo = new MutationObserver((list) => list.forEach((m) => m.addedNodes.forEach((n) => { if (n.nodeType === 1) calm(n, keep); })));
+  mo.observe(root, { childList: true, subtree: true });
+  setTimeout(() => mo.disconnect(), ms);
+}
+async function render(opts = {}) {
   const r = route();
   const page = PAGES[r] || PAGES[''];
   const nav = NAV.find((n) => n.r === r);
   $('#page-title').textContent = page.title?.() || (r === 'ayarlar' ? 'Ayarlar' : (nav ? nav.title : 'Pano'));
   document.title = ($('#page-title').textContent) + ' · ' + appName();
   if (r === 'siparisler') { const qs = new URLSearchParams(location.hash.split('?')[1] || '').get('src'); if (qs === 'ty' || qs === 'custom') S.oSrc = qs; }
+  document.documentElement.dataset.route = r || 'pano';
   renderNav();
-  try { await page.load?.(); } catch (e) { fail(e); }
+  if (!opts.noload) { try { await page.load?.(); } catch (e) { fail(e); } }
   if (route() !== r) return;
   if (page.title) { $('#page-title').textContent = page.title(); document.title = page.title() + ' · ' + appName(); }
-  const isNav = S.lastRoute !== r;
-  const swap = () => { const keep = isNav ? null : fitAnchors(); $('#view').innerHTML = page.html(); page.after?.(); if (keep) fitRestore(keep); tick(); countUp($('#view')); setTimeout(placeHints, 500); };
+  const isNav = S.lastRoute !== r, quiet = !!opts.quiet && !isNav;
+  const swap = () => { const keep = isNav ? null : fitAnchors(); $('#view').innerHTML = page.html(); page.after?.(); if (keep) fitRestore(keep); tick(); if (quiet) calmFor($('#view'), '.drop, .fresh, .is-new', 2500); else countUp($('#view')); setTimeout(placeHints, 500); };
   S.lastRoute = r;
   document.documentElement.dataset.vt = isNav ? 'page' : 'update';
   // Sayfa geçişinde View Transition kullanılmaz: tarayıcı tüm sayfanın (yüzlerce ürün kartı) anlık görüntüsünü alırken
   // ekran ~1 sn donuyordu. Onun yerine yalnızca içerik alanı hafifçe kayarak gelir (ucuz, GPU'da).
   // Aynı sayfadaki güncellemelerde (sıralama, stok değişimi) kartların yer değiştirme animasyonu, sayfada az öğe varsa kalır.
   const named = isNav ? Infinity : document.querySelectorAll('#view [style*="view-transition-name"]').length;
-  if (document.startViewTransition && S.booted && !REDUCED() && named <= 48) {
+  // pencere açıkken / kapanırken geçiş yapılmaz: tarayıcı tüm ekranın görüntüsünü alıp karıştırınca pencere bir kapanıp açılıyormuş gibi titriyordu
+  const modalBusy = $('#modal-root').children.length || document.querySelector('body > .modal-back, .td-ovl');
+  if (document.startViewTransition && S.booted && !REDUCED() && named <= 48 && !modalBusy && !quiet) {
     const t = document.startViewTransition(swap);
     t.ready.catch(() => {}); t.finished.catch(() => {});
     await t.updateCallbackDone.catch(() => {});
@@ -695,14 +743,17 @@ const dueJobs = () => S.jobs.filter(jobDone);
 // ================================================================== DASHBOARD
 PAGES[''] = {
   async load() {
-    const [, , , log, colors, , hist] = await Promise.all([loadDash(), loadJobs(), loadProducts(), api('GET', '/api/log?limit=12'), api('GET', '/api/materials-summary'), loadOrders(),
-      api('GET', '/api/jobs?status=history&limit=60').catch(() => S.history || []), loadPlan().catch(() => null)]);
-    S.log = log; S.colors = colors; S.history = hist;
-    S.issues = S.dash?.stock_issues ? await api('GET', '/api/stock-issues').catch(() => []) : [];
+    await Promise.all([loadDash(), loadJobs(), loadProducts(), loadOrders(), loadPlan().catch(() => null),
+      loadOnce('dashx', 5000, async () => {
+        const [log, colors, hist] = await Promise.all([api('GET', '/api/log?limit=12'), api('GET', '/api/materials-summary'), api('GET', '/api/jobs?status=history&limit=60').catch(() => S.history || [])]);
+        S.log = log; S.colors = colors; S.history = hist;
+      })]);
+    S.issues = S.dash?.stock_issues ? await loadOnce('issues', 5000, async () => { S.issuesD = await api('GET', '/api/stock-issues').catch(() => []); }).then(() => S.issuesD) : [];
     renderNav();
   },
   after() {
-    if (S.settings?.ty_seller_id && (!S.pick || Date.now() - (S.pickAt || 0) > 120000)) loadPick(true);
+    // pano yalnız listeyi tazeler; Trendyol eşitlemesini sunucu zaten arka planda yapıyor (her açılışta 2 sn'lik eşitleme yok)
+    if (S.settings?.ty_seller_id && (!S.pick || Date.now() - (S.pickAt || 0) > 120000)) loadPick('fresh');
     if (S.dashEdit) bindDashDrag();
     dashNewLoad();
     todoBind();
@@ -961,11 +1012,15 @@ function renderNotifs() {
   const sig = JSON.stringify([hk, Math.floor(Date.now() / 300000), list.map((n) => [n.id, n.resolved_at, n.title, n.body, n.level, n.updated_at])]);
   if (el.dataset.sig === sig && el.firstChild) { const c = $('#nb-count'); if (c) { c.hidden = !d.active; c.textContent = d.active > 99 ? '99+' : d.active; } return; }
   el.dataset.sig = sig;
+  const had = el.firstChild ? new Set(String(el.dataset.ids || '').split(',')) : null;
+  el.dataset.ids = list.map((n) => n.id).join(',');
   el.innerHTML = `<div class="nf-head"><h2>Bildirimler${d.active ? ` <span class="nf-count">${d.active}</span>` : ''}</h2>
       ${d.active ? '<button class="btn btn-ghost btn-sm" data-act="nf-all">Hepsini kapat</button>' : ''}
       <button class="icon-btn nf-close" data-act="nf-close" aria-label="Kapat">${icon('x')}</button></div>
     <div class="nf-list">${act.length ? NF_SECS.map((sec) => { const g = act.filter((n) => nfSec(n) === sec[0]); return g.length ? nfSecHTML('a', sec, g) : ''; }).join('') : '<p class="nf-empty">Bekleyen bildirim yok.</p>'}
       ${old.length ? `<div class="nf-sep">Geçmiş (7 gün)</div>${NF_SECS.map((sec) => { const g = old.filter((n) => nfSec(n) === sec[0]).slice(0, 60); return g.length ? nfSecHTML('h', sec, g) : ''; }).join('')}` : ''}</div>`;
+  // güncellemede yalnız gerçekten yeni gelen bildirim kayarak girer; ötekiler (yüzde, "x dk önce" değişti) olduğu yerde kalır
+  if (had) { const nw = list.filter((n) => !had.has(String(n.id))).map((n) => `[data-nf="${n.id}"]`); calm(el, nw.length ? nw.join(',') : null); }
   const c = $('#nb-count'); if (c) { c.hidden = !d.active; c.textContent = d.active > 99 ? '99+' : d.active; }
   $('#notif-bell')?.classList.toggle('has', !!d.active);
 }
@@ -1119,7 +1174,7 @@ PAGES.urunler = {
       <div id="plist">${productListHTML()}</div>${pselBar()}`;
   },
   after() {
-    $('#pq')?.addEventListener('input', (e) => { S.pf.q = e.target.value; $('#plist').innerHTML = productListHTML(); });
+    $('#pq')?.addEventListener('input', (e) => { S.pf.q = e.target.value; clearTimeout(S.pqT); S.pqT = setTimeout(() => { const l = $('#plist'); if (!l) return; l.innerHTML = productListHTML(); calm(l); }, S.pf.q ? 120 : 0); });
     $('#psort')?.addEventListener('change', (e) => { S.pf.sort = e.target.value; lsSet('pSort', S.pf.sort); $('#plist').innerHTML = productListHTML(); });
     pselBind();
     if (S.pf.sec && S.settings?.ty_seller_id && (!S.pick || Date.now() - (S.pickAt || 0) > 120000)) {
@@ -1988,7 +2043,7 @@ async function openNewPrint(arg) {
     await Promise.all([(S.settings?.printers || []).some(hasLink) ? loadBambu() : null, loadFail().catch(() => null)]);
     // Trendyol'daki Yeni siparişler (sıralama için) beklenmeden arkada tazelenir; gelince liste yeniden sıralanır
     if (S.settings?.ty_seller_id && (!S.pick || Date.now() - (S.pickAt || 0) > 300000))
-      loadPick(true).then(() => { if (NP && $('#np-list')) npRenderList(); }).catch(() => null);
+      loadPick('fresh').then(() => { if (NP && $('#np-list')) npRenderList(); }).catch(() => null);
   } catch (e) { return fail(e); }
   const printable = printableOrders();
   if (!S.products.length && !printable.length) { toast('Önce bir ürün veya özel sipariş ekleyin'); location.hash = '#/urunler'; return; }
@@ -2539,6 +2594,7 @@ async function startPrint() {
   if (NP.mode === 'misc' && $('#np-remember-in') && !$('#np-remember-in').checked) body.remember_file = false;
   body.spools = (NP.slots || []).filter((x) => x.spool_id).map((x) => ({ spool_id: x.spool_id, grams: x.grams }));
   if (NP.mode === 'product' && NP.parts) body.parts = Object.entries(NP.parts).filter(([, q]) => q > 0).map(([id, q]) => ({ part_id: +id, quantity: q }));
+  const stb = $('#np-start'); if (stb) stb.disabled = true;   // çift tıklama iki baskı açmasın
   try {
     const j = await api('POST', '/api/jobs', body);
     // özel siparişte gram sadece baskı penceresinde girildiyse siparişe de yaz (maliyet hesabı için)
@@ -2550,12 +2606,19 @@ async function startPrint() {
     S.pqStarted = true;
     if (S.printQueue?.length) setTimeout(printQueueNext, 350);
     if (NP.bambuEvent && S.bambu?.events) { S.bambu.events = S.bambu.events.filter((e) => e.id !== NP.bambuEvent); renderBambuEvents(); }
+    if (body.finished) {   // bitmiş baskı: ürün penceresi doğrudan sonuç penceresine dönüşür (arada kapanıp sayfa yeniden çizilmez)
+      markNotified(j.id); S.promptOpen = true;
+      await loadJobs();
+      S.lastJobsSig = S.jobs.map((x) => `${x.id}:${x.status}:${x.bambu_state || ''}:${Math.round(x.ends_at / 300)}`).join(',');
+      openResult(j.id);
+      if (route() === '' || route() === 'baskilar') render();
+      return;
+    }
     closeModal();
-    if (body.finished) { markNotified(j.id); await loadJobs(); render(); setTimeout(() => openResult(j.id), 250); return; }   // bitmiş baskı: sonucu hemen sor
     toast(NP.mode === 'order' ? `${j.product_name} baskıya alındı` : j.parts?.length ? `${j.product_name}: ${j.quantity} parça üretime alındı` : `${j.product_name} ×${j.quantity} üretime alındı`);
     askNotifyOnce();
     await loadJobs(); render();
-  } catch (e) { fail(e); }
+  } catch (e) { if (stb) stb.disabled = false; fail(e); }
 }
 
 // ================================================================== PRINTS
@@ -2727,6 +2790,7 @@ function timelineHTML() {
 }
 
 // ------------------------------------------------------------------ live ticker
+function setTxt(el, v) { if (el.textContent !== v) el.textContent = v; }
 function tick() {
   const t = nowS();
   S.jobs.forEach((j) => {
@@ -2735,7 +2799,7 @@ function tick() {
     const left = j.ends_at - t;
     $$(`[data-stack="${j.id}"]`).forEach((el) => { el.style.setProperty('--p', (p * 100).toFixed(2) + '%'); el.classList.toggle('done', left <= 0); });
     $$(`[data-prog="${j.id}"]`).forEach((el) => { el.style.width = (p * 100).toFixed(2) + '%'; });
-    $$(`[data-countdown="${j.id}"]`).forEach((el) => { el.textContent = left > 0 ? countdown(left) : jobDone(j) ? 'Bitti' : 'bitiyor'; });
+    $$(`[data-countdown="${j.id}"]`).forEach((el) => { setTxt(el, left > 0 ? countdown(left) : jobDone(j) ? 'Bitti' : 'bitiyor'); });
     $$(`[data-job="${j.id}"]`).forEach((el) => el.classList.toggle('due', left <= 0));
     $$(`[data-due-actions="${j.id}"]`).forEach((el) => {
       const want = left <= 0 ? 'due' : 'run';
@@ -2746,10 +2810,11 @@ function tick() {
         : `<button class="btn btn-sm" data-act="job-menu" data-id="${j.id}">Düzenle</button>`;
     });
   });
-  $$('[data-eta]').forEach((el) => { el.textContent = fmtEta(+el.dataset.eta - t); });
+  $$('[data-eta]').forEach((el) => { setTxt(el, fmtEta(+el.dataset.eta - t)); });
+  // yalnız değişen yazı / sınıf yazılır (yüzlerce satırda her saniye boşuna stil hesabı yapılmasın)
   $$('[data-dl]').forEach((el) => {
-    const dl = +el.dataset.dl, u = urgency(dl, +el.dataset.need || 0);
-    el.textContent = fmtLeft(dl - t); el.className = `dl dl-${u}`;
+    const dl = +el.dataset.dl, u = urgency(dl, +el.dataset.need || 0), cls = `dl dl-${u}`;
+    setTxt(el, fmtLeft(dl - t)); if (el.className !== cls) el.className = cls;
   });
   const nowDue = S.jobs.filter((j) => j.status === 'printing' && j.ends_at <= t).length;
   if (nowDue > (S.lastDueCount || 0)) setTimeout(checkDue, 50);
@@ -4773,9 +4838,17 @@ function rangeOf(key, from, to) {
     default: return null;
   }
 }
+// Trendyol sipariş listesi büyük (aylarca sipariş): aynı tarih aralığı 20 sn içinde tekrar istenmez; değişiklik
+// yapılınca ya da sunucu "siparişler değişti" deyince tazelenir
+const TYC = new Map();
 async function loadTyOrders() {
-  const r = rangeOf(S.tyo.rD, S.tyo.from, S.tyo.to) || [1, Date.now() + 86400000];
-  S.tyOrders = await api('GET', `/api/trendyol/orders?from=${r[0]}&to=${r[1]}`);
+  const key = `${S.tyo.rD}|${S.tyo.from || ''}|${S.tyo.to || ''}`;
+  await loadOnce('tyo:' + key, 20000, async () => {
+    const r = rangeOf(S.tyo.rD, S.tyo.from, S.tyo.to) || [1, Date.now() + 86400000];
+    TYC.set(key, await api('GET', `/api/trendyol/orders?from=${r[0]}&to=${r[1]}`));
+    while (TYC.size > 3) TYC.delete(TYC.keys().next().value);
+  });
+  if (TYC.get(key)) S.tyOrders = TYC.get(key);
   checkLowMargin(S.tyOrders);
 }
 // sekmeden bağımsız filtreler: arama, kategori, ürün; Yeni/Hazırlanıyor için ayrıca tarih
@@ -4849,7 +4922,7 @@ async function checkLowMargin(data) {
   LM.busy = true;
   try {
     await loadProfit();
-    const d = data || await api('GET', '/api/trendyol/orders?from=1&to=2');   // yalnız Yeni / Hazırlanıyor
+    const d = data || (S.tyOrders && Date.now() - (NO.at || 0) < 60000 ? S.tyOrders : null) || await api('GET', '/api/trendyol/orders?from=1&to=2');   // yalnız Yeni / Hazırlanıyor
     const seen = new Set(S.settings.low_margin_seen || []);
     let added = 0;
     for (const p of d.packages || []) {
@@ -5002,6 +5075,16 @@ function tyoPage(src = '') {
     </div></div>
     <div id="tyo-res">${tyoResults()}</div>`;
 }
+function tyoPickLabel(nsel) { return `${icon('pack')} ${[...S.tyo.sel].length && [...S.tyo.sel].every((x) => String(x).startsWith('hb-')) ? 'Paketle' : chMixed() ? 'Hazırla / paketle' : "Hazırlanıyor'a çek"}${nsel ? ` (${nsel})` : ''}`; }
+// seçim değişince bütün listeyi yeniden çizmek yerine yalnız işaretler ve toplu düğme güncellenir
+function tyoSelSync() {
+  if (S.tyo.tab !== 'new' || !$('#tyo-res')) return tyoRes();
+  const pickable = tyoFiltered().filter((p) => p.can_pick), nsel = pickable.filter((p) => S.tyo.sel.has(p.package_id)).length;
+  $$('#tyo-res .tyo-row[data-pkg]').forEach((r) => r.classList.toggle('sel', S.tyo.sel.has(r.dataset.pkg)));
+  $$('#tyo-res [data-tyo-sel]').forEach((cb) => { cb.checked = S.tyo.sel.has(cb.dataset.tyoSel); });
+  const all = $('#tyo-all'); if (all) all.checked = !!nsel && nsel === pickable.length;
+  const b = $('[data-act="tyo-pick-sel"]'); if (b) { b.disabled = !nsel; b.innerHTML = tyoPickLabel(nsel); }
+}
 function tyoResults() {
   const d = S.tyOrders, t = S.tyo.tab, active = TYO_ACTIVE.has(t);
   const list = tyoFiltered();
@@ -5016,7 +5099,7 @@ function tyoResults() {
       ${t === 'cancelled' ? '' : `<div><b>${fmtTL(rev)}</b><span>ciro (satıcıya kalan)</span></div>
       <div class="${pr < 0 ? 'neg' : ''}"><b>${fmtTL(pr)}</b><span>tahmini kâr${rev ? ` · ${fmtPct(pr / rev)}` : ''}</span></div>`}
       ${pickable.length ? `<div class="tyo-bulk"><label class="switch"><input type="checkbox" id="tyo-all" ${nsel && nsel === pickable.length ? 'checked' : ''}> Tümünü seç</label>
-        <button class="btn btn-primary btn-sm" data-act="tyo-pick-sel" ${nsel ? '' : 'disabled'}>${icon('pack')} ${[...S.tyo.sel].length && [...S.tyo.sel].every((x) => String(x).startsWith('hb-')) ? 'Paketle' : chMixed() ? 'Hazırla / paketle' : "Hazırlanıyor'a çek"}${nsel ? ` (${nsel})` : ''}</button></div>` : ''}
+        <button class="btn btn-primary btn-sm" data-act="tyo-pick-sel" ${nsel ? '' : 'disabled'}>${tyoPickLabel(nsel)}</button></div>` : ''}
       ${unlabeled.length ? `<div class="tyo-bulk"><button class="btn btn-primary btn-sm" data-act="ty-label-all">${icon('print')} Basılmamış ${unlabeled.length} barkodu bas</button></div>` : ''}
     </div>
     ${baremOn() && active ? baremBanner(list) : ''}
@@ -5596,10 +5679,11 @@ function ocMenu(btn) {
   setTimeout(() => { document.addEventListener('pointerdown', off, true); addEventListener('scroll', off2, true); });
   addEventListener('keydown', function esc1(e) { if (e.key === 'Escape') { m.remove(); removeEventListener('keydown', esc1); } });
 }
-function tyoRes() { const el = $('#tyo-res'); if (!el) return; el.innerHTML = tyoResults(); tyoBindRes(); tick(); countUp(el); setTimeout(focusPkgRow, 60); }
+function tyoRes(typing) { const el = $('#tyo-res'); if (!el) return; el.innerHTML = tyoResults(); tyoBindRes(); tick(); if (typing) calm(el); else countUp(el); setTimeout(focusPkgRow, 60); }
 function tyoBind() {
   const q = $('#tyo-q'), f = S.tyo;
-  if (q) q.addEventListener('input', () => { f.q = q.value; tyoRes(); tyoCounts(); });
+  // yazarken her harfte değil, kısa bir duraksamada süzer (hızlı yazarken liste takılmasın)
+  if (q) q.addEventListener('input', () => { f.q = q.value; clearTimeout(S.tyoQT); S.tyoQT = setTimeout(() => { tyoRes(true); tyoCounts(); }, f.q ? 140 : 0); });
   const reloadIfDone = async () => { if (!TYO_ACTIVE.has(f.tab)) { try { await loadTyOrders(); } catch (e) { fail(e); } } tyoRedraw(); };
   $('#tyo-range')?.addEventListener('change', (e) => { TYO_ACTIVE.has(f.tab) ? (f.rA = e.target.value) : (f.rD = e.target.value); if (e.target.value === 'custom' && !f.from) { f.from = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10); f.to = new Date().toISOString().slice(0, 10); } reloadIfDone(); });
   $('#tyo-from')?.addEventListener('change', (e) => { f.from = e.target.value; reloadIfDone(); });
@@ -5618,8 +5702,8 @@ function tyoCounts() {
   $$('.tyo-tabs button').forEach((b) => { const n = b.querySelector('.faint'); if (n) n.textContent = c[b.dataset.v]; b.classList.toggle('zero', !c[b.dataset.v]); });
 }
 function tyoBindRes() {
-  $('#tyo-all')?.addEventListener('change', (e) => { tyoFiltered().filter((p) => p.can_pick).forEach((p) => (e.target.checked ? S.tyo.sel.add(p.package_id) : S.tyo.sel.delete(p.package_id))); tyoRes(); });
-  $$('[data-tyo-sel]').forEach((cb) => cb.addEventListener('change', () => { cb.checked ? S.tyo.sel.add(cb.dataset.tyoSel) : S.tyo.sel.delete(cb.dataset.tyoSel); tyoRes(); }));
+  $('#tyo-all')?.addEventListener('change', (e) => { tyoFiltered().filter((p) => p.can_pick).forEach((p) => (e.target.checked ? S.tyo.sel.add(p.package_id) : S.tyo.sel.delete(p.package_id))); tyoSelSync(); });
+  $$('[data-tyo-sel]').forEach((cb) => cb.addEventListener('change', () => { cb.checked ? S.tyo.sel.add(cb.dataset.tyoSel) : S.tyo.sel.delete(cb.dataset.tyoSel); tyoSelSync(); }));
   // satıra tıklayınca ayrıntı satırın altında açılmaz, sağdan çekmece kayar
   $$('details.tyo').forEach((d) => {
     d.open = false;
@@ -6601,7 +6685,7 @@ async function loadPick(force) {
     const show = (d) => { S.pick = d; S.pickAt = Date.now(); if (route() === 'hazirla') fillPick(); if (route() === '') fillTyDash(); };
     const [d] = await Promise.all([api('GET', '/api/trendyol/pick-list'), loadJobs(), loadProducts()]);
     show(d);
-    if (force) {
+    if (force === true) {
       // Paketlenen (Hazırlanıyor'a çekilen) siparişleri hemen yakala, sonra listeyi tazele
       const r = await api('POST', '/api/trendyol/sync').catch(() => null);
       if (r && (r.deducted || r.restocked || r.unmatched)) { await loadProducts(); show(await api('GET', '/api/trendyol/pick-list')); }
@@ -8881,7 +8965,13 @@ const ACTIONS = {
   },
   'ty-img': async (el) => { el.disabled = true; try { const r = await api('POST', '/api/trendyol/image', { url: el.dataset.url }); setThumb(r.url); $$('.ty-img').forEach((x) => x.classList.toggle('on', x === el)); toast('Görsel seçildi; kaydetmeyi unutmayın'); } catch (e) { fail(e); } el.disabled = false; },
   'osrc': (el) => { S.oSrc = el.dataset.v; try { localStorage.setItem('oSrc', S.oSrc); } catch { /* */ } render(); },
-  'tyo-tab': (el) => { S.tyo.tab = el.dataset.v; S.tyo.sel.clear(); tyoRedraw(); },
+  'tyo-tab': (el) => {
+    const was = S.tyo.tab; S.tyo.tab = el.dataset.v; S.tyo.sel.clear();
+    // aktif ↔ geçmiş sekmeler arasında tarih seçimi / filtre alanları değişir: o zaman tüm sayfa; yoksa yalnız liste
+    if (TYO_ACTIVE.has(was) !== TYO_ACTIVE.has(S.tyo.tab) || !$('#tyo-res')) return tyoRedraw();
+    $$('.tyo-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.v === S.tyo.tab));
+    tyoRes();
+  },
   'tyo-clear': async () => { const f = S.tyo, reload = f.rD !== 'month'; Object.assign(f, { q: '', cat: 'all', pid: null, rA: 'all', rD: 'month' }); if (reload) { try { await loadTyOrders(); } catch (e) { fail(e); } } tyoRedraw(); },
   'tyo-sync': async (el) => { el.disabled = true; try { const r = await api('POST', '/api/trendyol/sync'); await Promise.all([loadTyOrders(), loadProducts()]); toast(r.deducted ? `Eşitlendi · ${r.deducted} adet stoktan düştü` : 'Eşitlendi'); render(); } catch (e) { fail(e); el.disabled = false; } },
   'tyo-pick': (el) => ocGuard(el, () => tyoPick([el.dataset.id])),
@@ -9335,7 +9425,7 @@ $('#new-print-fab').onclick = () => openNewPrint();
 
 // ================================================================== ÜRETİM PLANI
 const PLAN_KIND = { ty: ['Trendyol eksik', 'bad'], order: ['Özel sipariş', 'order'], min: ['En az stok altı', 'warn'], forecast: ['Yakında biter', 'mute'] };
-async function loadPlan() { S.plan = await api('GET', '/api/plan'); return S.plan; }
+async function loadPlan() { await loadOnce('plan', 5000, async () => { S.plan = await api('GET', '/api/plan'); }); return S.plan; }
 PAGES.plan = {
   async load() { await Promise.all([loadPlan(), S.products.length ? null : loadProducts(), S.settings ? null : loadSettings(), loadOrders()]); },
   html() {
@@ -10301,7 +10391,7 @@ async function poll(force) {
     // Bambu bitiş saati her raporda birkaç saniye kayar; sayfayı sadece anlamlı değişimde (5 dk) yeniden çiz
     const sig = S.jobs.map((j) => `${j.id}:${j.status}:${j.bambu_state || ''}:${Math.round(j.ends_at / 300)}`).join(',');
     const r = route();
-    if (sig !== S.lastJobsSig && S.lastJobsSig && (r === '' || r === 'baskilar') && !$('#modal-root').children.length) render();
+    if (sig !== S.lastJobsSig && S.lastJobsSig && (r === '' || r === 'baskilar') && !$('#modal-root').children.length) render({ quiet: true, noload: r === '' && LIVE.ok });
     S.lastJobsSig = sig;
     renderNav();
     checkDue();
@@ -10309,7 +10399,8 @@ async function poll(force) {
 }
 setInterval(poll, 10000);
 liveStart();
-setInterval(() => { if (!$('#modal-root').children.length && route() === '' && document.visibilityState === 'visible') render(); }, 60000);
+// Pano dakikada bir sessizce tazelenir (kalan süreler, "x dk önce"); kullanıcı bir şeyle uğraşıyorsa bekler
+setInterval(() => { if (!$('#modal-root').children.length && route() === '' && document.visibilityState === 'visible' && liveIdle()) render({ quiet: true, noload: LIVE.ok }); }, 60000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { syncTime(); poll(); } });
 
 // ================================================================== boot
