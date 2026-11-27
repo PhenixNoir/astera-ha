@@ -281,11 +281,17 @@ class Worker(threading.Thread):
     def _fetch_objects(self, task_key, subtask, gcode_file):
         """Yazıcının dosya sunucusundan (FTPS) baskı dosyasını indirip tabladaki nesne sayısını okur."""
         try:
-            n, w = bambu_plate_objects(self.cfg, subtask, gcode_file)
+            n, w, names = bambu_plate_objects(self.cfg, subtask, gcode_file)
         except Exception as e:  # noqa
             print(f"Bambu dosyası okunamadı ({self.cfg['name']}):", e)
-            n, w = None, None
-        if n:
+            n, w, names = None, None, []
+        auto = False
+        if names:
+            try:
+                auto = apply_names(self.cfg["name"], task_key, subtask or gcode_file, names)
+            except Exception as e:  # noqa
+                print("Nesnelerden tanıma hatası:", e)
+        if n and not auto:
             apply_objects(self.cfg["name"], task_key, n)
         if w:
             apply_grams(self.cfg["name"], task_key, w)
@@ -382,7 +388,9 @@ def handle(printer, gstate, prev_state, task_key, prev_task, s):
                 # Bitiş yazıcı FINISH dediğinde kesinleşir; böylece "baskı bitti" bildirimi gidip gelmez.
                 sets.append("ends_at=?")
                 args.append(now + 120)
-            _db().execute(f"UPDATE print_jobs SET {', '.join(sets)} WHERE id=?", args + [linked["id"]])
+            # bir tablada birden çok ürün varsa aynı göreve bağlı birden çok baskı olur: hepsi birlikte güncellenir
+            _db().execute(f"UPDATE print_jobs SET {', '.join(sets)} WHERE id=? OR (status='printing' AND printer=? AND bambu_task=?)",
+                          args + [linked["id"], printer, task_key])
         return
 
     if gstate == "IDLE" and prev_state in PRE:
@@ -398,8 +406,10 @@ def handle(printer, gstate, prev_state, task_key, prev_task, s):
         j = linked or _db().execute("SELECT * FROM print_jobs WHERE status='printing' AND bambu_task=?", (task_key,)).fetchone()
         st = "FAILED" if gstate in FAILED or (gstate == "IDLE" and prev_state in ACTIVE) else "FINISH"
         if j:
-            _db().execute("UPDATE print_jobs SET ends_at=?, bambu_state=?, bambu_percent=? WHERE id=?",
-                          (min(now, j["ends_at"]) if j["ends_at"] > now else j["ends_at"], st, percent, j["id"]))
+            for jj in _db().execute("SELECT id, ends_at FROM print_jobs WHERE id=? OR (status='printing' AND printer=? AND bambu_task=?)",
+                                    (j["id"], printer, task_key)).fetchall():
+                _db().execute("UPDATE print_jobs SET ends_at=?, bambu_state=?, bambu_percent=? WHERE id=?",
+                              (min(now, jj["ends_at"]) if jj["ends_at"] > now else jj["ends_at"], st, percent, jj["id"]))
         with _ev_lock:
             # onaylanmamış baskı bittiyse uyarı kalır ("bitti — ne basıldı?"); onaylanınca sonucu hemen sorulur
             for e in _events:
@@ -493,6 +503,10 @@ def link_event(event_id, job_id, file_name, product_id, component_id=None, remem
                                                  (not component_id and product_id != ev.get("product_id")))
         if remember_file and (ev["reason"] == "unknown" or changed) and (product_id or component_id):
             remember(ev["file"], product_id=None if component_id else product_id, component_id=component_id)
+            # tablada tek tür nesne vardıysa nesnenin adı da öğrenilir: dosya adı değişse de sonraki baskılarda tanınır
+            nm = ev.get("names") or []
+            if len(nm) == 1 and nm[0].get("name"):
+                remember(_obj_key(nm[0]["name"]), product_id=None if component_id else product_id, component_id=component_id)
 
 
 def event_for(printer):
@@ -536,7 +550,8 @@ def adopt(printer):
 def snapshot():
     with _ev_lock:
         ev = list(_events)
-    return {"printers": list(_status.values()), "events": ev}
+        au = [a for a in _autos if _now() - a["at"] < 24 * 3600]
+    return {"printers": list(_status.values()), "events": ev, "autos": au}
 
 
 # ---------------------------------------------------------------- yönetim
@@ -989,11 +1004,17 @@ def _plate_no(gcode_file):
 def plate_info(data, plate=1):
     """3MF içindeki slice_info.config'ten verilen tablanın (atlanmamış) nesne sayısı ve dilimleyicinin hesapladığı
     filament ağırlığı (gram). Bulunamayan değer None."""
+    n, w, _ = plate_info_full(data, plate)
+    return n, w
+
+
+def plate_info_full(data, plate=1):
+    """plate_info + tabladaki (atlanmamış) nesnelerin adları (Bambu Studio'daki nesne adı, çoğu zaman STL adı)."""
     with _zip.ZipFile(_io.BytesIO(data)) as z:
         try:
             root = _ET.fromstring(z.read("Metadata/slice_info.config"))
         except KeyError:
-            return None, None
+            return None, None, []
     plates = root.findall("plate")
     for pl in plates:
         meta = {m.get("key"): m.get("value") for m in pl.findall("metadata")}
@@ -1009,8 +1030,8 @@ def plate_info(data, plate=1):
                     w = sum(float(f.get("used_g") or 0) for f in pl.findall("filament")) or None
                 except ValueError:
                     w = None
-            return (len(objs) or None), (round(w, 1) if w else None)
-    return None, None
+            return (len(objs) or None), (round(w, 1) if w else None), [o.get("name") or "" for o in objs]
+    return None, None, []
 
 
 def count_plate_objects(data, plate=1):
@@ -1045,11 +1066,11 @@ def bambu_plate_objects(cfg, subtask, gcode_file):
                 ok_size = expected is None or len(data) == expected
                 if data[:2] == b"PK" and ok_size:
                     try:
-                        n, w = plate_info(data, _plate_no(gcode_file))
+                        n, w, names = plate_info_full(data, _plate_no(gcode_file))
                     except _zip.BadZipFile:
-                        n, w = None, None
+                        n, w, names = None, None, []
                     if n or w:
-                        return n, w
+                        return n, w, names
                     notes.append(f"{path}: dosyada tabla/nesne bilgisi yok")
                     break
                 notes.append(f"{path}: deneme {attempt + 1}, beklenen {expected} bayt, gelen {len(data)} bayt, başı {data[:8]!r}")
@@ -1092,6 +1113,109 @@ def _retr(f, path):
     except _ftplib.all_errors + (OSError,):
         pass
     return buf.getvalue()
+
+
+_autos = []   # nesne adlarından kendiliğinden başlatılan baskılar: bildirimde "doğru mu?" diye gösterilir
+
+
+def _obj_key(name):
+    """Bambu'da kopyalanan nesneler "Sakura_1", "Sakura (2)" gibi adlanır: sondaki kopya numarası atılır."""
+    base = re.sub(r"\.(stl|3mf|step|stp|obj)$", "", (name or "").strip(), flags=re.I)
+    base = re.sub(r"(?:_\d{1,3}|\s*\(\d{1,3}\))+$", "", base)   # "Sakura_1", "Sakura (2)" → "Sakura"; "Figür 2" olduğu gibi kalır
+    return norm(base) or norm(name)
+
+
+def _match_object(name):
+    """Nesne adından ürün: önce #kod (ürün no / barkod / stok kodu), sonra öğrenilmiş ad, ürün adı, dosya adı."""
+    m = re.search(r"#\s*([A-Za-z0-9._-]+)", name or "")
+    if m:
+        code = m.group(1)
+        pm = re.fullmatch(r"[Pp]-?0*(\d+)", code)   # Astera'nın ürün kodu (P-0012)
+        if pm:
+            code = pm.group(1)
+        if code.isdigit():
+            r = _db().execute("SELECT id FROM products WHERE id=? AND archived=0", (int(code),)).fetchone()
+            if r:
+                return r["id"]
+        cl = code.lower()
+        for r in _db().execute("SELECT id, barcodes FROM products WHERE archived=0 AND barcodes IS NOT NULL").fetchall():
+            if cl in [c.strip().lower() for c in re.split(r"[,;\s]+", r["barcodes"] or "") if c.strip()]:
+                return r["id"]
+        name = name[:m.start()] + name[m.end():]
+    return match_product(name) or match_product(_obj_key(name))
+
+
+def apply_names(printer, task_key, file_name, names):
+    """Tabladaki nesneler adlarıyla okunduğunda: hepsi ürünlerle eşleşiyorsa baskıyı (ürün başına bir kayıt, adetleriyle)
+    kendiliğinden başlatır ve "doğru mu?" bildirimi bırakır. Eşleşmeyen nesne varsa bekleyen uyarıya adları ekler.
+    Kendiliğinden başlattıysa True döner."""
+    groups = {}
+    for nm in names:
+        k = _obj_key(nm)
+        if k:
+            g = groups.setdefault(k, {"name": nm, "n": 0})
+            g["n"] += 1
+    if not groups:
+        return False
+    with _lock:
+        ev = None
+        with _ev_lock:
+            ev = next((e for e in _events if e["printer"] == printer and e["task"] == task_key), None)
+            if ev is not None:
+                ev["names"] = [{"name": g["name"], "n": g["n"]} for g in groups.values()]
+        jobs = _db().execute("SELECT * FROM print_jobs WHERE status='printing' AND printer=? AND bambu_task=?", (printer, task_key)).fetchall()
+        # kullanıcı onayladıysa / elle açtıysa dokunma; yalnız otomatik açılmış (onaylanmamış) baskı yeniden kurulabilir
+        if any(not (j["note"] or "").startswith("Bambu:") or "onaylandı" in (j["note"] or "") for j in jobs):
+            return False
+        if not jobs and ev is None:
+            return False   # yoksayılmış ya da başka yoldan kapanmış görev
+        matched = []
+        for g in groups.values():
+            pid = _match_object(g["name"])
+            p = _db().execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone() if pid else None
+            if not p or _db().execute("SELECT COUNT(*) FROM product_parts WHERE product_id=?", (pid,)).fetchone()[0]:
+                return False   # tanınmayan ya da parçalı ürün: bugünkü gibi sorulur
+            matched.append((p, g["n"]))
+        # aynı ürüne düşen gruplar birleşir
+        agg = {}
+        for (p, n), g in zip(matched, groups.values()):
+            a = agg.setdefault(p["id"], [p, 0, g["name"]])
+            a[1] += n
+        if len(jobs) == 1 and len(agg) == 1 and jobs[0]["product_id"] in agg:
+            return False   # dosya adından zaten doğru ürün açılmış; adedi nesne sayısından gelir
+        st = _status.get(printer) or {}
+        remaining = int((ev or {}).get("remaining_min") or st.get("remaining_min") or 0)
+        percent = int((ev or {}).get("percent") or st.get("percent") or 0)
+        started = int((ev or {}).get("at") or 0) or None
+        now = _now()
+        elapsed = int(remaining * 60 * percent / max(1, 100 - percent)) if 0 < percent < 100 else 0
+        for j in jobs:
+            _db().execute("DELETE FROM print_jobs WHERE id=?", (j["id"],))
+        done = (ev or {}).get("done")
+        ids, parts = [], []
+        for pid, (p, n, oname) in agg.items():
+            ss = max(1, int(p["set_size"] or 1))
+            qty = max(1, n // ss if ss > 1 and n % ss == 0 else n)
+            cur = _db().execute(
+                """INSERT INTO print_jobs(product_id,print_type,quantity,printer,note,started_at,ends_at,status,bambu_task,bambu_state,bambu_percent)
+                   VALUES(?,?,?,?,?,?,?,'printing',?,?,?)""",
+                (pid, p["print_type"], qty, printer, f"Bambu: {file_name} · nesne: {oname} · adet dosyadan: {n} nesne",
+                 started or (now - elapsed), now if done else now + max(1, remaining) * 60, task_key, done or "RUNNING", percent))
+            ids.append(cur.lastrowid)
+            parts.append(f"{p['name']}{' — ' + p['variant_label'] if p['variant_label'] else ''} ×{qty}")
+        with _ev_lock:
+            _events[:] = [e for e in _events if not (e["printer"] == printer and e["task"] == task_key)]
+            _autos[:] = [a for a in _autos if a["task"] != task_key][-30:]
+            _autos.append({"id": f"{printer}|{task_key}", "printer": printer, "task": task_key, "file": file_name,
+                           "summary": " · ".join(parts), "jobs": ids, "at": now})
+        _db().commit()
+    for jid in ids:
+        if after_create:
+            try:
+                after_create(jid)
+            except Exception as e:  # noqa
+                print("Makara atama hatası:", e)
+    return True
 
 
 def apply_objects(printer, task_key, n):
@@ -1148,10 +1272,17 @@ def apply_grams(printer, task_key, grams):
                 e["grams"] = grams
     try:
         with _lock:
-            for j in _db().execute("SELECT id FROM print_jobs WHERE status='printing' AND printer=? AND bambu_task=?",
-                                   (printer, task_key)).fetchall():
-                _db().execute("UPDATE print_jobs SET file_grams=? WHERE id=?", (grams, j["id"]))
-                fill_product_grams(j["id"])
+            js = _db().execute("""SELECT j.id, j.quantity, p.grams FROM print_jobs j LEFT JOIN products p ON p.id=j.product_id
+                                  WHERE j.status='printing' AND j.printer=? AND j.bambu_task=?""", (printer, task_key)).fetchall()
+            # tek tablada birden çok ürün: dosya gramı ürünlerin bilinen gramlarına (yoksa adetlerine) göre paylaştırılır
+            wts = [(j["quantity"] or 1) * (j["grams"] or 0) for j in js]
+            if not all(wts):
+                wts = [j["quantity"] or 1 for j in js]
+            tot = sum(wts) or 1
+            for j, wt in zip(js, wts):
+                _db().execute("UPDATE print_jobs SET file_grams=? WHERE id=?", (round(grams * wt / tot, 1) if len(js) > 1 else grams, j["id"]))
+                if len(js) == 1:
+                    fill_product_grams(j["id"])
             _db().commit()
     except Exception as e:  # noqa
         print("Gram yazılamadı:", e)

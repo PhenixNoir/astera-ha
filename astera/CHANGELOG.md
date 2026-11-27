@@ -1,5 +1,11 @@
 # Sürüm notları
 
+## 1.16.6
+- Bambu: baskı başlayınca yazıcıdaki dosyadan tabladaki nesnelerin adları okunur. Hepsi ürünlerle eşleşirse baskı ürün ürün, adetleriyle kendiliğinden başlar (karışık tabla da olur); sağda "baskı kendiliğinden başlatıldı" bildirimi çıkar, tıklayınca düzeltilebilir. Düzeltilen nesne adı öğrenilir.
+- Eşleşme: nesne adındaki #kod (ürün kodu P-0012 ya da barkod), öğrenilmiş ad, ürün adı / dosya adı. Bambu'nun kopya ekleri (_1, (2)) yok sayılır.
+- Tanınmayan nesne varsa bildirimde ve pencerede tabladaki nesneler adlarıyla görünür; seçilen ürüne nesne adı da öğretilir.
+- Tabladaki gram ürünlere paylaştırılır; aynı tabladaki baskılar birlikte ilerler ve biter.
+
 ## 1.16.5
 - Home Assistant güncellemesi: depo yenilendikten sonra Home Assistant'ın "Güncelleme" penceresi de hemen tazelenir; yeni sürüm birkaç saniyede görünür ve "Güncelle" beklemeden basılabilir.
 

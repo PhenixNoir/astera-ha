@@ -2227,7 +2227,10 @@ def api_job_change(req, jid):
     # yazıcı dosyayı yanlış tanıdıysa: dosyayı doğru ürüne öğret
     note = j["note"] or ""
     if b.get("remember_file", True) is not False and note.startswith("Bambu: "):
-        bambu.remember(note[7:].strip(), product_id=pid, component_id=cid)
+        bits = note[7:].split(" · ")
+        obj = next((x[7:] for x in bits if x.startswith("nesne: ")), None)
+        # tablada nesne adından tanınmışsa o nesnenin adı, yoksa dosya adı öğretilir ("· onaylandı" gibi ekler hariç)
+        bambu.remember(bambu._obj_key(obj) if obj else bits[0].strip(), product_id=pid, component_id=cid)
     return job_rows("j.id=?", (jid,))[0]
 
 

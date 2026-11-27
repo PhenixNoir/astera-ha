@@ -1042,6 +1042,13 @@ function notifBind() {
     if (!window.matchMedia('(min-width: 1600px)').matches) notifOpen(false);
     if (a.t === 'bambu') { if (!S.bambu) await loadBambu(); const ev = S.bambu?.events?.find((x) => x.id === a.id); if (ev) openFromBambu(ev); else toast('Bu baskı artık beklemiyor'); }
     else if (a.t === 'job') { await loadJobs(); if (S.jobs.some((j) => j.id === a.id && j.status === 'printing')) openResult(a.id); else toast('Bu baskının sonucu zaten girilmiş'); }
+    else if (a.t === 'jobs') {   // dosyadaki nesnelerden kendiliğinden başlatılan baskı(lar): düzeltme penceresi
+      ldStale('jobs'); await loadJobs();
+      const ids = (a.ids || []).filter((id) => S.jobs.some((j) => j.id === id && j.status === 'printing'));
+      if (!ids.length) toast('Bu baskı artık açık değil');
+      else if (ids.length === 1) openJobChange(ids[0]);
+      else openJobMenu(ids[0]);
+    }
     else if (a.t === 'product') openProductEditor(a.id);
     else if (a.t === 'plan') planStart(a);
     else if (a.t === 'spool') { location.hash = '#/filament'; setTimeout(() => openSpoolEditor(a.id), 400); }
@@ -2580,7 +2587,8 @@ async function openFromBambu(ev) {
     box?.insertAdjacentHTML('afterbegin', `<div class="notice confirm np-ev">${head}<small>Tahmin: <b>${esc(ev.guess || '')}${ev.guess_qty ? ` ×${ev.guess_qty}` : ''}</b> · doğruysa onaylayın, değilse doğru ürünü seçin</small></div></div>`);
     return;
   }
-  box?.insertAdjacentHTML('afterbegin', `<div class="notice np-ev">${head}<small>${ev.reason === 'parts' ? 'Bu baskıdaki parçaları seçin' : 'Ürünü seçin, dosya ona öğretilir · satılmayan baskıysa <b>Diğer amaçlı</b>'}</small></div></div>`);
+  const objs = (ev.names || []).length ? `<small class="np-ev-o">Tabladaki nesneler: ${ev.names.map((x) => `<b>${esc(x.name)}</b> ×${x.n}`).join(', ')}</small>` : '';
+  box?.insertAdjacentHTML('afterbegin', `<div class="notice np-ev">${head}${objs}<small>${ev.reason === 'parts' ? 'Bu baskıdaki parçaları seçin' : `Ürünü seçin, dosya${(ev.names || []).length === 1 ? ' ve nesne adı' : ''} ona öğretilir · satılmayan baskıysa <b>Diğer amaçlı</b>`}</small></div></div>`);
 }
 async function startPrint() {
   const qty = parseInt($('#np-qty').value) || 0;
@@ -8766,7 +8774,7 @@ function bambuBlock(p, i) {
     fields = `<label class="field"><span>IP adresi</span><input class="input" data-bambu="ip-${i}" value="${esc(p.bambu_ip || '')}" placeholder="192.168.1.50" inputmode="decimal" autocomplete="off"></label>
       <label class="field"><span>Seri numarası</span><input class="input" data-bambu="serial-${i}" value="${esc(p.bambu_serial || '')}" placeholder="01P00A..." autocomplete="off"></label>
       <label class="field"><span>Erişim kodu</span><input class="input" data-bambu="code-${i}" type="password" placeholder="${p.bambu_code_set ? 'Kayıtlı — değiştirmek için yazın' : '8 haneli kod'}" autocomplete="new-password"></label>${btns()}`;
-    note = 'Yazıcı ekranında: Ayarlar → WLAN (A1\'de Ayarlar → Ağ) bölümünde IP ve <b>Erişim Kodu</b>; seri numarası Ayarlar → Cihaz bilgisinde ya da Bambu Studio → Cihaz sekmesinde yazar.';
+    note = 'Yazıcı ekranında: Ayarlar → WLAN (A1\'de Ayarlar → Ağ) bölümünde IP ve <b>Erişim Kodu</b>; seri numarası Ayarlar → Cihaz bilgisinde ya da Bambu Studio → Cihaz sekmesinde yazar.<br><b>Otomatik tanıma:</b> baskı başlayınca dosya yazıcıdan okunur; tabladaki nesnelerin adları ürünlerle eşleşirse baskı adetleriyle kendiliğinden başlar, sağda "doğru mu?" bildirimi çıkar. Kesin eşleşme için Bambu Studio\'da nesnenin adına ürün kodunu ya da barkodunu <b>#</b> ile ekleyin (ör. <i>Sakura #P-0012</i>; ürün kodu ürün düzenleme penceresinde yazar).';
   } else if (type === 'moonraker') {
     fields = `<label class="field"><span>Moonraker adresi</span><input class="input" data-mr="url-${i}" value="${esc(p.mr_url || '')}" placeholder="192.168.1.60:7125" autocomplete="off"></label>
       <label class="field"><span>API anahtarı <span class="faint">(varsa)</span></span><input class="input" data-mr="key-${i}" type="password" placeholder="${p.mr_key_set ? 'Kayıtlı — değiştirmek için yazın' : 'genelde gerekmez'}" autocomplete="new-password"></label>${btns()}`;

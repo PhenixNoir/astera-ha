@@ -119,7 +119,9 @@ def _printers():
             body = ("Baskı bitti — onaylayın, sonucu sorulsun" if e.get("done") else "Onaylayın ya da başka ürün seçin") + f" · {e.get('file') or ''}"
         else:
             title = f"{e['printer']}: {'parçaları seçin' if r == 'parts' else 'tanınmayan baskı'}{' (bitti)' if e.get('done') else ''}"
-            body = f"{e.get('file') or 'bilinmeyen dosya'}" + (f" · %{e['percent']}" if e.get("percent") is not None and not e.get("done") else "")
+            nm = e.get("names") or []
+            body = (" · ".join(f"{x['name']} ×{x['n']}" for x in nm[:4]) + (" …" if len(nm) > 4 else "") if nm else f"{e.get('file') or 'bilinmeyen dosya'}") \
+                + (f" · %{e['percent']}" if e.get("percent") is not None and not e.get("done") else "")
         wanted[f"pe:{e['id']}"] = ("printer", "warn", title, body, {"t": "bambu", "id": e["id"]})
     for p in snap["printers"]:
         name = p.get("name")
@@ -130,6 +132,14 @@ def _printers():
         if p.get("online") is False and not p.get("connecting") and (p.get("updated_at") or 0) < _now() - 120:
             wanted[f"poff:{name}"] = ("printer", "warn", f"{name}: bağlantı yok", p.get("error") or "Yazıcıya ulaşılamıyor",
                                      {"t": "go", "href": "#/ayarlar"})
+    # dosyadaki nesnelerden kendiliğinden başlatılan baskılar: yine de "doğru mu?" diye sağda sorulur
+    for a in snap.get("autos") or []:
+        open_ids = [r["id"] for r in _db().execute(f"SELECT id FROM print_jobs WHERE id IN ({','.join('?' * len(a['jobs']))})", a["jobs"])] if a.get("jobs") else []
+        if not open_ids:
+            continue
+        wanted[f"pa:{a['id']}"] = ("printer", "info", f"{a['printer']}: baskı kendiliğinden başlatıldı",
+                                   f"{a['summary']} · yanlışsa tıklayıp düzeltin", {"t": "jobs", "ids": open_ids})
+    _sync_group("pa:", {k: v for k, v in wanted.items() if k.startswith("pa:")})
     _sync_group("pe:", {k: v for k, v in wanted.items() if k.startswith("pe:")})
     _sync_group("perr:", {k: v for k, v in wanted.items() if k.startswith("perr:")})
     _sync_group("poff:", {k: v for k, v in wanted.items() if k.startswith("poff:")})
