@@ -1169,6 +1169,8 @@ def apply_names(printer, task_key, file_name, names):
             return False
         if not jobs and ev is None:
             return False   # yoksayılmış ya da başka yoldan kapanmış görev
+        if _get("bambu_auto_names", "1") != "1":
+            return False   # ayarlardan kapalı: nesne adları yalnız gösterilir / öğretilir, baskı sorulur
         matched = []
         for g in groups.values():
             pid = _match_object(g["name"])

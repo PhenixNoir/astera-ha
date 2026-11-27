@@ -8538,7 +8538,9 @@ PAGES.ayarlar = {
           <small class="muted" id="lm-ex">${lmExample(lowMarginPct() || 10)}</small></div>
       </div></section>
 
-      <section class="panel"><div class="panel-h"><h2>Makineler</h2></div><div class="panel-b"><p class="muted" style="margin:0 0 10px">Makine ekleme, tür, fotoğraf ve yazıcı bağlantısı artık <b>Üretim → Makineler</b> sayfasında; saatler ve bakım kaydıyla bir arada.</p><a class="btn btn-sm" href="#/makineler?edit">${icon('wrench')} Makinelere git</a></div></section>
+      <section class="panel"><div class="panel-h"><h2>Makineler</h2></div><div class="panel-b"><p class="muted" style="margin:0 0 10px">Makine ekleme, tür, fotoğraf ve yazıcı bağlantısı artık <b>Üretim → Makineler</b> sayfasında; saatler ve bakım kaydıyla bir arada.</p><a class="btn btn-sm" href="#/makineler?edit">${icon('wrench')} Makinelere git</a>
+        <div style="margin-top:16px"><label class="switch"><input type="checkbox" id="bambu-auto" ${S.settings?.bambu_auto_names !== false ? 'checked' : ''}> Bambu baskısını dosyadaki nesnelerden tanıyınca kendiliğinden başlat</label>
+        <p class="side-note" style="margin:4px 0 0">Açıkken tabladaki nesnelerin hepsi ürünlerle eşleşirse baskı adetleriyle başlar, sağda "doğru mu?" bildirimi çıkar. Kapalıyken her baskıda ürün sorulur; nesne adları yine pencerede görünür.</p></div></div></section>
 
       ${remoteSetHTML()}
       ${hbSetHTML()}
@@ -8577,6 +8579,10 @@ PAGES.ayarlar = {
     </div></div></div>`;
   },
   after() {
+    $('#bambu-auto')?.addEventListener('change', async (e) => {
+      try { S.settings = await api('PUT', '/api/settings', { bambu_auto_names: e.target.checked }); toast(e.target.checked ? 'Tanınan Bambu baskıları kendiliğinden başlayacak' : 'Bambu baskılarında ürün sorulacak'); }
+      catch (err) { e.target.checked = !e.target.checked; fail(err); }
+    });
     setGroupsBind(); rulesBind(); haBind();
     api('GET', '/api/push/key').then((r) => { const el = $('#push-n'); if (el) el.textContent = r.subscribers; }).catch(() => {});
     advBind();

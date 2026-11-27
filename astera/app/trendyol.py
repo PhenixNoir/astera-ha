@@ -59,6 +59,7 @@ def public_settings():
             "ty_interval_min": int(_get("ty_interval_min", "5")),
             "ty_restock_cancel": _get("ty_restock_cancel", "1") == "1",
             "ty_stage": _get("ty_stage", "0") == "1",
+            "bambu_auto_names": _get("bambu_auto_names", "1") == "1",
             "ty_since": int(_get("ty_since", "0") or 0),
             "ty_last_sync": int(_get("ty_last_sync", "0") or 0),
             "ty_last_error": _get("ty_last_error", ""),
@@ -149,7 +150,7 @@ def save_settings(b):
             _set("ty_api_secret", b["ty_api_secret"].strip())
         if "ty_interval_min" in b:
             _set("ty_interval_min", max(2, int(b["ty_interval_min"] or 5)))
-        for k in ("ty_restock_cancel", "ty_stage", "ty_write", "ty_auto_accept"):
+        for k in ("ty_restock_cancel", "ty_stage", "ty_write", "ty_auto_accept", "bambu_auto_names"):
             if k in b:
                 _set(k, "1" if b[k] else "0")
         if "ty_enabled" in b:

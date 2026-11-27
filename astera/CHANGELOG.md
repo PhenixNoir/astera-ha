@@ -1,5 +1,8 @@
 # Sürüm notları
 
+## 1.16.7
+- Ayarlar → Üretim: "Bambu baskısını dosyadaki nesnelerden tanıyınca kendiliğinden başlat" aç/kapa. Kapalıyken her baskıda ürün sorulur; nesne adları yine pencerede görünür ve öğretilir.
+
 ## 1.16.6
 - Bambu: baskı başlayınca yazıcıdaki dosyadan tabladaki nesnelerin adları okunur. Hepsi ürünlerle eşleşirse baskı ürün ürün, adetleriyle kendiliğinden başlar (karışık tabla da olur); sağda "baskı kendiliğinden başlatıldı" bildirimi çıkar, tıklayınca düzeltilebilir. Düzeltilen nesne adı öğrenilir.
 - Eşleşme: nesne adındaki #kod (ürün kodu P-0012 ya da barkod), öğrenilmiş ad, ürün adı / dosya adı. Bambu'nun kopya ekleri (_1, (2)) yok sayılır.
