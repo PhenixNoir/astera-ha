@@ -2173,6 +2173,18 @@ function npSetMode(mode, initial) {
   $('#np-type-field').style.display = mode === 'order' ? '' : 'none';
   npSideClose();
   npRememberUI(); npRenderList(); npEnds();
+  if (mode === 'misc' && !initial) npMiscDefault();
+}
+// "Diğer amaçlı"ya geçince listeden seçmek zorunda kalınmasın: "Diğer" adlı kayıt hemen seçilir (yoksa bir kez oluşturulur).
+// Başka bir kayıt istenirse listeden seçilir ya da yeni ad yazılır.
+async function npMiscDefault() {
+  const isD = (c) => (c.name || '').trim().toLocaleLowerCase('tr') === 'diğer';
+  let c = (S.misc || []).find((x) => isD(x) && !x.archived);
+  if (!c) {
+    try { c = await api('POST', '/api/components', { kind: 'misc', name: 'Diğer', print_type: 'FDM' }); await loadComponents(); }
+    catch (e) { return; }
+  }
+  if (NP && NP.mode === 'misc' && !NP.cid && c) npPickComp(c.id);
 }
 // Makine kartları: ad + şu anki durumu (basıyorsa yüzde ve kalan süre); geniş ekranda sağ sütunda alt alta
 function npPrinterCards() {
@@ -2545,7 +2557,8 @@ function npEnds0() {
   if (NP.finished) {   // yazıcı çoktan bitirmiş: süre gerekmez, kaydedince sonuç (sağlam / sorunlu) sorulur ve stoğa işlenir
     const sel = NP.mode === 'product' && NP.parts ? Object.values(NP.parts).reduce((a, b) => a + b, 0) : 1;
     $('#np-start').disabled = !sel;
-    el.innerHTML = sel ? `Baskı <b>bitmiş</b>. Kaydedince sonucu soracağım; sağlam çıkanlar ${NP.mode === 'misc' ? 'kayda geçer (stoğa eklenmez)' : NP.mode === 'order' ? 'siparişe işlenir' : NP.mode === 'comp' ? 'havuza eklenir' : 'stoğa eklenir'}.` : 'En az bir parça seçin.';
+    npResSync();
+    el.innerHTML = sel && npResSimple() ? `Baskı <b>bitmiş</b>. Sonucu aşağıdan verin: kaç tane sağlam çıktı, sonra <b>Sağlam</b> ya da <b>Sorunlu</b>; ${NP.mode === 'misc' ? 'kayda geçer (stoğa eklenmez)' : NP.mode === 'order' ? 'siparişe işlenir' : NP.mode === 'comp' ? 'havuza eklenir' : 'stoğa eklenir'}.` : sel ? `Baskı <b>bitmiş</b>. Kaydedince sonucu soracağım; sağlam çıkanlar ${NP.mode === 'misc' ? 'kayda geçer (stoğa eklenmez)' : NP.mode === 'order' ? 'siparişe işlenir' : NP.mode === 'comp' ? 'havuza eklenir' : 'stoğa eklenir'}.` : 'En az bir parça seçin.';
     return;
   }
   $('#np-start').disabled = min < 1;
@@ -2576,7 +2589,7 @@ async function openFromBambu(ev) {
   if (!NP) return;
   NP.bambuEvent = ev.id; NP.finished = !!ev.done;
   npSetPrinter(ev.printer); npRememberUI();
-  if (NP.finished) { $('#np-time-field')?.classList.add('hidden'); const st = $('#np-start'); if (st) st.innerHTML = `${icon('check')} Kaydet, sonucu gir`; npEnds(); }
+  if (NP.finished) { $('#np-time-field')?.classList.add('hidden'); const st = $('#np-start'); if (st) st.innerHTML = `${icon('check')} Kaydet, sonucu gir`; npResBar(); npEnds(); }
   if (ev.remaining_min) { NP.timeTouched = true; $('#np-h').value = Math.floor(ev.remaining_min / 60); $('#np-m').value = ev.remaining_min % 60; npEnds(); }
   const box = $('.np-c1') || $('.modal-b');
   const file = `<span class="np-ev-f" title="${esc(ev.file || '')}">${esc(ev.file || 'bir dosya')}</span>`;
@@ -2584,13 +2597,55 @@ async function openFromBambu(ev) {
   if (ev.reason === 'confirm') {
     if (ev.guess_qty && NP.mode === 'product' && !NP.parts) { $('#np-qty').value = ev.guess_qty; npAutoTime(); npEnds(); }
     const st = $('#np-start'); if (st) st.innerHTML = `${icon('check')} ${ev.done ? 'Onayla, sonucu gir' : 'Onayla, baskıyı aç'}`;
+    if (ev.done) npResSync();
     box?.insertAdjacentHTML('afterbegin', `<div class="notice confirm np-ev">${head}<small>Tahmin: <b>${esc(ev.guess || '')}${ev.guess_qty ? ` ×${ev.guess_qty}` : ''}</b> · doğruysa onaylayın, değilse doğru ürünü seçin</small></div></div>`);
     return;
   }
   const objs = (ev.names || []).length ? `<small class="np-ev-o">Tabladaki nesneler: ${ev.names.map((x) => `<b>${esc(x.name)}</b> ×${x.n}`).join(', ')}</small>` : '';
   box?.insertAdjacentHTML('afterbegin', `<div class="notice np-ev">${head}${objs}<small>${ev.reason === 'parts' ? 'Bu baskıdaki parçaları seçin' : `Ürünü seçin, dosya${(ev.names || []).length === 1 ? ' ve nesne adı' : ''} ona öğretilir · satılmayan baskıysa <b>Diğer amaçlı</b>`}</small></div></div>`);
 }
-async function startPrint() {
+// Bitmiş baskı: ürünü seçtiğin pencerenin altında sonuç şeridi (sağlam adet · Sağlam · Sorunlu); ikinci pencere açılmaz.
+// Parça parça ya da kalem kalem sayılması gereken durumlarda (parçalı ürün, kalemli özel sipariş) eski yol: ayrı sonuç penceresi.
+function npResBar() {
+  const f = $('.np-modal .modal-f'); if (!f || $('#np-resbar')) return;
+  f.insertAdjacentHTML('beforeend', `<div class="np-resbar" id="np-resbar">
+    <span class="np-rb-l" id="np-rb-l">Sağlam çıkan</span>
+    <div class="stepper"><button type="button" data-act="np-good" data-d="-1" aria-label="Azalt">${icon('minus')}</button><input id="np-good" type="number" inputmode="numeric" min="0" max="999" value="1"><button type="button" data-act="np-good" data-d="1" aria-label="Arttır">${icon('plus')}</button></div>
+    <span class="np-rb-s" id="np-rb-s"></span>
+    <button type="button" class="np-rb ok" data-act="np-res" data-ok="1" id="np-rb-ok">${icon('check')}<span><b>Sağlam</b><small id="np-rb-okl">stoğa ekle</small></span></button>
+    <button type="button" class="np-rb bad" data-act="np-res" data-ok="0" id="np-rb-bad">${icon('x')}<span><b>Sorunlu</b><small>stoğa eklenmez</small></span></button></div>`);
+  $('#np-good').addEventListener('input', () => { NP.goodTouched = true; npResSync(); });
+  $('#np-qty')?.addEventListener('input', () => npResSync());
+  npResSync();
+}
+function npResSimple() {
+  if (!NP?.finished) return false;
+  if (NP.mode === 'product' && NP.parts) return false;
+  if (NP.mode === 'order' && ((S.orders || []).find((o) => o.id === NP.oid)?.items || []).length) return false;
+  return true;
+}
+function npResSync() {
+  const f = $('.np-modal .modal-f'); if (!f || !$('#np-resbar')) return;
+  const on = npResSimple(); f.classList.toggle('resmode', on); if (!on) return;
+  const picked = NP.mode === 'order' ? (S.orders || []).find((o) => o.id === NP.oid) : NP.mode === 'comp' || NP.mode === 'misc' ? compById(NP.cid) : productById(NP.pid);
+  const qty = parseInt($('#np-qty')?.value) || 1, g = $('#np-good');
+  if (!NP.goodTouched && g) g.value = qty;
+  const p = NP.mode === 'product' ? picked : null;
+  $('#np-rb-l').textContent = p?.set_size > 1 ? `Sağlam çıkan set (${p.set_size}'lü)` : 'Sağlam çıkan';
+  $('#np-rb-okl').textContent = NP.mode === 'misc' ? 'kayda geçer' : NP.mode === 'order' ? 'siparişe işle' : NP.mode === 'comp' ? 'havuza ekle' : 'stoğa ekle';
+  $('#np-rb-s').innerHTML = picked ? `<b>${esc(picked.name || picked.customer || picked.title || '')}</b> · ${qty} basıldı` : '<span class="muted">Önce listeden seçin</span>';
+  ['#np-rb-ok', '#np-rb-bad'].forEach((s) => { const b = $(s); if (b) b.disabled = !picked || NP.resBusy; });
+  if (picked && !NP.resLit) { NP.resLit = true; const bar = $('#np-resbar'); if (bar && !REDUCED()) { bar.classList.remove('lit'); void bar.offsetWidth; bar.classList.add('lit'); } }
+}
+async function npResult(ok) {
+  if (NP.resBusy) return;
+  NP.resBusy = true; npResSync();
+  const good = Math.max(0, parseInt($('#np-good')?.value) || 0);
+  await startPrint({ result: ok, good });
+  if (NP) { NP.resBusy = false; npResSync(); }
+}
+async function startPrint(res) {
+  if (res instanceof Event || (res && res.nodeType)) res = null;   // düğmeden çağrılınca ilk argüman olay / öğe olabilir
   const qty = parseInt($('#np-qty').value) || 0;
   const minutes = npMinutes();
   const body = { quantity: qty, duration_minutes: minutes, printer: NP.printer };
@@ -2614,6 +2669,20 @@ async function startPrint() {
     S.pqStarted = true;
     if (S.printQueue?.length) setTimeout(printQueueNext, 350);
     if (NP.bambuEvent && S.bambu?.events) { S.bambu.events = S.bambu.events.filter((e) => e.id !== NP.bambuEvent); renderBambuEvents(); }
+    if (body.finished && res && typeof res.result === 'boolean') {   // sonuç şeridinden: aynı pencerede biter
+      markNotified(j.id); S.promptOpen = true;
+      try {
+        let r;
+        try { r = await api('POST', `/api/jobs/${j.id}/complete`, { success: res.result, good_quantity: res.good, spool_used: body.spools.length ? body.spools.map((x) => ({ spool_id: x.spool_id, grams: x.grams || 0 })) : undefined }); }
+        catch (e) { fail(e); await loadJobs(); openResult(j.id); return; }   // baskı kaydı açıldı ama sonuç işlenemedi: sonuç penceresinden tamamlanır
+        const bar = $('#np-resbar');
+        if (bar && !REDUCED()) { bar.classList.add(res.result ? 'done-ok' : 'done-bad'); await new Promise((ok) => setTimeout(ok, 650)); }
+        closeModal();
+        resultToast(r, res.result);
+      } finally { S.promptOpen = false; }
+      await loadJobs(); S.titleFlash = dueJobs().length > 0; render();
+      return;
+    }
     if (body.finished) {   // bitmiş baskı: ürün penceresi doğrudan sonuç penceresine dönüşür (arada kapanıp sayfa yeniden çizilmez)
       markNotified(j.id); S.promptOpen = true;
       await loadJobs();
@@ -3055,6 +3124,11 @@ async function finishJob(id, success) {
     const r = await api('POST', `/api/jobs/${id}/complete`, { success, good_quantity: isNaN(good) ? undefined : good, parts_good: partsGood.length ? partsGood : undefined, order_good: leafGood.length ? leafGood : undefined, spool_used: spoolUsed.length ? spoolUsed : undefined }); accToast(r);
     if (success && (r.good_quantity || r.is_order)) await celebrate(r, job0);
     closeModal();
+    resultToast(r, success);
+    await loadJobs(); S.titleFlash = dueJobs().length > 0; render();
+  } catch (e) { fail(e); }
+}
+function resultToast(r, success) {
     if (r.is_misc) toast(success && r.good_quantity ? `${r.product_name} ×${r.good_quantity} tamamlandı` : `${r.product_name} başarısız olarak kaydedildi`);
     else if (r.is_component) {
       toast(success && r.good_quantity ? `+${r.good_quantity} ${r.product_name} havuza eklendi${assembledText(r.assembled_products)}` : `${r.product_name} başarısız olarak kaydedildi`);
@@ -3065,8 +3139,6 @@ async function finishJob(id, success) {
         : `${r.good_quantity} parça eklendi · ${r.product_name} için ${r.parts_missing} parça eksik`);
     } else if (r.is_order) toast(success ? `${r.product_name}: Hazır` : `${r.product_name}: başarısız, sipariş Yeni'ye döndü`);
     else toast(success && r.good_quantity ? `${r.good_quantity} adet ${r.product_name} stoğa eklendi` : `${r.product_name} başarısız olarak kaydedildi`, { action: 'Tekrar bas', onAction: () => reprint(r) });
-    await loadJobs(); S.titleFlash = dueJobs().length > 0; render();
-  } catch (e) { fail(e); }
 }
 
 // Başarı anı: tik çizilir, katmanlar yerine oturur, sonra pencere kapanır
@@ -9151,7 +9223,9 @@ const ACTIONS = {
   'np-preset': (el) => npPartsPreset(el.dataset.k),
   'np-part': (el) => { const id = +el.dataset.id; NP.parts[id] = Math.max(0, (NP.parts[id] || 0) + +el.dataset.d); npRenderParts(); },
   'np-qty': (el) => stepInput('#np-qty', +el.dataset.d),
-  'np-start': startPrint,
+  'np-start': () => startPrint(),
+  'np-res': (el) => npResult(el.dataset.ok === '1'),
+  'np-good': (el) => { const i = $('#np-good'); if (!i) return; i.value = Math.max(0, Math.min(999, (parseInt(i.value) || 0) + +el.dataset.d)); NP.goodTouched = true; npResSync(); },
   'job-result': (el) => openResult(+el.dataset.id),
   'job-menu': (el) => openJobMenu(+el.dataset.id),
   'job-snooze': async (el) => { try { await api('POST', `/api/jobs/${el.dataset.id}/snooze`, { minutes: +el.dataset.m + Math.max(0, Math.round(((S.jobs.find((j) => j.id === +el.dataset.id)?.ends_at || 0) - nowS()) / 60)) }); closeModal(); await loadJobs(); render(); } catch (e) { fail(e); } },

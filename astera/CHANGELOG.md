@@ -1,5 +1,9 @@
 # Sürüm notları
 
+## 1.16.8
+- Bitmiş ama ürünü girilmemiş baskı: ürünü seçtiğin pencerenin altında sonuç şeridi (sağlam adet · Sağlam · Sorunlu); ikinci pencere açılmaz. Parçalı ürün ve kalemli özel siparişte eski sonuç penceresi kalır.
+- Yeni baskı → "Diğer amaçlı" sekmesine geçince "Diğer" kaydı kendiliğinden seçilir; listeden seçmeden doğrudan baskıya verilebilir.
+
 ## 1.16.7
 - Ayarlar → Üretim: "Bambu baskısını dosyadaki nesnelerden tanıyınca kendiliğinden başlat" aç/kapa. Kapalıyken her baskıda ürün sorulur; nesne adları yine pencerede görünür ve öğretilir.
 
